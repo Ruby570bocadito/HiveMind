@@ -1,33 +1,36 @@
 use hive_base::{AgentIdentity, ConsensusEngine, HiveChamber, Message, Payload, Role, Value};
-use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use std::process::Command;
 use std::fs;
 use std::env;
+use std::os::unix::fs::PermissionsExt;
 use tokio::time;
 use tracing::{info, warn};
 use uuid::Uuid;
 
-const MODEL_ENC: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/shaper_policy.onnx.enc"));
-
-enum ShaperAction { PropagateTo(String), Wait }
-
-struct ShaperAgent {
+struct DroneAgent {
     comms: HiveChamber,
     identity: AgentIdentity,
     consensus: ConsensusEngine,
     dead_agents: Vec<Uuid>,
+    last_regeneration: Instant,
+    regeneration_cooldown: Duration,
     heartbeat_interval: Duration,
     decision_interval: Duration,
 }
 
-impl ShaperAgent {
+impl DroneAgent {
     async fn new() -> Self {
         let identity = AgentIdentity::new();
         let comms = HiveChamber::connect(&identity, Role::Drone).await.expect("Hive arena");
-        info!("Drone connected to hive arena");
-        Self { comms, identity, consensus: ConsensusEngine::new(0.66), dead_agents: vec![], heartbeat_interval: Duration::from_secs(10), decision_interval: Duration::from_secs(30) }
+        info!("Hive Drone active | ID: {}", identity.id());
+        Self {
+            comms, identity, consensus: ConsensusEngine::new(0.66), dead_agents: vec![],
+            last_regeneration: Instant::now() - Duration::from_secs(120),
+            regeneration_cooldown: Duration::from_secs(60),
+            heartbeat_interval: Duration::from_secs(10), decision_interval: Duration::from_secs(30),
+        }
     }
 
     fn select_action(&self, b: &HashMap<String, Value>) -> ShaperAction {
@@ -71,33 +74,65 @@ impl ShaperAgent {
                 let (msg, _) = Message::proposal(self.identity.id(), Role::Drone, format!("prop_to_{}", t), t.clone());
                 self.publish(msg).await;
             }
-            ShaperAction::Wait => info!("Waiting"),
+            ShaperAction::Wait => info!("Drone: waiting"),
         }
     }
 
     async fn check_regenerate(&mut self) {
-        let dead = self.comms.check_dead_agents(30).await;
-        for id in &dead { if !self.dead_agents.contains(id) { self.dead_agents.push(*id); } }
+        // Cooldown: don't regenerate more than once per 60s
+        if self.last_regeneration.elapsed() < self.regeneration_cooldown {
+            return;
+        }
+
+        self.comms.send_heartbeat().await;
         let active = self.comms.get_active_agents(30).await;
-        let workers = active.iter().filter(|(_,r,_)| matches!(r, Role::Worker)).count();
-        if workers < 2 { warn!("Regenerating worker..."); self.regenerate_agent(Role::Worker).await; }
+        let workers = active.iter().filter(|(_, r, _)| matches!(r, Role::Worker)).count();
+
+        if workers < 1 {
+            warn!("Drone: no Workers alive, regenerating...");
+            self.last_regeneration = Instant::now();
+            self.regenerate_agent(Role::Worker).await;
+        }
     }
 
     async fn regenerate_agent(&self, role: Role) {
-        let name = match role { Role::Worker => "worker", Role::Weaver => "weaver", Role::Honeybee => "honeybee", Role::Queen => "queen", _ => return };
+        let name = match role { Role::Worker => "worker", Role::Weaver => "weaver", _ => return };
         let dir = env::current_exe().ok().and_then(|p| p.parent().map(|p| p.to_path_buf())).unwrap_or_else(|| ".".into());
-        let path = dir.join(name);
-        if !path.exists() { warn!("No binary: {:?}", path); return; }
-        let data = match fs::read(&path) { Ok(d) => d, Err(_) => return };
         let arena = env::var("__HIVE_ARENA").unwrap_or_default();
-        match hive_base::MemfdBinary::new(&format!("hive_{}", name), &data) {
-            Ok(memfd) => { let _ = memfd.seal(); let _ = memfd.spawn(&[("__HIVE_ARENA", &arena)]); }
-            Err(_) => {}
+
+        // Try to find the binary near us
+        let mut found = None;
+        for candidate in &[dir.join(name), dir.join(&format!("target/debug/{}", name))] {
+            if candidate.exists() { found = Some(candidate.clone()); break; }
+        }
+        let path = match found {
+            Some(p) => p,
+            None => { warn!("Drone: cannot find {} binary", name); return; }
+        };
+
+        let data = match fs::read(&path) { Ok(d) => d, Err(_) => { warn!("Drone: cannot read {}", name); return; } };
+
+        // FIXED: write to /dev/shm (tmpfs ramdisk) instead of memfd_create
+        // memfd's /proc/self/fd/N can't resolve dynamic linker for complex binaries
+        let shm_path = format!("/dev/shm/.hive_{}_{}", name, uuid::Uuid::new_v4().to_string().chars().take(8).collect::<String>());
+        if fs::write(&shm_path, &data).is_err() { warn!("Drone: write failed"); return; }
+        let _ = fs::set_permissions(&shm_path, std::fs::Permissions::from_mode(0o700));
+
+        match Command::new(&shm_path).env("__HIVE_ARENA", &arena).spawn() {
+            Ok(child) => {
+                let pid = child.id();
+                info!("Drone: regenerated {} (PID: {}, path: {})", name, pid, shm_path);
+                // Schedule self-cleanup
+                tokio::spawn(async move {
+                    tokio::time::sleep(Duration::from_secs(5)).await;
+                    let _ = fs::remove_file(&shm_path);
+                });
+            }
+            Err(e) => warn!("Drone: spawn failed: {}", e),
         }
     }
 
     async fn run(&mut self) {
-        info!("Drone active | ID: {}", self.identity.id());
         let mut hb = time::interval(self.heartbeat_interval);
         let mut dec = time::interval(self.decision_interval);
         loop {
@@ -110,9 +145,11 @@ impl ShaperAgent {
     }
 }
 
+enum ShaperAction { PropagateTo(String), Wait }
+
 #[tokio::main]
 async fn main() {
     hive_base::utils::init_logging("drone");
     info!("Hive Drone initializing...");
-    ShaperAgent::new().await.run().await;
+    DroneAgent::new().await.run().await;
 }
