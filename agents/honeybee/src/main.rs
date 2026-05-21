@@ -29,7 +29,7 @@ impl HoarderAgent {
             .await
             .expect("Failed to connect to colmena arena");
 
-        info!("Hoarder connected to shared-memory arena");
+        info!("Honeybee connected to shared-memory arena");
 
         Self {
             comms, identity,
@@ -319,7 +319,7 @@ impl HoarderAgent {
     }
 
     async fn run(&mut self) {
-        info!("Swarm-Hoarder starting | ID: {} | Targets: {} paths",
+        info!("Hive Honeybee starting | ID: {} | Targets: {} paths",
             self.identity.id(), self.target_paths.len());
         self.send_heartbeat().await;
         let mut heartbeat_timer = time::interval(self.heartbeat_interval);
@@ -336,7 +336,7 @@ impl HoarderAgent {
 #[tokio::main]
 async fn main() {
     hive_base::utils::init_logging("honeybee");
-    info!("Initializing Swarm-Hoarder (REAL mode)...");
+    info!("Initializing Hive Honeybee (REAL mode)...");
     let mut hoarder = HoarderAgent::new().await;
     hoarder.run().await;
 }

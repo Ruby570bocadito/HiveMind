@@ -38,7 +38,7 @@ impl OvermindAgent {
             .await
             .expect("Failed to connect to colmena arena");
 
-        info!("Overmind connected to shared-memory arena");
+        info!("Queen connected to shared-memory arena");
 
         Self {
             comms, identity,
@@ -117,7 +117,7 @@ impl OvermindAgent {
     }
 
     async fn run(&mut self) {
-        info!("Swarm-Overmind starting | ID: {}", self.identity.id());
+        info!("Hive Queen starting | ID: {}", self.identity.id());
         info!("Ollama: {} | Model: {}", self.ollama_url, self.model);
         self.send_heartbeat().await;
 
@@ -134,7 +134,7 @@ impl OvermindAgent {
 #[tokio::main]
 async fn main() {
     hive_base::utils::init_logging("queen");
-    info!("Initializing Swarm-Overmind...");
+    info!("Initializing Hive Queen...");
     let mut overmind = OvermindAgent::new().await;
     overmind.run().await;
 }

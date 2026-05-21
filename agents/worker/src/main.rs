@@ -26,7 +26,7 @@ impl ScoutAgent {
             .await
             .expect("Failed to connect to colmena arena");
 
-        info!("Scout connected to shared-memory arena");
+        info!("Worker connected to shared-memory arena");
 
         Self {
             comms,
@@ -125,7 +125,7 @@ impl ScoutAgent {
     }
 
     async fn run(&mut self) {
-        info!("Swarm-Scout starting | ID: {}", self.identity.id());
+        info!("Hive Worker starting | ID: {}", self.identity.id());
         self.send_heartbeat().await;
 
         let mut heartbeat_timer = time::interval(self.heartbeat_interval);
@@ -194,7 +194,7 @@ use uuid::Uuid;
 #[tokio::main]
 async fn main() {
     hive_base::utils::init_logging("worker");
-    info!("Initializing Swarm-Scout...");
+    info!("Initializing Hive Worker...");
     let mut scout = ScoutAgent::new().await;
     scout.run().await;
 }
