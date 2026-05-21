@@ -1,0 +1,88 @@
+# Swarm Lab - Full docker-compose stack
+# Launches: C2 server + all agents + dashboard + monitoring
+#
+# Usage: docker-compose up -d
+
+version: '3.8'
+
+services:
+  c2-server:
+    build: .
+    container_name: swarm-c2
+    ports:
+      - "8443:8443"  # C2 HTTPS endpoint
+      - "8080:8080"  # Dashboard
+    volumes:
+      - ./loot:/swarm/loot
+    environment:
+      - SWARM_C2_URL=https://c2-server:8443/collect
+    command: python3 /swarm/tests/c2_server.py --port 8443
+    networks:
+      - swarm-net
+    restart: unless-stopped
+
+  swarm-master:
+    build: .
+    container_name: swarm-master
+    depends_on:
+      - c2-server
+    environment:
+      - SWARM_C2_URL=https://c2-server:8443/collect
+      - __SWARM_ARENA=/swarm_arena_master
+      - RUST_LOG=scout=info,shaper=info
+    command: >
+      sh -c "
+      /swarm/bin/scout &
+      sleep 2 &&
+      /swarm/bin/shaper &
+      /swarm/bin/hoarder &
+      /swarm/bin/weaver &
+      /swarm/bin/overmind &
+      wait
+      "
+    networks:
+      - swarm-net
+    restart: unless-stopped
+    ipc: host  # Share IPC namespace for shared memory
+
+  dashboard:
+    build: .
+    container_name: swarm-dashboard
+    depends_on:
+      - c2-server
+    ports:
+      - "8081:8080"
+    command: python3 /swarm/tests/dashboard.py --port 8080 --host 0.0.0.0
+    networks:
+      - swarm-net
+    ipc: host
+
+  monitor:
+    build: .
+    container_name: swarm-monitor
+    depends_on:
+      - swarm-master
+    command: bash /swarm/tests/edr_gauntlet.sh --watch
+    networks:
+      - swarm-net
+    ipc: host
+
+  # Optional: Ollama for Overmind LLM
+  ollama:
+    image: ollama/ollama:latest
+    container_name: swarm-ollama
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+    networks:
+      - swarm-net
+    profiles:
+      - llm
+
+networks:
+  swarm-net:
+    driver: bridge
+
+volumes:
+  ollama_data:

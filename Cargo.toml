@@ -1,0 +1,14 @@
+[workspace]
+resolver = "2"
+members = [
+    "hive_base",
+    "agents/worker",
+    "agents/drone",
+    "agents/honeybee",
+    "agents/weaver",
+    "agents/queen",
+    "agents/swarm",
+    "stinger",
+    "beekeeper",
+    "buzz",
+]
