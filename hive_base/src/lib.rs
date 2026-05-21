@@ -39,6 +39,11 @@ pub mod channel_rotator;
 pub mod federation;
 pub mod privesc;
 pub mod ephemeral;
+pub mod lolbin;
+pub mod marl_online;
+pub mod larva;
+pub mod did;
+pub mod homomorphic;
 
 pub use comms::HiveChamber;
 pub use identity::AgentIdentity;
