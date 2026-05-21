@@ -36,6 +36,9 @@ pub mod reactive_llm;
 pub mod stigmergy;
 pub mod hibernation;
 pub mod channel_rotator;
+pub mod federation;
+pub mod privesc;
+pub mod ephemeral;
 
 pub use comms::HiveChamber;
 pub use identity::AgentIdentity;

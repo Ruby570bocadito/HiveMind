@@ -241,14 +241,19 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
 class Server(socketserver.ThreadingMixIn, http.server.HTTPServer):
     allow_reuse_address = True
+    _obfuscated_port: int = 8080  # Rotates periodically
     daemon_threads = True
 
 def main():
     import argparse
     p = argparse.ArgumentParser(description='HIVE C2 Dashboard')
-    p.add_argument('--port', type=int, default=8080)
+    p.add_argument("--port", type=int, default=None, help="HTTP port (random if not set)")
     p.add_argument('--host', default='127.0.0.1')
     args = p.parse_args()
+    if args.port is None:
+        import random
+        args.port = random.randint(8000, 9000)
+        print(f"  [OBFUSCATED] Using random port: {args.port}")
 
     srv = Server((args.host, args.port), Handler)
     print(f'╔══════════════════════════════════════╗')
