@@ -29,7 +29,7 @@ impl DroneAgent {
             comms, identity, consensus: ConsensusEngine::new(0.66), dead_agents: vec![],
             last_regeneration: Instant::now() - Duration::from_secs(120),
             regeneration_cooldown: Duration::from_secs(60),
-            heartbeat_interval: Duration::from_secs(10), decision_interval: Duration::from_secs(30),
+            heartbeat_interval: Duration::from_secs(10), decision_interval: Duration::from_secs(5),
         }
     }
 
@@ -70,7 +70,7 @@ impl DroneAgent {
             return;
         }
         match self.select_action(beliefs) {
-            ShaperAction::PropagateTo(t) => {
+            ShaperAction::PropagateTo(t) => { info!("Drone proposal: prop_to_{}", t);
                 let (msg, _) = Message::proposal(self.identity.id(), Role::Drone, format!("prop_to_{}", t), t.clone());
                 self.publish(msg).await;
             }
@@ -138,8 +138,8 @@ impl DroneAgent {
         loop {
             tokio::select! {
                 _ = hb.tick() => { self.comms.send_heartbeat().await; self.check_regenerate().await; }
-                _ = dec.tick() => { let b = self.collect_beliefs().await; if !b.is_empty() { self.make_decision(&b).await; } }
-                _ = time::sleep(Duration::from_millis(200)) => { let _ = self.collect_beliefs().await; }
+                _ = dec.tick() => { let b = self.collect_beliefs().await; info!("Drone decision tick: {} beliefs", b.len()); if !b.is_empty() { self.make_decision(&b).await; } }
+                _ = time::sleep(Duration::from_millis(200)) => {}
             }
         }
     }

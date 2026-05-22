@@ -20,7 +20,7 @@ def main():
 
     script_dir = os.path.dirname(os.path.abspath(__file__))
     dataset_path = os.path.join(script_dir, "scout_dataset.csv")
-    model_dir = os.path.join(script_dir, "..", "..", "agents", "obrera", "models")
+    model_dir = os.path.join(script_dir, "..", "..", "agents", "worker", "models")
     os.makedirs(model_dir, exist_ok=True)
 
     if not os.path.exists(dataset_path):
