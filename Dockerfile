@@ -1,42 +1,40 @@
-# Swarm Multi-Agent Framework - Docker Environment
-# Complete build + C2 + lab in one docker-compose stack.
+# Hive Colony v3.0 — Multi-Agent Framework
+# Build + runtime en un solo Dockerfile multi-stage.
 
 FROM rust:1.80-slim-bookworm AS builder
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    pkg-config libssl-dev python3 python3-pip curl \
+    pkg-config libssl-dev \
     && rm -rf /var/lib/apt/lists/*
 
-WORKDIR /swarm
+WORKDIR /hive
 COPY . .
 
-# Build all agents
 ENV OPENSSL_DIR=/usr
 RUN cargo build --release --workspace
 
-# ── Runtime image ─────────────────────────────────────────────────────────
-
+# ── Runtime ────────────────────────────────────────────────────────────
 FROM debian:bookworm-slim
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    libssl3 ca-certificates openssh-client nmap python3 curl \
-    && rm -rf /var/lib/apt/lists/*
+    libssl3 ca-certificates openssh-client curl python3 python3-pip \
+    && rm -rf /var/lib/apt/lists/* && \
+    pip3 install --no-cache-dir flask requests
 
-WORKDIR /swarm
+WORKDIR /hive
 
-# Copy compiled binaries
-COPY --from=builder /swarm/target/release/scout /swarm/bin/scout
-COPY --from=builder /swarm/target/release/shaper /swarm/bin/shaper
-COPY --from=builder /swarm/target/release/hoarder /swarm/bin/hoarder
-COPY --from=builder /swarm/target/release/weaver /swarm/bin/weaver
-COPY --from=builder /swarm/target/release/overmind /swarm/bin/overmind
-COPY --from=builder /swarm/target/release/swarmctl /swarm/bin/swarmctl
-COPY --from=builder /swarm/target/release/dropper /swarm/bin/dropper
+COPY --from=builder /hive/target/release/worker    /hive/bin/
+COPY --from=builder /hive/target/release/drone     /hive/bin/
+COPY --from=builder /hive/target/release/honeybee  /hive/bin/
+COPY --from=builder /hive/target/release/weaver    /hive/bin/
+COPY --from=builder /hive/target/release/queen     /hive/bin/
+COPY --from=builder /hive/target/release/stinger   /hive/bin/
+COPY --from=builder /hive/target/release/beekeeper /hive/bin/
+COPY --from=builder /hive/target/release/buzz      /hive/bin/
+COPY --from=builder /hive/target/release/swarm     /hive/bin/
 
-# Copy test/monitoring tools
-COPY tests/ /swarm/tests/
-COPY training/ /swarm/training/
+COPY tests/ /hive/tests/
+COPY scripts/ /hive/scripts/
 
-# Default: launch C2 dashboard
 EXPOSE 8080 8443
-CMD ["python3", "/swarm/tests/c2_server.py", "--port", "8443"]
+CMD ["python3", "/hive/tests/c2_server.py", "--port", "8443"]

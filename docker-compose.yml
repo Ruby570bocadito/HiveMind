@@ -1,87 +1,141 @@
-# Swarm Lab - Full docker-compose stack
-# Launches: C2 server + all agents + dashboard + monitoring
-#
-# Usage: docker-compose up -d
-
-version: '3.8'
+# Hive Colony v3.0 — Docker Lab Stack
+# C2 + agentes + dashboard + víctima simulada + monitor EDR
 
 services:
   c2-server:
     build: .
-    container_name: swarm-c2
+    container_name: hive-c2
     ports:
-      - "8443:8443"  # C2 HTTPS endpoint
-      - "8080:8080"  # Dashboard
+      - "8443:8443"
+      - "8080:8080"
     volumes:
-      - ./loot:/swarm/loot
-    environment:
-      - SWARM_C2_URL=https://c2-server:8443/collect
-    command: python3 /swarm/tests/c2_server.py --port 8443
+      - ./loot:/hive/loot
+    command: python3 /hive/tests/c2_server.py --port 8443
     networks:
-      - swarm-net
+      - hive-net
     restart: unless-stopped
 
-  swarm-master:
+  queen:
     build: .
-    container_name: swarm-master
-    depends_on:
-      - c2-server
+    container_name: hive-queen
+    depends_on: [c2-server]
     environment:
-      - SWARM_C2_URL=https://c2-server:8443/collect
-      - __SWARM_ARENA=/swarm_arena_master
-      - RUST_LOG=scout=info,shaper=info
+      - HIVE_C2_URL=https://c2-server:8443/collect
+      - __HIVE_ARENA=/hive_arena
+      - RUST_LOG=info
+    command: /hive/bin/queen
+    networks:
+      - hive-net
+    ipc: host
+    restart: unless-stopped
+
+  worker:
+    build: .
+    container_name: hive-worker
+    depends_on: [queen]
+    environment:
+      - __HIVE_ARENA=/hive_arena
+      - RUST_LOG=info
+    command: /hive/bin/worker
+    networks:
+      - hive-net
+    ipc: host
+    restart: unless-stopped
+
+  drone:
+    build: .
+    container_name: hive-drone
+    depends_on: [queen]
+    environment:
+      - __HIVE_ARENA=/hive_arena
+      - RUST_LOG=info
+    command: /hive/bin/drone
+    networks:
+      - hive-net
+    ipc: host
+    restart: unless-stopped
+
+  honeybee:
+    build: .
+    container_name: hive-honeybee
+    depends_on: [queen]
+    environment:
+      - __HIVE_ARENA=/hive_arena
+      - RUST_LOG=info
+    command: /hive/bin/honeybee
+    networks:
+      - hive-net
+    ipc: host
+    restart: unless-stopped
+
+  weaver:
+    build: .
+    container_name: hive-weaver
+    depends_on: [queen]
+    environment:
+      - __HIVE_ARENA=/hive_arena
+      - RUST_LOG=info
+    command: /hive/bin/weaver
+    networks:
+      - hive-net
+    ipc: host
+    restart: unless-stopped
+
+  victim:
+    build: .
+    container_name: hive-victim
+    environment:
+      - RUST_LOG=info
     command: >
       sh -c "
-      /swarm/bin/scout &
-      sleep 2 &&
-      /swarm/bin/shaper &
-      /swarm/bin/hoarder &
-      /swarm/bin/weaver &
-      /swarm/bin/overmind &
-      wait
+      mkdir -p /root/Documents /root/.ssh /root/.aws /tmp/financial_data &&
+      echo 'account,balance,date
+1001,1250000,2024-01-15
+1002,3400000,2024-01-14' > /tmp/financial_data/ledger.csv &&
+      echo 'export DB_PASS=secret123' > /root/.bashrc &&
+      echo '<?php \$dbpass=\"pass123\"; ?>' > /root/Documents/config.php &&
+      echo 'AWS_KEY=AKIA123456789' > /root/.aws/credentials &&
+      tail -f /dev/null
       "
     networks:
-      - swarm-net
-    restart: unless-stopped
-    ipc: host  # Share IPC namespace for shared memory
-
-  dashboard:
-    build: .
-    container_name: swarm-dashboard
-    depends_on:
-      - c2-server
-    ports:
-      - "8081:8080"
-    command: python3 /swarm/tests/dashboard.py --port 8080 --host 0.0.0.0
-    networks:
-      - swarm-net
+      - hive-net
     ipc: host
 
   monitor:
     build: .
-    container_name: swarm-monitor
+    container_name: hive-monitor
     depends_on:
-      - swarm-master
-    command: bash /swarm/tests/edr_gauntlet.sh --watch
+      - victim
+    command: python3 /hive/tests/monitor_detections.py --watch --interval 10
     networks:
-      - swarm-net
+      - hive-net
     ipc: host
 
-  # Optional: Ollama for Overmind LLM
+  dashboard:
+    build: .
+    container_name: hive-dashboard
+    depends_on: [c2-server]
+    ports:
+      - "8081:8080"
+    command: python3 /hive/tests/dashboard.py --port 8080 --host 0.0.0.0
+    networks:
+      - hive-net
+    ipc: host
+
   ollama:
     image: ollama/ollama:latest
-    container_name: swarm-ollama
+    container_name: hive-ollama
     ports:
       - "11434:11434"
     volumes:
       - ollama_data:/root/.ollama
     networks:
-      - swarm-net
+      - hive-net
     profiles:
       - llm
 
 networks:
-  swarm-net:
+  hive-net:
     driver: bridge
 
 volumes:

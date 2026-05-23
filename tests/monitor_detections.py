@@ -1,273 +1,223 @@
 #!/usr/bin/env python3
 """
-EDR Sandbox Monitor - Simulates detection surface monitoring.
-Checks for suspicious indicators that an EDR would flag.
+Hive Colony EDR Detection Monitor.
+Simula la superficie de detección que un EDR real (CrowdStrike, Defender, SentinelOne)
+vería al monitorizar la actividad de Hive.
 
-Usage:
-    python3 monitor_detections.py [--watch] [--interval 5]
-
-Checks:
-    1. TCP listening ports (should be NONE for the colmena)
-    2. Suspicious shared memory names
-    3. Process signatures (running agents)
-    4. ONNX model signatures in binaries
-    5. Network connections
+Chequea:
+  1. Puertos TCP listening (deberían ser 0 para Hive)
+  2. Memoria compartida (/dev/shm colmena_*, hive_*)
+  3. Firmas de procesos (worker, drone, honeybee, etc.)
+  4. Archivos xattr (stigmergy)
+  5. Mutación de datos (saboteur)
+  6. Fragmentos de genoma (phoenix)
+  7. Cápsulas chrononaut
+  8. Conexiones de red
+  9. Modificaciones de timestamps
 """
 
-import os
-import re
-import sys
-import time
-import json
-import argparse
-import subprocess
+import os, re, sys, time, json, argparse, subprocess
 from datetime import datetime
 from pathlib import Path
 
-# ── Detection Rules ──────────────────────────────────────────────────────────
-
 DETECTION_RULES = {
-    "tcp_listener_4242": {
+    "tcp_listener": {
         "severity": "HIGH",
-        "description": "Colmena TCP bus listening (legacy port 4242)",
-        "check": lambda: check_port_listening(4242),
+        "description": "Puerto TCP listening (Hive no debería tener ninguno)",
+        "check": lambda: any(check_port(p) for p in [1337, 31337, 4242, 5555, 8443, 9000, 11434]),
     },
-    "tcp_listener_suspicious": {
-        "severity": "MEDIUM",
-        "description": "Suspicious TCP listener on high port",
-        "check": lambda: any(check_port_listening(p) for p in [1337, 31337, 5555, 9000]),
-    },
-    "shared_memory_named": {
+    "shared_memory_hive": {
         "severity": "LOW",
-        "description": "Named shared memory (colmena_*) in /dev/shm",
-        "check": check_shared_memory,
+        "description": "Memoria compartida Hive en /dev/shm",
+        "check": lambda: len(list(Path("/dev/shm").glob("hive_*"))) > 0 if Path("/dev/shm").exists() else False,
     },
-    "onnx_signature_in_memory": {
+    "hive_processes": {
         "severity": "MEDIUM",
-        "description": "ONNX model signatures in process memory",
-        "check": check_onnx_in_memory,
+        "description": "Procesos Hive en ejecución (worker/drone/honeybee/queen/weaver)",
+        "check": check_hive_processes,
     },
-    "process_injection": {
+    "saboteur_data_mutation": {
         "severity": "HIGH",
-        "description": "Suspicious process creation patterns",
-        "check": check_process_patterns,
+        "description": "Mutación de datos financieros/CSV/JSON (Saboteur)",
+        "check": check_data_integrity,
+    },
+    "phoenix_genome_fragments": {
+        "severity": "MEDIUM",
+        "description": "Fragmentos de genoma ocultos (Phoenix en /dev/shm/.hive*)",
+        "check": lambda: any(
+            Path(p).exists() for p in ["/dev/shm/.hive_genome", "/tmp/.hive_rebirth", "/var/tmp/.hs_"]
+        ),
+    },
+    "stigmergy_xattr": {
+        "severity": "LOW",
+        "description": "Atributos extendidos xattr (Stigmergy en /bin/ls, /bin/ps)",
+        "check": check_stigmergy_xattr,
+    },
+    "chrononaut_timestamp_anomaly": {
+        "severity": "MEDIUM",
+        "description": "Anomalías en timestamps de archivos (Chrononaut capsules)",
+        "check": check_timestamp_anomalies,
+    },
+    "whispernet_p2p": {
+        "severity": "MEDIUM",
+        "description": "Tráfico P2P entre agentes (WhisperNet mesh)",
+        "check": check_whispernet_traffic,
     },
     "binary_on_disk": {
         "severity": "MEDIUM",
-        "description": "Agent binaries found on disk outside temp",
+        "description": "Binarios Hive en disco fuera de /tmp",
         "check": check_agent_binaries,
     },
-    "network_connections": {
-        "severity": "MEDIUM",
-        "description": "Outbound network connections from agents",
-        "check": check_network_connections,
+    "fileless_memfd": {
+        "severity": "HIGH",
+        "description": "MemFDs activos (ejecución fileless vía stinger)",
+        "check": lambda: len([f for f in Path("/proc").glob("*/fd/*") if os.path.islink(str(f)) and "memfd:" in os.readlink(str(f))]) > 0 if Path("/proc").exists() else False,
     },
 }
 
-# ── Check Implementations ────────────────────────────────────────────────────
-
-def check_port_listening(port):
-    """Check if a TCP port is listening."""
+def check_port(port):
     try:
         import socket
         s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         s.settimeout(0.5)
-        result = s.connect_ex(('127.0.0.1', port))
+        r = s.connect_ex(('127.0.0.1', port))
         s.close()
-        return result == 0
-    except Exception:
-        return False
+        return r == 0
+    except: return False
 
-
-def check_shared_memory():
-    """Check for colmena-related shared memory files."""
-    shm_dir = Path("/dev/shm")
-    if not shm_dir.exists():
-        return False
-    colmena_files = list(shm_dir.glob("colmena_*"))
-    return len(colmena_files) > 0
-
-
-def check_onnx_in_memory():
-    """Check process maps for ONNX signatures."""
+def check_hive_processes():
     try:
-        result = subprocess.run(
-            ["grep", "-r", "--include=*.onnx", "/proc/*/maps"],
-            capture_output=True, text=True, timeout=5
-        )
-        return result.returncode == 0
-    except Exception:
-        return False
+        r = subprocess.run(["ps", "aux"], capture_output=True, text=True, timeout=5)
+        agents = ['worker', 'drone', 'honeybee', 'queen', 'weaver', 'stinger', 'beekeeper']
+        return sum(1 for line in r.stdout.split('\n') if any(a in line.lower() for a in agents))
+    except: return 0
 
+def check_data_integrity():
+    """Busca mutaciones de Saboteur en CSVs."""
+    findings = 0
+    for csv in Path("/tmp").rglob("*.csv"):
+        try:
+            data = csv.read_text()
+            # Saboteur inserta filas corruptas o modifica balances
+            if "nan" in data.lower() or "null" in data.lower() or "ERROR" in data:
+                findings += 1
+        except: pass
+    for json_f in Path("/tmp").rglob("*.json"):
+        try:
+            data = json_f.read_text()
+            if "corrupted" in data.lower() or "TAMPERED" in data:
+                findings += 1
+        except: pass
+    return findings > 0
 
-def check_process_patterns():
-    """Check for suspicious process creation."""
-    suspicious = []
+def check_stigmergy_xattr():
     try:
-        result = subprocess.run(
-            ["ps", "aux"],
-            capture_output=True, text=True, timeout=5
-        )
-        for line in result.stdout.split('\n'):
-            if any(name in line.lower() for name in ['worker', 'drone', 'honeybee', 'weaver']):
-                suspicious.append(line.strip())
-    except Exception:
-        pass
-    return len(suspicious) > 0
-
-
-def check_agent_binaries():
-    """Check for agent binaries outside temp directories."""
-    agent_names = ['worker', 'drone', 'honeybee', 'weaver', 'queen', 'colmena_bus']
-    found = []
-    try:
-        result = subprocess.run(
-            ["find", "/tmp", "-name", "*scout*", "-o", "-name", "*shaper*",
-             "-o", "-name", "*weaver*", "-o", "-name", "*hoarder*"],
-            capture_output=True, text=True, timeout=5
-        )
-        for line in result.stdout.split('\n'):
-            if line.strip():
-                found.append(line.strip())
-    except Exception:
-        pass
-    return len(found) > 0
-
-
-def check_network_connections():
-    """Check for outbound connections from agent processes."""
-    try:
-        result = subprocess.run(
-            ["ss", "-tnp"],
-            capture_output=True, text=True, timeout=5
-        )
-        for line in result.stdout.split('\n'):
-            # Check for connections to non-standard ports from our agents
-            if '127.0.0.1:4242' in line:
+        for bin_path in ["/bin/ls", "/bin/ps", "/usr/bin/ssh", "/bin/bash"]:
+            r = subprocess.run(["getfattr", "-d", "-m", "user.hive", bin_path],
+                             capture_output=True, text=True, timeout=3)
+            if "user.hive" in r.stdout:
                 return True
-    except Exception:
-        pass
+    except: pass
     return False
 
+def check_timestamp_anomalies():
+    """Chrononaut codifica timestamps futuros en mtime."""
+    anomalies = 0
+    now = time.time()
+    try:
+        for log in Path("/var/log").rglob("*.log") if Path("/var/log").exists() else []:
+            mtime = log.stat().st_mtime
+            if mtime > now + 3600 or mtime < 1000000000:
+                anomalies += 1
+    except: pass
+    return anomalies > 0
 
-# ── Monitor ──────────────────────────────────────────────────────────────────
+def check_whispernet_traffic():
+    try:
+        r = subprocess.run(["ss", "-tnp"], capture_output=True, text=True, timeout=3)
+        # WhisperNet usa puertos altos no estándar
+        suspicious = 0
+        for line in r.stdout.split('\n'):
+            if any(p in line for p in [":900", ":10000", ":20000"]):
+                suspicious += 1
+        return suspicious > 0
+    except: return False
+
+def check_agent_binaries():
+    try:
+        r = subprocess.run(["find", "/tmp", "-name", "hive_*", "-o", "-name", ".*hive*"],
+                         capture_output=True, text=True, timeout=3)
+        return len(r.stdout.strip().split('\n')) > 1 if r.stdout.strip() else False
+    except: return False
+
 
 class EDRMonitor:
-    def __init__(self, watch=False, interval=5):
+    def __init__(self, watch=False, interval=5, json_output=False):
         self.watch = watch
         self.interval = interval
-        self.history = []
+        self.json_output = json_output
         self.alerts = []
 
     def scan(self):
-        """Run all detection rules and report findings."""
         timestamp = datetime.now().isoformat()
         findings = {}
-
-        for rule_name, rule in DETECTION_RULES.items():
+        for name, rule in DETECTION_RULES.items():
             try:
                 detected = rule['check']()
-                findings[rule_name] = {
-                    'detected': detected,
-                    'severity': rule['severity'],
-                    'description': rule['description'],
-                }
+                findings[name] = {'detected': bool(detected), 'severity': rule['severity'],
+                                  'description': rule['description']}
                 if detected:
-                    self.alerts.append({
-                        'timestamp': timestamp,
-                        'rule': rule_name,
-                        'severity': rule['severity'],
-                        'description': rule['description'],
-                    })
+                    self.alerts.append({'timestamp': timestamp, 'rule': name,
+                                        'severity': rule['severity'], 'description': rule['description']})
             except Exception as e:
-                findings[rule_name] = {
-                    'detected': None,
-                    'severity': rule['severity'],
-                    'description': f"Error: {e}",
-                }
-
-        self.history.append({
-            'timestamp': timestamp,
-            'findings': findings,
-        })
-
+                findings[name] = {'detected': None, 'severity': rule['severity'],
+                                  'description': f"Error: {e}"}
         return findings
 
     def report(self, findings):
-        """Print a formatted report."""
+        if self.json_output:
+            print(json.dumps({'timestamp': self.alerts[-1]['timestamp'] if self.alerts else datetime.now().isoformat(),
+                             'findings': findings, 'alerts': self.alerts}, indent=2))
+            return
+
         print(f"\n{'='*60}")
-        print(f"  EDR Detection Surface Scan - {datetime.now().strftime('%H:%M:%S')}")
+        print(f"  Hive Detection Monitor - {datetime.now().strftime('%H:%M:%S')}")
         print(f"{'='*60}")
 
         high = medium = low = 0
-        for rule_name, result in findings.items():
-            detected = result['detected']
-            severity = result['severity']
-            desc = result['description']
-
-            if detected is True:
-                if severity == 'HIGH':
-                    high += 1
-                    icon = "CRITICAL"
-                elif severity == 'MEDIUM':
-                    medium += 1
-                    icon = "WARNING"
-                else:
-                    low += 1
-                    icon = "INFO"
-                print(f"  [{icon}] {desc}")
-            elif detected is False:
-                pass  # Clean
-            else:
-                print(f"  [ERROR] {desc}")
+        for name, r in findings.items():
+            d, s, desc = r['detected'], r['severity'], r['description']
+            if d:
+                icon = {"HIGH": "CRITICAL", "MEDIUM": "WARNING", "LOW": "INFO"}.get(s, "INFO")
+                {"HIGH": high, "MEDIUM": medium, "LOW": low}[s] += 1
+                print(f"  [{icon:>8}] {desc}")
+            elif d is None:
+                print(f"  [  ERROR ] {desc}")
 
         if high + medium + low == 0:
-            print(f"\n  [+] CLEAN - No detection surface exposed")
+            print(f"\n  [+] CLEAN — Sin superficie de detección expuesta")
         else:
-            total = high + medium + low
             score = max(0, 100 - (high * 30 + medium * 15 + low * 5))
             print(f"\n  Detection Score: {score}/100")
-            print(f"  Alerts: {high} high, {medium} medium, {low} low")
-
-        return high + medium + low
+            print(f"  Alertas: {high} HIGH, {medium} MEDIUM, {low} LOW")
 
     def run(self):
-        """Run monitoring loop."""
-        print("COLMENA EDR DETECTION MONITOR")
-        print("Monitoring for indicators that an EDR would flag...")
-        print("(Run the colmena first, then this monitor)")
-        print()
-
+        print("HIVE EDR DETECTION MONITOR")
+        print("Monitoreando indicadores detectables por EDR...")
         while True:
-            findings = self.scan()
-            alerts = self.report(findings)
-
-            if not self.watch:
-                break
-
+            f = self.scan()
+            self.report(f)
+            if not self.watch: break
             time.sleep(self.interval)
 
 
-# ── Main ─────────────────────────────────────────────────────────────────────
-
 def main():
-    parser = argparse.ArgumentParser(description='Colmena EDR Detection Monitor')
-    parser.add_argument('--watch', action='store_true', help='Continuous monitoring')
-    parser.add_argument('--interval', type=int, default=5, help='Scan interval (seconds)')
-    parser.add_argument('--json', action='store_true', help='Output as JSON')
-    args = parser.parse_args()
-
-    monitor = EDRMonitor(watch=args.watch, interval=args.interval)
-
-    if args.json:
-        findings = monitor.scan()
-        print(json.dumps({
-            'timestamp': monitor.history[-1]['timestamp'],
-            'findings': findings,
-        }, indent=2))
-    else:
-        monitor.run()
-
+    p = argparse.ArgumentParser(description='Hive EDR Detection Monitor')
+    p.add_argument('--watch', action='store_true', help='Monitoreo continuo')
+    p.add_argument('--interval', type=int, default=5, help='Intervalo (segundos)')
+    p.add_argument('--json', action='store_true', help='Salida JSON')
+    args = p.parse_args()
+    EDRMonitor(watch=args.watch, interval=args.interval, json_output=args.json).run()
 
 if __name__ == '__main__':
     main()
