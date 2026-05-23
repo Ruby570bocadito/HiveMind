@@ -8,19 +8,19 @@ use std::time::Duration;
 // Agent binaries embedded at compile time
 #[cfg(target_os = "windows")]
 mod bins {
-    pub const SCOUT: &[u8] = include_bytes!("../../target/debug/scout.exe");
-    pub const SHAPER: &[u8] = include_bytes!("../../target/debug/shaper.exe");
-    pub const HOARDER: &[u8] = include_bytes!("../../target/debug/hoarder.exe");
-    pub const WEAVER: &[u8] = include_bytes!("../../target/debug/weaver.exe");
-    pub const OVERMIND: &[u8] = include_bytes!("../../target/debug/overmind.exe");
+    pub const WORKER: &[u8] = include_bytes!("../../target/release/worker.exe");
+    pub const DRONE: &[u8] = include_bytes!("../../target/release/drone.exe");
+    pub const HONEYBEE: &[u8] = include_bytes!("../../target/release/honeybee.exe");
+    pub const WEAVER: &[u8] = include_bytes!("../../target/release/weaver.exe");
+    pub const QUEEN: &[u8] = include_bytes!("../../target/release/queen.exe");
 }
 #[cfg(not(target_os = "windows"))]
 mod bins {
-    pub const SCOUT: &[u8] = include_bytes!("../../target/debug/scout");
-    pub const SHAPER: &[u8] = include_bytes!("../../target/debug/shaper");
-    pub const HOARDER: &[u8] = include_bytes!("../../target/debug/hoarder");
-    pub const WEAVER: &[u8] = include_bytes!("../../target/debug/weaver");
-    pub const OVERMIND: &[u8] = include_bytes!("../../target/debug/overmind");
+    pub const WORKER: &[u8] = include_bytes!("../../target/release/worker");
+    pub const DRONE: &[u8] = include_bytes!("../../target/release/drone");
+    pub const HONEYBEE: &[u8] = include_bytes!("../../target/release/honeybee");
+    pub const WEAVER: &[u8] = include_bytes!("../../target/release/weaver");
+    pub const QUEEN: &[u8] = include_bytes!("../../target/release/queen");
 }
 
 fn main() {
@@ -34,12 +34,12 @@ fn main() {
 
     #[cfg(target_os = "linux")]
     {
-        fileless_spawn("worker", bins::SCOUT, &arena_name);
+        fileless_spawn("worker", bins::WORKER, &arena_name);
         thread::sleep(Duration::from_secs(2));
-        fileless_spawn("drone", bins::SHAPER, &arena_name);
-        fileless_spawn("honeybee", bins::HOARDER, &arena_name);
+        fileless_spawn("drone", bins::DRONE, &arena_name);
+        fileless_spawn("honeybee", bins::HONEYBEE, &arena_name);
         fileless_spawn("weaver", bins::WEAVER, &arena_name);
-        fileless_spawn("queen", bins::OVERMIND, &arena_name);
+        fileless_spawn("queen", bins::QUEEN, &arena_name);
     }
 
     #[cfg(target_os = "windows")]
@@ -55,12 +55,12 @@ fn main() {
             child
         };
 
-        let _s = launch("worker", bins::SCOUT);
+        let _s = launch("worker", bins::WORKER);
         thread::sleep(Duration::from_secs(2));
-        let _sh = launch("drone", bins::SHAPER);
-        let _h = launch("honeybee", bins::HOARDER);
+        let _sh = launch("drone", bins::DRONE);
+        let _h = launch("honeybee", bins::HONEYBEE);
         let _w = launch("weaver", bins::WEAVER);
-        let _o = launch("queen", bins::OVERMIND);
+        let _o = launch("queen", bins::QUEEN);
     }
 
     info!("Deployment complete. Swarm active via shared-memory IPC.");

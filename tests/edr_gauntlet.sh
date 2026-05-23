@@ -10,7 +10,8 @@
 #   - OPENSSL_DIR, OPENSSL_LIB_DIR, OPENSSL_INCLUDE_DIR env vars
 #   - Python 3 (for detection monitor)
 
-set -euo pipefail
+set +e
+set -uo pipefail
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -63,7 +64,8 @@ add_result() {
 log_section "1. BUILD INTEGRITY"
 
 log_info "Building workspace..."
-if cargo build --workspace 2>&1 | tail -1 | grep -q "Finished"; then
+cargo build --workspace 2>&1 > /tmp/gauntlet_build.log
+if tail -1 /tmp/gauntlet_build.log | grep -q "Finished"; then
     log_pass "Workspace compiles cleanly"
     add_result "build" "pass" "workspace compiles"
 else
@@ -72,7 +74,8 @@ else
 fi
 
 log_info "Running unit tests..."
-if cargo test --lib -p agent_base 2>&1 | grep -q "test result: ok"; then
+cargo test --lib -p hive_base 2>&1 > /tmp/gauntlet_test.log
+if grep -q "test result: ok" /tmp/gauntlet_test.log; then
     log_pass "Unit tests pass"
     add_result "unit_tests" "pass" "all unit tests green"
 else
@@ -96,7 +99,7 @@ done
 
 log_section "3. BINARY FORENSICS"
 
-SWARMCTL_BIN="target/debug/swarmctl"
+SWARMCTL_BIN="target/release/beekeeper"
 if [[ -f "$SWARMCTL_BIN" ]]; then
     log_info "Analyzing $SWARMCTL_BIN for indicators..."
 
@@ -148,8 +151,8 @@ fi
 log_section "5. PROCESS INSPECTION"
 
 # Check for running swarm agents
-if pgrep -f "scout\|shaper\|weaver\|hoarder" > /dev/null 2>&1; then
-    AGENT_COUNT=$(pgrep -fc "scout\|shaper\|weaver\|hoarder" || echo 0)
+if pgrep -f "worker|drone|honeybee|weaver|queen" > /dev/null 2>&1; then
+    AGENT_COUNT=$(pgrep -fc "worker|drone|honeybee|weaver|queen" || echo 0)
     log_info "$AGENT_COUNT swarm agent(s) running"
     add_result "agents_running" "info" "$AGENT_COUNT agents"
 else
@@ -158,8 +161,8 @@ else
 fi
 
 # Check for memfd in agent processes
-if pgrep -f "scout\|shaper" > /dev/null 2>&1; then
-    for pid in $(pgrep -f "scout\|shaper\|weaver\|hoarder"); do
+if pgrep -f "worker|drone" > /dev/null 2>&1; then
+    for pid in $(pgrep -f "worker|drone|honeybee|weaver|queen"); do
         MEMFD_COUNT=$(ls -la /proc/$pid/fd 2>/dev/null | grep -c "memfd:" || echo 0)
         if [[ $MEMFD_COUNT -gt 0 ]]; then
             log_pass "PID $pid: $MEMFD_COUNT memfd(s) - fileless confirmed"
@@ -197,7 +200,8 @@ fi
 log_section "7. CODE QUALITY"
 
 log_info "Running clippy..."
-if cargo clippy --workspace -- -D warnings 2>&1 | tail -1 | grep -q "0 errors"; then
+cargo clippy --workspace -- -D warnings 2>&1 > /tmp/gauntlet_clippy.log
+if tail -1 /tmp/gauntlet_clippy.log | grep -q "0 errors"; then
     log_pass "Clippy: no warnings"
     add_result "clippy" "pass" "clean"
 else
@@ -206,7 +210,7 @@ else
 fi
 
 log_info "Checking for unsafe code..."
-UNSAFE_COUNT=$(grep -r "unsafe" agent_base/src/ --include="*.rs" | wc -l)
+UNSAFE_COUNT=$(grep -r "unsafe" hive_base/src/ --include="*.rs" | wc -l)
 if [[ $UNSAFE_COUNT -gt 0 ]]; then
     log_info "$UNSAFE_COUNT unsafe blocks (expected for syscalls/memfd)"
     add_result "unsafe_blocks" "info" "$UNSAFE_COUNT blocks"

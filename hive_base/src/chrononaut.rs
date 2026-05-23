@@ -190,6 +190,48 @@ fn walkdir(root: &Path) -> Result<Vec<PathBuf>, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::hivemind::HiveDirective;
+    use std::collections::HashMap;
+
+    #[test]
+    fn test_chrononaut_hivemind_integration() {
+        // Chrononaut capsule can carry a HiveMind directive via xattr roundtrip
+        let dir = std::env::temp_dir().join("hive_test_chrono_hive");
+        let _ = std::fs::create_dir_all(&dir);
+        let file_path = dir.join("directives.bin");
+        std::fs::write(&file_path, b"base").unwrap();
+
+        let directive = HiveDirective {
+            directive_id: Uuid::new_v4(),
+            proposer_id: Uuid::new_v4(),
+            action: "propagate".into(),
+            params: [("target_role".into(), "honeybee".into())].into(),
+            threshold: 0.6,
+            approved: false,
+            executed: false,
+            votes: HashMap::new(),
+        };
+
+        let capsule = TimeCapsule {
+            capsule_id: Uuid::new_v4(),
+            trigger_timestamp: 1_700_000_000,
+            command: serde_json::to_string(&directive).unwrap(),
+            payload: vec![],
+            host_hint: "localhost".into(),
+            executed: false,
+        };
+
+        // Store via xattr (roundtrip-capable)
+        let enc = Chrononaut::store_in_xattr(&file_path, &capsule);
+        assert!(enc.is_ok());
+
+        // Verify the serialized directive is valid JSON
+        let parsed: HiveDirective = serde_json::from_str(&capsule.command).unwrap();
+        assert_eq!(parsed.action, "propagate");
+        assert_eq!(parsed.params.get("target_role").unwrap(), "honeybee");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     #[test]
     fn test_store_and_decode() {

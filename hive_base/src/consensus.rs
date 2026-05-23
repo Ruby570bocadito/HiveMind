@@ -142,7 +142,7 @@ impl ConsensusEngine {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ldc::{Decision, Message, Role};
+    use crate::ldc::Decision;
     use uuid::Uuid;
 
     #[test]
