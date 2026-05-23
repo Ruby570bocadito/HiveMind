@@ -132,7 +132,7 @@ impl WhisperNet {
         self.build_path(destination).map(|p| p.len() as u8)
     }
 
-    fn rebuild_routing_table(&mut self) {
+    pub fn rebuild_routing_table(&mut self) {
         self.routing_table.clear();
         for peer in &self.peers {
             if let Some(path) = self.build_path(peer.peer_id) {

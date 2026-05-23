@@ -236,7 +236,7 @@ impl Tournament {
             }
 
             if gen + 1 == config.generations {
-                let mut scores: Vec<(Uuid, f32)> = competitors.iter()
+                let scores: Vec<(Uuid, f32)> = competitors.iter()
                     .map(|c| (c.id, c.score)).collect();
                 let winner_id = winner_id.unwrap_or_else(Uuid::nil);
 

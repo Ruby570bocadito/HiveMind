@@ -33,6 +33,7 @@ struct OvermindAgent {
     heartbeat_interval: Duration,
     tournament: hive_base::tournament::Tournament,
     hivemind: hive_base::hivemind::HiveMind,
+    whispernet: hive_base::whispernet::WhisperNet,
     last_tournament_gen: usize,
 }
 
@@ -45,6 +46,17 @@ impl OvermindAgent {
 
         info!("Queen connected to shared-memory arena");
 
+        let whispernet = hive_base::whispernet::WhisperNet::new(
+            hive_base::whispernet::WhisperConfig {
+                node_id: identity.id(),
+                listen_port: 0,
+                max_peers: 16,
+                max_hops: 5,
+                heartbeat_interval_secs: 60,
+                encryption_enabled: true,
+            }
+        );
+
         Self {
             comms, identity,
             consensus: ConsensusEngine::new(0.66),
@@ -53,6 +65,7 @@ impl OvermindAgent {
             heartbeat_interval: Duration::from_secs(10),
             tournament: hive_base::tournament::Tournament::new(),
             hivemind: hive_base::hivemind::HiveMind::new(),
+            whispernet,
             last_tournament_gen: 0,
         }
     }
@@ -151,12 +164,25 @@ impl OvermindAgent {
             }
             for executed_id in self.hivemind.execute_approved() {
                 info!("HiveMind: directive {} approved and executed", executed_id);
-                let msg = self.hivemind.to_belief(
-                    &self.hivemind.directives.iter()
-                        .find(|d| d.directive_id == executed_id).unwrap(),
-                    self.identity.id(),
-                );
+                let directive = self.hivemind.directives.iter()
+                    .find(|d| d.directive_id == executed_id).unwrap();
+                let msg = self.hivemind.to_belief(directive, self.identity.id());
                 self.publish_msg(msg).await;
+
+                // WhisperNet: broadcast approved directive as P2P fallback
+                let whisper_payload = serde_json::to_vec(&directive).unwrap_or_default();
+                let whisper_msg = hive_base::whispernet::WhisperMessage {
+                    msg_id: Uuid::new_v4(),
+                    sender_id: self.identity.id(),
+                    seq: 0,
+                    payload: whisper_payload,
+                    ttl: self.whispernet.config.max_hops,
+                    signature: vec![],
+                    timestamp: hive_base::utils::timestamp_now(),
+                };
+                if self.whispernet.send_message(whisper_msg).is_ok() {
+                    info!("WhisperNet: broadcast directive {}", executed_id);
+                }
             }
         }
     }
@@ -200,6 +226,7 @@ impl OvermindAgent {
         let mut heartbeat_timer = time::interval(self.heartbeat_interval);
         let mut tournament_timer = time::interval(Duration::from_secs(600));
         let mut hivemind_timer = time::interval(Duration::from_secs(120));
+        let mut whisper_timer = time::interval(Duration::from_secs(60));
 
         loop {
             tokio::select! {
@@ -216,6 +243,11 @@ impl OvermindAgent {
                         );
                         self.publish_msg(msg).await;
                     }
+                }
+                _ = whisper_timer.tick() => {
+                    self.whispernet.rebuild_routing_table();
+                    info!("WhisperNet: {} peers, {} msgs routed",
+                        self.whispernet.peers.len(), self.whispernet.messages.len());
                 }
                 _ = time::sleep(Duration::from_millis(200)) => { self.process_incoming().await; }
             }

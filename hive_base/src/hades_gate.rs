@@ -18,7 +18,7 @@ pub mod windows {
         let ntdll_base = get_loaded_ntdll_base()?;
         let exports = parse_loaded_pe_exports(ntdll_base)?;
 
-        let (func_rva, _) = exports.iter()
+        let (_, func_rva) = exports.iter()
             .find(|(name, _)| name.eq_ignore_ascii_case(function_name))?;
 
         let func_addr = ntdll_base + *func_rva as usize;

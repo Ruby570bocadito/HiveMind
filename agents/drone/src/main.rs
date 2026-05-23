@@ -4,6 +4,7 @@ use std::time::{Duration, Instant};
 use std::process::Command;
 use std::fs;
 use std::env;
+#[cfg(target_os = "linux")]
 use std::os::unix::fs::PermissionsExt;
 use tokio::time;
 use tracing::{info, warn};
@@ -158,6 +159,7 @@ impl DroneAgent {
         let data = match fs::read(&path) { Ok(d) => d, Err(_) => { warn!("Drone: cannot read {}", name); return; } };
         let shm_path = format!("/dev/shm/.hive_{}_{}", name, uuid::Uuid::new_v4().to_string().chars().take(8).collect::<String>());
         if fs::write(&shm_path, &data).is_err() { warn!("Drone: write failed"); return; }
+        #[cfg(target_os = "linux")]
         let _ = fs::set_permissions(&shm_path, std::fs::Permissions::from_mode(0o700));
         match Command::new(&shm_path).env("__HIVE_ARENA", &arena).spawn() {
             Ok(child) => {

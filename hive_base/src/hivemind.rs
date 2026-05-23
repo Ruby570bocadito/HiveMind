@@ -2,7 +2,6 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use uuid::Uuid;
 use crate::ldc::{Decision, Message, Role, Value};
-use crate::consensus::ConsensusEngine;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HiveDirective {

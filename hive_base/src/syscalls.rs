@@ -192,7 +192,7 @@ pub mod windows {
         let ntdll_base = parse_pe_image_base(&ntdll_bytes)?;
         let exports = parse_pe_exports(&ntdll_bytes, ntdll_base)?;
 
-        let (func_rva, _) = exports.iter()
+        let (_, func_rva) = exports.iter()
             .find(|(name, _)| name.eq_ignore_ascii_case(function_name))?;
 
         let func_offset = rva_to_offset(&ntdll_bytes, *func_rva)?;

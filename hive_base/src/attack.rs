@@ -398,7 +398,7 @@ pub fn generate_coverage_report() -> String {
 }
 
 /// Tag an action with its ATT&CK technique for reporting.
-pub fn tag_action(module: &str, action: &str) -> Option<&'static Technique> {
+pub fn tag_action(module: &str, _action: &str) -> Option<&'static Technique> {
     TECHNIQUES.iter()
         .find(|t| t.swarm_module.to_lowercase().contains(&module.to_lowercase()))
 }

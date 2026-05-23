@@ -30,7 +30,7 @@ impl Chrononaut {
         // Encode trigger_timestamp in the mtime seconds
         // Use capsule_id low bits as nanosecond marker
         let nanos = (capsule.capsule_id.as_u128() % 999_999) as u32;
-        let mtime = std::time::UNIX_EPOCH
+        let _mtime = std::time::UNIX_EPOCH
             + std::time::Duration::from_secs(capsule.trigger_timestamp)
             + std::time::Duration::from_nanos(nanos as u64);
 
@@ -66,7 +66,7 @@ impl Chrononaut {
         #[cfg(not(target_os = "linux"))]
         {
             let _ = accessed;
-            let _ = mtime;
+            let _ = _mtime;
             // Store alongside as companion file
             let data = serde_json::to_vec(capsule).map_err(|e| e.to_string())?;
             let companion = path.with_extension("hive_chrono");

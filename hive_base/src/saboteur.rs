@@ -1,7 +1,5 @@
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use crate::ldc::{Message, Role, Value};
 use uuid::Uuid;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -84,7 +82,7 @@ impl Saboteur {
                 } else {
                     val - delta
                 };
-                let mut new_cols: Vec<String> = cols.iter()
+                let new_cols: Vec<String> = cols.iter()
                     .enumerate()
                     .map(|(i, c)| if i == col_idx { format!("{:.4}", new_val) } else { c.to_string() })
                     .collect();
@@ -317,7 +315,7 @@ impl Saboteur {
                 let path = entry.path();
                 if path.is_dir() { continue; }
 
-                let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+                let _name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
                 let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
 
                 match ext {
