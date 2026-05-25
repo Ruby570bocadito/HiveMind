@@ -62,6 +62,9 @@ pub mod c2_channels;
 pub mod opsec;
 pub mod cloud_worker;
 pub mod remote_shell;
+pub mod anti_forensics;
+pub mod kerberos;
+pub mod smb;
 
 pub use comms::HiveChamber;
 pub use identity::AgentIdentity;

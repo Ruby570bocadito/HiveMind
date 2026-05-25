@@ -1,0 +1,11 @@
+apiVersion: v2
+name: hive-colony
+description: Hive Colony — Multi-Agent Autonomous Red Team Framework
+type: application
+version: 3.0.0
+appVersion: 3.0.0
+keywords:
+  - security
+  - red-team
+  - rust
+  - c2

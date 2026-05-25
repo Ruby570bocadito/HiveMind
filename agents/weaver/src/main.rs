@@ -1,4 +1,5 @@
 use hive_base::{AgentIdentity, ConsensusEngine, HiveChamber, Message, Payload, Role};
+use hive_base::reactive_llm::reactive_cycle;
 use rand::Rng;
 use std::time::Duration;
 use tokio::time;
@@ -206,11 +207,33 @@ impl WeaverAgent {
 
         let mut heartbeat_timer = time::interval(self.heartbeat_interval);
         let mut mutation_timer = time::interval(Duration::from_secs(120));
+        let mut reactive_timer = time::interval(Duration::from_secs(14400)); // every 4 hours
+
+        let src_dir = option_env!("WEAVER_SRC_DIR")
+            .unwrap_or("agents/weaver")
+            .to_string();
+        let ws_dir = option_env!("WEAVER_WORKSPACE_DIR")
+            .unwrap_or(".")
+            .to_string();
+        let out_dir = option_env!("WEAVER_OUTPUT_DIR")
+            .unwrap_or("/tmp/hive_variants")
+            .to_string();
 
         loop {
             tokio::select! {
                 _ = heartbeat_timer.tick() => { self.send_heartbeat().await; }
                 _ = mutation_timer.tick() => { self.pre_generate_mutations().await; }
+                _ = reactive_timer.tick() => {
+                    info!("Starting LLM reactive cycle");
+                    let variant = tokio::task::spawn_blocking(move || {
+                        reactive_cycle(&src_dir, "weaver", &ws_dir, &out_dir)
+                    }).await.ok().flatten().flatten();
+                    if let Some(path) = variant {
+                        info!("Reactive variant generated: {}", path);
+                    } else {
+                        info!("Reactive cycle skipped (Ollama not available or source unchanged)");
+                    }
+                }
                 _ = time::sleep(Duration::from_millis(200)) => { self.process_incoming().await; }
             }
         }

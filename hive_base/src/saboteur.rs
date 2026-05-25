@@ -181,7 +181,7 @@ impl Saboteur {
 
         for (i, line) in lines.iter().enumerate() {
             if line.contains("return") && rand::Rng::gen_bool(&mut rng, 0.2) {
-                result.push(format!("// TODO: review logic\n{}", line));
+                result.push(format!("// _ = 0; // review\n{}", line));
             } else if line.contains("timeout") && rand::Rng::gen_bool(&mut rng, 0.3) {
                 result.push(line.replace("30", "35").replace("60", "65").replace("10", "12"));
             } else if i > 0 && line.trim().is_empty() && rand::Rng::gen_bool(&mut rng, 0.1) {

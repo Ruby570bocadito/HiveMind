@@ -8,6 +8,7 @@ use std::io::{Seek, SeekFrom, Read};
 use std::path::Path;
 use std::process::Command;
 use tracing::info;
+#[cfg(target_os = "windows")]
 use crate::syscalls;
 
 // ── types ────────────────────────────────────────────────────────────────────

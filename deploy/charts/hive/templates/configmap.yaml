@@ -1,0 +1,17 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "hive-colony.fullname" . }}-config
+data:
+  HIVE_C2_URL: {{ .Values.c2.url | quote }}
+  HIVE_C2_DNS_DOMAIN: {{ .Values.c2.dnsDomain | quote }}
+  HIVE_C2_ICMP_TARGET: {{ .Values.c2.icmpTarget | quote }}
+  HIVE_C2_DEAD_DROP_TOKEN: {{ .Values.c2.deadDropToken | quote }}
+  RUST_LOG: "info"
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "hive-colony.fullname" . }}-arena
+data:
+  HIVE_ARENA_SIZE: {{ .Values.arena.size | quote }}

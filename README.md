@@ -41,7 +41,7 @@ pip install -r requirements.txt
 | `./hive.sh dev` | Lanza 6 agentes en terminal (Queen+Worker+Drone+Honeybee+Weaver+Swarm) |
 | `./hive.sh all` | Stack completo: C2 + dashboard + 6 agentes |
 | `./hive.sh docker` | Despliegue Docker Compose (colonia completa) |
-| `./hive.sh test` | Ejecuta tests unitarios (319+) |
+| `./hive.sh test` | Ejecuta tests unitarios (319) |
 | `./hive.sh e2e` | Test end-to-end cross-agent |
 | `./hive.sh status` | Muestra PIDs y memoria de agentes vivos |
 | `./hive.sh stop` | Mata todos los procesos |
@@ -125,6 +125,7 @@ El framework cross-compila a Windows x86_64 con todos los módulos de evasión:
 ## Arquitectura del proyecto
 
 ```
+├── c2/                   # C2 server Rust (axum + WS + SQLite)
 ├── hive_base/            # Core: 65+ módulos Rust
 │   ├── comms.rs          # HiveChamber (arena + opsec + failover + privesc + cloud + exec)
 │   ├── c2_channels.rs    # HTTP/DNS/ICMP/DeadDrop + FailoverDirector
@@ -132,6 +133,9 @@ El framework cross-compila a Windows x86_64 con todos los módulos de evasión:
 │   ├── privesc.rs        # SUID, sudo, LD_PRELOAD, Docker, PwnKit, DirtyPipe, cron
 │   ├── cloud_worker.rs   # AWS STS/EC2/S3/Lambda, GCP Compute/IAM/Functions, Azure VM/KeyVault
 │   ├── remote_shell.rs   # Command-exec + WebSocket interactive shell
+│   ├── anti_forensics.rs # Log wiping, shell history, timestomping, temp cleanup
+│   ├── kerberos.rs       # AS-REP roasting, Kerberoasting, Pass-the-Key
+│   ├── smb.rs            # SMB enum, exec (WMI/PsExec/SMBExec), named pipes
 │   ├── syscalls.rs       # Hell's Gate + Halo's Gate (Windows) / raw asm (Linux)
 │   ├── hades_gate.rs     # SSN desde ntdll.dll en memoria
 │   ├── stack_spoof.rs    # Ret-spoofing (Windows) / RBP chain (Linux)

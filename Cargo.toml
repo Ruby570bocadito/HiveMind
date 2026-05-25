@@ -11,6 +11,7 @@ members = [
     "stinger",
     "beekeeper",
     "buzz",
+    "c2",
 ]
 
 [workspace.package]
