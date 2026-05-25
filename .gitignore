@@ -1,6 +1,7 @@
 target/
 payloads/
-*.onnx
+*.onnx*
+Mejoras/
 *.pt
 *.joblib
 *.csv
