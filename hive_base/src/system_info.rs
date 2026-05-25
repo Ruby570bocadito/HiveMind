@@ -122,30 +122,122 @@ pub struct WindowsInfo;
 
 impl SystemInfo for WindowsInfo {
     fn running_processes() -> Vec<String> {
-        // Windows: use WMI or toolhelp32 snapshot
-        // Simplified: return empty for now (allows compilation)
+        #[cfg(target_os = "windows")]
+        {
+            use winapi::um::tlhelp32::{CreateToolhelp32Snapshot, Process32FirstW, Process32NextW, TH32CS_SNAPPROCESS, PROCESSENTRY32W};
+            use winapi::um::handleapi::CloseHandle;
+            use winapi::um::winnt::WCHAR;
+            use std::mem;
+            let mut processes = Vec::new();
+            unsafe {
+                let snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+                if snapshot as isize != -1 {
+                    let mut entry: PROCESSENTRY32W = mem::zeroed();
+                    entry.dwSize = mem::size_of::<PROCESSENTRY32W>() as u32;
+                    if Process32FirstW(snapshot, &mut entry) != 0 {
+                        loop {
+                            let len = entry.szExeFile.iter().position(|&c| c == 0).unwrap_or(260);
+                            let name = String::from_utf16_lossy(&entry.szExeFile[..len]);
+                            processes.push(name);
+                            if Process32NextW(snapshot, &mut entry) == 0 {
+                                break;
+                            }
+                        }
+                    }
+                    CloseHandle(snapshot);
+                }
+            }
+            return processes;
+        }
+        #[cfg(not(target_os = "windows"))]
         Vec::new()
     }
 
-    fn process_count() -> usize { 0 }
+    fn process_count() -> usize {
+        Self::running_processes().len()
+    }
 
     fn network_interface_count() -> usize {
-        // Windows: use GetAdaptersInfo or iphlpapi
+        #[cfg(target_os = "windows")]
+        {
+            use winapi::um::iphlpapi::GetAdaptersAddresses;
+            use winapi::um::iptypes::{GAA_FLAG_SKIP_ANYCAST, GAA_FLAG_SKIP_MULTICAST, GAA_FLAG_SKIP_DNS_SERVER, IP_ADAPTER_ADDRESSES_LH};
+            use winapi::shared::ws2def::AF_UNSPEC;
+            use winapi::shared::winerror::ERROR_BUFFER_OVERFLOW;
+            use std::mem;
+            unsafe {
+                let mut size: u32 = 0;
+                let ret = GetAdaptersAddresses(AF_UNSPEC as u32, GAA_FLAG_SKIP_ANYCAST | GAA_FLAG_SKIP_MULTICAST | GAA_FLAG_SKIP_DNS_SERVER, std::ptr::null_mut(), std::ptr::null_mut(), &mut size);
+                if ret == winapi::shared::winerror::ERROR_BUFFER_OVERFLOW || ret == winapi::shared::winerror::NO_ERROR {
+                    let buf = std::alloc::alloc(std::alloc::Layout::from_size_align(size as usize, 1).unwrap());
+                    let ptr = buf as *mut IP_ADAPTER_ADDRESSES_LH;
+                    let ret2 = GetAdaptersAddresses(AF_UNSPEC as u32, GAA_FLAG_SKIP_ANYCAST | GAA_FLAG_SKIP_MULTICAST | GAA_FLAG_SKIP_DNS_SERVER, std::ptr::null_mut(), ptr, &mut size);
+                    if ret2 == 0 {
+                        let mut count = 0;
+                        let mut current = ptr;
+                        while !current.is_null() {
+                            count += 1;
+                            current = (*current).Next as *mut IP_ADAPTER_ADDRESSES_LH;
+                        }
+                        std::alloc::dealloc(buf, std::alloc::Layout::from_size_align(size as usize, 1).unwrap());
+                        return count;
+                    }
+                    std::alloc::dealloc(buf, std::alloc::Layout::from_size_align(size as usize, 1).unwrap());
+                }
+            }
+            0
+        }
+        #[cfg(not(target_os = "windows"))]
         0
     }
 
     fn cpu_usage_percent() -> f32 {
-        // Windows: use GetSystemTimes
+        #[cfg(target_os = "windows")]
+        {
+            use winapi::shared::minwindef::{BOOL, FILETIME};
+            extern "system" {
+                fn GetSystemTimes(
+                    lpIdleTime: *mut FILETIME,
+                    lpKernelTime: *mut FILETIME,
+                    lpUserTime: *mut FILETIME,
+                ) -> BOOL;
+            }
+            use std::mem;
+            unsafe {
+                let mut idle: FILETIME = mem::zeroed();
+                let mut kernel: FILETIME = mem::zeroed();
+                let mut user: FILETIME = mem::zeroed();
+                if GetSystemTimes(&mut idle, &mut kernel, &mut user) != 0 {
+                    let idle_val = (idle.dwHighDateTime as u64) << 32 | idle.dwLowDateTime as u64;
+                    let kernel_val = (kernel.dwHighDateTime as u64) << 32 | kernel.dwLowDateTime as u64;
+                    let user_val = (user.dwHighDateTime as u64) << 32 | user.dwLowDateTime as u64;
+                    let total = kernel_val + user_val;
+                    if total > 0 {
+                        return 100.0 - (idle_val as f32 / total as f32) * 100.0;
+                    }
+                }
+            }
+        }
         25.0
     }
 
     fn memory_usage_percent() -> f32 {
-        // Windows: use GlobalMemoryStatusEx
+        #[cfg(target_os = "windows")]
+        {
+            use winapi::um::sysinfoapi::{GlobalMemoryStatusEx, MEMORYSTATUSEX};
+            use std::mem;
+            unsafe {
+                let mut mem: MEMORYSTATUSEX = mem::zeroed();
+                mem.dwLength = mem::size_of::<MEMORYSTATUSEX>() as u32;
+                if GlobalMemoryStatusEx(&mut mem) != 0 {
+                    return mem.dwMemoryLoad as f32;
+                }
+            }
+        }
         50.0
     }
 
     fn shm_base_dir() -> PathBuf {
-        // Windows: use %TEMP% or named pipe
         std::env::temp_dir()
     }
 
@@ -163,6 +255,11 @@ impl SystemInfo for WindowsInfo {
 
 // ── Auto-detect platform ──────────────────────────────────────────────
 
+#[cfg(target_os = "linux")]
+pub type PlatformInfo = LinuxInfo;
+#[cfg(target_os = "windows")]
+pub type PlatformInfo = WindowsInfo;
+#[cfg(not(any(target_os = "linux", target_os = "windows")))]
 pub type PlatformInfo = LinuxInfo;
 
 /// Check if a process name matches known EDR process signatures

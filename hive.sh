@@ -27,10 +27,12 @@ _build() {
 
 _agents() {
     export __HIVE_ARENA="$ARENA_NAME"
+    target/debug/queen > /tmp/hive_queen.log 2>&1 &
     target/debug/worker > /tmp/hive_worker.log 2>&1 &
     target/debug/drone > /tmp/hive_drone.log 2>&1 &
     target/debug/honeybee > /tmp/hive_honeybee.log 2>&1 &
     target/debug/weaver > /tmp/hive_weaver.log 2>&1 &
+    target/debug/swarm > /tmp/hive_swarm.log 2>&1 &
 }
 
 # ── Commands ──────────────────────────────────────────────────────────
@@ -38,21 +40,28 @@ case "${1:-}" in
     # ── dev: solo agentes, sin C2, directo a terminal ─────────────────
     dev)
         _clean
-        _build -p worker -p drone -p honeybee -p weaver
+        _build -p worker -p drone -p honeybee -p weaver -p queen -p swarm
         echo -e "${CYAN}╔══════════════════════════╗${NC}"
         echo -e "${CYAN}║   HIVE DEV MODE          ║${NC}"
         echo -e "${CYAN}╚══════════════════════════╝${NC}"
         echo ""
         export __HIVE_ARENA="$ARENA_NAME"
+        export HIVE_C2_URL="${HIVE_C2_URL:-http://127.0.0.1:8444/collect}"
+        export HIVE_C2_DNS_DOMAIN="${HIVE_C2_DNS_DOMAIN:-tunnel.local}"
+        export HIVE_C2_ICMP_TARGET="${HIVE_C2_ICMP_TARGET:-8.8.8.8}"
+        echo -e "${GREEN}Queen${NC}" && target/debug/queen 2>&1 &
+        sleep 1
         echo -e "${GREEN}Worker${NC}" && target/debug/worker 2>&1 &
-        sleep 2
+        sleep 1
         echo -e "${GREEN}Drone${NC}"  && target/debug/drone 2>&1 &
         sleep 1
         echo -e "${GREEN}Honeybee${NC}" && target/debug/honeybee 2>&1 &
         sleep 1
         echo -e "${GREEN}Weaver${NC}" && target/debug/weaver 2>&1 &
+        sleep 1
+        echo -e "${GREEN}Swarm${NC}" && target/debug/swarm 2>&1 &
         echo ""
-        echo -e "${YELLOW}Agents running. Ctrl+C to stop.${NC}"
+        echo -e "${YELLOW}6 agents running. Ctrl+C to stop.${NC}"
         wait
         ;;
 
@@ -63,16 +72,19 @@ case "${1:-}" in
         echo -e "${CYAN}╔══════════════════════════════════════╗${NC}"
         echo -e "${CYAN}║   HIVE FULL STACK                    ║${NC}"
         echo -e "${CYAN}║   Dashboard: http://localhost:8080   ║${NC}"
-        echo -e "${CYAN}║   C2 API:    http://localhost:8443   ║${NC}"
+        echo -e "${CYAN}║   C2 API:    http://localhost:8445   ║${NC}"
         echo -e "${CYAN}╚══════════════════════════════════════╝${NC}"
         echo ""
+        export HIVE_C2_URL="${HIVE_C2_URL:-http://127.0.0.1:8445/collect}"
+        export HIVE_C2_DNS_DOMAIN="${HIVE_C2_DNS_DOMAIN:-tunnel.local}"
+        export HIVE_C2_ICMP_TARGET="${HIVE_C2_ICMP_TARGET:-8.8.8.8}"
         python3 tests/c2_server.py --port 8445 --no-tls > /tmp/hive_c2.log 2>&1 &
         python3 tests/dashboard.py --port 8080 > /tmp/hive_dash.log 2>&1 &
         sleep 2
         export __HIVE_ARENA="$ARENA_NAME"
         _agents
         sleep 3
-        echo -e "${GREEN}4 agents + C2 + dashboard running.${NC}"
+        echo -e "${GREEN}6 agents + C2 + dashboard running.${NC}"
         echo -e "${YELLOW}Ctrl+C to stop. ./hive.sh stop${NC}"
         wait
         ;;
@@ -116,6 +128,31 @@ case "${1:-}" in
         done
         echo ""
         echo "Dashboard: $(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8080 2>/dev/null || echo 'down')"
+        ;;
+
+    # ── docker: deploy con docker compose ────────────────────────────
+    docker)
+        echo -e "${CYAN}╔══════════════════════════════════════╗${NC}"
+        echo -e "${CYAN}║   HIVE DOCKER DEPLOY                 ║${NC}"
+        echo -e "${CYAN}╚══════════════════════════════════════╝${NC}"
+        echo ""
+        # Build images
+        docker compose build
+        # Start colony
+        docker compose up -d
+        echo -e "${GREEN}Colony deployed.${NC}"
+        echo "  docker compose ps            # Status"
+        echo "  docker compose logs -f       # Logs"
+        echo "  docker compose down          # Stop"
+        echo ""
+        echo "  Dashboard: http://localhost:8080"
+        echo "  C2:        http://localhost:8444/health"
+        ;;
+    docker-logs)
+        docker compose logs -f
+        ;;
+    docker-down)
+        docker compose down
         ;;
 
     # ── build: compilar ───────────────────────────────────────────────
@@ -169,13 +206,16 @@ case "${1:-}" in
         echo "  bash setup_cross.sh          # Install cross-compilation toolchains"
         echo ""
         echo -e "${BOLD}Commands:${NC}"
-        echo "  dev     Launch 4 agents in terminal (safest)"
-        echo "  all     Full stack: C2 + dashboard + agents"
-        echo "  test    Run all tests"
-        echo "  e2e     End-to-end integration test"
-        echo "  stop    Kill all hive processes"
-        echo "  status  Show running agents"
-        echo "  clean   Kill processes + cargo clean"
+        echo "  dev       Launch 6 agents in terminal (dev mode)"
+        echo "  all       Full stack: C2 + dashboard + 6 agents"
+        echo "  docker    Deploy colony with Docker Compose"
+        echo "  docker-logs   Tail Docker logs"
+        echo "  docker-down   Stop Docker colony"
+        echo "  test      Run all tests"
+        echo "  e2e       End-to-end integration test"
+        echo "  stop      Kill all hive processes"
+        echo "  status    Show running agents"
+        echo "  clean     Kill processes + cargo clean"
         echo ""
         echo -e "${BOLD}After launching:${NC}"
         echo "  Dashboard: http://localhost:8080"

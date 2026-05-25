@@ -50,7 +50,7 @@ pub mod windows {
     }
 
     /// Get the base address of ntdll.dll loaded in the current process.
-    fn get_loaded_ntdll_base() -> Option<usize> {
+    pub fn get_loaded_ntdll_base() -> Option<usize> {
         // Use PEB to find loaded modules
         // In Rust without winapi, we use inline asm to read from gs:[0x60]
         let peb: usize;

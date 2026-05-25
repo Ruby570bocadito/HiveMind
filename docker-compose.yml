@@ -15,6 +15,9 @@ services:
       - __HIVE_ARENA=/hive_arena/arena.bin
       - HIVE_LAB_MODE=1
       - HIVE_TELEMETRY_DIR=/tmp/hive_telemetry
+      - HIVE_C2_URL=http://c2-server:8444/collect
+      - HIVE_C2_DNS_DOMAIN=tunnel.example.com
+      - HIVE_C2_ICMP_TARGET=8.8.8.8
       - RUST_LOG=info
     volumes:
       - hive_arena:/hive_arena
@@ -28,6 +31,7 @@ services:
     environment:
       - __HIVE_ARENA=/hive_arena/arena.bin
       - HIVE_LAB_MODE=1
+      - HIVE_C2_URL=http://c2-server:8444/collect
       - RUST_LOG=info
     volumes:
       - hive_arena:/hive_arena
@@ -41,7 +45,10 @@ services:
       - __HIVE_ARENA=/hive_arena/arena.bin
       - HIVE_LAB_MODE=1
       - HIVE_TELEMETRY_DIR=/tmp/hive_telemetry
-      - HIVE_C2_URL=https://c2-server:8444/collect
+      - HIVE_C2_URL=http://c2-server:8444/collect
+      - HIVE_C2_DNS_DOMAIN=tunnel.example.com
+      - HIVE_C2_ICMP_TARGET=8.8.8.8
+      - HIVE_EXEC_TIMEOUT=30
       - RUST_LOG=info
     volumes:
       - hive_arena:/hive_arena
@@ -54,6 +61,7 @@ services:
     environment:
       - __HIVE_ARENA=/hive_arena/arena.bin
       - HIVE_LAB_MODE=1
+      - HIVE_C2_URL=http://c2-server:8444/collect
       - RUST_LOG=info
     volumes:
       - hive_arena:/hive_arena
@@ -66,10 +74,24 @@ services:
     environment:
       - __HIVE_ARENA=/hive_arena/arena.bin
       - HIVE_LAB_MODE=1
+      - HIVE_C2_URL=http://c2-server:8444/collect
       - RUST_LOG=info
     volumes:
       - hive_arena:/hive_arena
     command: /hive/bin/weaver
+
+  swarm:
+    build: .
+    container_name: hive-swarm
+    depends_on: [queen, c2-server]
+    environment:
+      - __HIVE_ARENA=/hive_arena/arena.bin
+      - HIVE_LAB_MODE=1
+      - HIVE_C2_URL=http://c2-server:8444/collect
+      - RUST_LOG=info
+    volumes:
+      - hive_arena:/hive_arena
+    command: /hive/bin/swarm
 
   victim:
     build: .
@@ -83,7 +105,7 @@ services:
       mkdir -p /root/Documents /root/.ssh /root/.aws /tmp/financial_data &&
       printf 'account,balance,date\n1001,1250000,2024-01-15\n1002,3400000,2024-01-14\n' > /tmp/financial_data/ledger.csv &&
       echo 'export DB_PASS=secret123' > /root/.bashrc &&
-      echo '<?php \$dbpass=\"pass123\"; ?>' > /root/Documents/config.php &&
+      echo '<?php $$dbpass=\"pass123\"; ?>' > /root/Documents/config.php &&
       echo 'AWS_KEY=AKIA123456789' > /root/.aws/credentials &&
       tail -f /dev/null
       "

