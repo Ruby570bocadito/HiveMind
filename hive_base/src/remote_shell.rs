@@ -211,7 +211,6 @@ const WS_RECONNECT_DELAY: Duration = Duration::from_millis(3000);
 pub struct WsShell {
     running: Arc<AtomicBool>,
     handle: Option<thread::JoinHandle<()>>,
-    url: String,
 }
 
 impl WsShell {
@@ -246,7 +245,7 @@ impl WsShell {
             .ok();
 
         info!("WS-SHELL: started interactive shell -> {}", url_owned);
-        Self { running, handle, url: url_owned }
+        Self { running, handle }
     }
 
     /// Stop the shell session and kill the child process.

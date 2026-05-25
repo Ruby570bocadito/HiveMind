@@ -47,6 +47,7 @@ impl LuaEngine {
         }
     }
 
+    #[allow(dead_code)]
     pub fn update_colony(&mut self, agents: usize) {
         let _ = self.lua.context(|ctx| {
             let globals = ctx.globals();

@@ -225,9 +225,14 @@ impl WeaverAgent {
                 _ = mutation_timer.tick() => { self.pre_generate_mutations().await; }
                 _ = reactive_timer.tick() => {
                     info!("Starting LLM reactive cycle");
-                    let variant = tokio::task::spawn_blocking(move || {
-                        reactive_cycle(&src_dir, "weaver", &ws_dir, &out_dir)
-                    }).await.ok().flatten().flatten();
+                    let variant = tokio::task::spawn_blocking({
+                        let src_dir = src_dir.clone();
+                        let ws_dir = ws_dir.clone();
+                        let out_dir = out_dir.clone();
+                        move || {
+                            reactive_cycle(&src_dir, "weaver", &ws_dir, &out_dir)
+                        }
+                    }).await.ok().flatten();
                     if let Some(path) = variant {
                         info!("Reactive variant generated: {}", path);
                     } else {

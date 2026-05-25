@@ -1,7 +1,6 @@
 use std::net::TcpStream;
 use std::process::Command;
 use std::time::Duration;
-use tracing::{info, warn};
 
 pub struct SmbAttack;
 

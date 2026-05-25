@@ -12,12 +12,16 @@ from datetime import datetime
 from pathlib import Path
 
 BORN = time.time()
+LOG_DIRS = ['/tmp', '/var/log']
+ARENA_PATH = '/dev/shm'
+
+AGENT_ROLES = ['queen', 'worker', 'drone', 'honeybee', 'weaver', 'swarm']
 
 # ── Data ──────────────────────────────────────────────────────────────────────
 
 def get_state():
     agents = []
-    for role in ['worker', 'drone', 'weaver', 'honeybee', 'queen', 'swarm']:
+    for role in AGENT_ROLES:
         try:
             r = subprocess.run(['pgrep', '-f', role], capture_output=True, text=True, timeout=2)
             for pid in r.stdout.strip().split():
@@ -27,7 +31,7 @@ def get_state():
         except Exception:
             pass
 
-    shm = [f.name for f in Path('/dev/shm').glob('hive_*')] if Path('/dev/shm').exists() else []
+    shm = [f.name for f in Path(ARENA_PATH).glob('hive_*')] if Path(ARENA_PATH).exists() else []
 
     memfds = 0
     try:
@@ -48,6 +52,25 @@ def get_state():
         'shm': shm,
         'memfds': memfds,
     }
+
+def get_agent_reasoning():
+    """Read agent logs and extract reasoning."""
+    reasoning = {}
+    for agent in AGENT_ROLES:
+        lines = []
+        for ld in LOG_DIRS:
+            logfile = Path(ld) / f'hive_{agent}.log'
+            if logfile.exists():
+                try:
+                    with open(logfile) as f:
+                        all_lines = f.readlines()
+                        lines = [l.strip() for l in all_lines[-15:] if l.strip()]
+                except Exception:
+                    pass
+                break
+        if lines:
+            reasoning[agent] = lines
+    return reasoning
 
 def _proc_mem(pid):
     try:
@@ -97,7 +120,7 @@ THEME = """
 body{
     background:var(--bg);color:var(--text);
     font:13px/1.5 'JetBrains Mono','Fira Code','Cascadia Code',monospace;
-    padding:20px;max-width:1000px;margin:0 auto;
+    padding:20px;max-width:1200px;margin:0 auto;
     min-height:100vh;
 }
 pre{color:var(--green);font-size:10px;line-height:1;margin:0 0 12px 0;text-shadow:0 0 4px rgba(58,235,140,0.3)}
@@ -132,7 +155,13 @@ td{padding:5px 10px;border-bottom:1px solid var(--border)}
 .green{color:var(--green)}.cyan{color:var(--cyan)}.red{color:var(--red)}.gold{color:var(--gold)}.purple{color:var(--purple)}.orange{color:var(--orange)}
 .role-icon{display:inline-block;width:14px;text-align:center;margin-right:6px;font-size:10px}
 .agent-row:hover{background:var(--surface2)}
+.reasoning-panel{background:var(--surface);border:1px solid var(--border);border-radius:4px;padding:10px 14px;margin-bottom:10px}
+.reasoning-panel .agent-header{font-size:11px;font-weight:700;letter-spacing:1px;margin-bottom:6px;display:flex;align-items:center;gap:8px}
+.reasoning-panel .log-line{font-size:10px;color:var(--text2);padding:1px 0;line-height:1.4;word-break:break-all}
+.reasoning-panel .log-line:hover{color:var(--text)}
+.reasoning-panel .line-time{color:var(--text2);opacity:0.5;margin-right:6px}
 .footer{color:var(--text2);font-size:10px;margin-top:20px;text-align:center;border-top:1px solid var(--border);padding-top:12px}
+.hive-banner{font-size:10px;color:var(--text2);text-align:center;margin-bottom:10px;opacity:0.6}
 """
 
 ROLE_ICONS = {'worker':'◈','drone':'◆','honeybee':'◉','weaver':'✦','queen':'◇','swarm':'⬡'}
@@ -142,9 +171,10 @@ ROLE_COLORS = {'worker':'green','drone':'cyan','honeybee':'orange','weaver':'pur
 
 PAGE = """<!DOCTYPE html>
 <html><head><meta charset="UTF-8"><title>HIVE C2</title>
-<meta http-equiv="refresh" content="3">
+<meta http-equiv="refresh" content="5">
 <style>""" + THEME + """</style></head><body>
 <pre>""" + HIVE_LOGO + """</pre>
+<div class="hive-banner">""" + HIVE_BANNER + """</div>
 <div class="status-bar">
     <span class="dot dot-$dot_class"></span>
     <span>$status_text</span>
@@ -157,18 +187,22 @@ PAGE = """<!DOCTYPE html>
     <div class="card">
         <div class="value">$agents_n</div>
         <div class="label">AGENTS ACTIVE</div>
+        <div class="metric-extra">$agent_list</div>
     </div>
     <div class="card">
         <div class="value">$shm_n</div>
         <div class="label">SHARED MEM FILES</div>
+        <div class="metric-extra">/dev/shm/hive_*</div>
     </div>
     <div class="card">
         <div class="value">$memfd_n</div>
         <div class="label">MEMFD (FILELESS)</div>
+        <div class="metric-extra">anonymous pages</div>
     </div>
     <div class="card">
         <div class="value">${total_mem}M</div>
         <div class="label">TOTAL MEMORY</div>
+        <div class="metric-extra">${avg_mem}M avg per agent</div>
     </div>
 </div>
 <h2>◈ AGENT REGISTRY</h2>
@@ -176,7 +210,9 @@ PAGE = """<!DOCTYPE html>
 <tr><th>PID</th><th>ROLE</th><th>MEMORY</th><th>STATUS</th></tr>
 $agent_rows
 </table>
-<p class="footer">$timestamp · HIVE C2 v2.0 · auto-refresh 3s</p>
+<h2>✦ AGENT REASONING (last 15 lines)</h2>
+$reasoning_html
+<p class="footer">$timestamp · HIVE C2 v3.0 · auto-refresh 5s · <a href="/api/state" style="color:var(--cyan)">API</a> · <a href="/api/reasoning" style="color:var(--cyan)">REASONING</a></p>
 </body></html>"""
 
 # ── Handler ───────────────────────────────────────────────────────────────────
@@ -187,6 +223,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
     def do_GET(self):
         if self.path == '/api/state':
             self._json(get_state())
+        elif self.path == '/api/reasoning':
+            self._json(get_agent_reasoning())
         else:
             self._html()
 
@@ -202,7 +240,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         agents_n = len(s['agents'])
         total_mem = sum(a['mem'] for a in s['agents'])
 
-        # Status logic
+        # Status
         if agents_n == 0:
             dot_class, status_text, tag, tag_class = 'idle', 'AWAITING HIVE', 'DORMANT', 'warn'
         elif agents_n >= 3:
@@ -211,10 +249,13 @@ class Handler(http.server.BaseHTTPRequestHandler):
             dot_class, status_text, tag, tag_class = 'live', 'BOOTSTRAPPING', 'PARTIAL', 'warn'
 
         # Agent rows
+        role_order = ['queen','worker','drone','honeybee','weaver','swarm']
         rows = ''
-        for a in sorted(s['agents'], key=lambda x: ['worker','drone','weaver','honeybee','queen','swarm'].index(x['role']) if x['role'] in ['worker','drone','weaver','honeybee','queen','swarm'] else 99):
+        agent_names = []
+        for a in sorted(s['agents'], key=lambda x: role_order.index(x['role']) if x['role'] in role_order else 99):
             icon = ROLE_ICONS.get(a['role'], '?')
             color = ROLE_COLORS.get(a['role'], 'green')
+            agent_names.append(a['role'])
             rows += (
                 f'<tr class="agent-row">'
                 f'<td style="color:var(--text2)">{a["pid"]}</td>'
@@ -226,12 +267,55 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if not rows:
             rows = '<tr><td colspan="4" style="color:var(--text2);text-align:center;padding:20px">no agents in hive memory</td></tr>'
 
+        # Reasoning panel
+        reasoning = get_agent_reasoning()
+        reasoning_html = ''
+        for role in role_order:
+            icon = ROLE_ICONS.get(role, '?')
+            color = ROLE_COLORS.get(role, 'green')
+            lines = reasoning.get(role, [])
+            if not lines and not any(a['role'] == role for a in s['agents']):
+                continue
+            # If agent is running but no log file, note it
+            is_running = any(a['role'] == role for a in s['agents'])
+            header = f'<span class="{color}">{icon}</span> {role.upper()}'
+            if not is_running:
+                header += ' <span style="color:var(--red);font-size:9px">(offline)</span>'
+
+            if lines:
+                log_html = ''
+                for line in lines[-15:]:
+                    # Try to extract timestamp from structured log
+                    ts = ''
+                    rest = line
+                    if line.startswith('\x1b['):
+                        # ANSI escape — skip
+                        pass
+                    log_html += f'<div class="log-line">{line[:200]}</div>'
+            else:
+                log_html = '<div class="log-line" style="color:var(--text2);opacity:0.4">(no log data)</div>'
+
+            reasoning_html += f'''
+            <div class="reasoning-panel">
+                <div class="agent-header">{header}</div>
+                {log_html}
+            </div>'''
+
+        if not reasoning_html:
+            reasoning_html = '<div class="reasoning-panel"><div class="log-line" style="color:var(--text2);opacity:0.4;text-align:center;padding:10px">awaiting agent reasoning...</div></div>'
+
+        avg_mem = total_mem // max(agents_n, 1)
+        agent_list = ', '.join(agent_names) if agent_names else '—'
+
         html = string.Template(PAGE).substitute(
             dot_class=dot_class, status_text=status_text, tag=tag, tag_class=tag_class,
             uptime=str(s['uptime']),
             agents_n=str(agents_n), shm_n=str(len(s['shm'])),
             memfd_n=str(s['memfds']), total_mem=str(total_mem),
+            avg_mem=str(avg_mem),
             agent_rows=rows, timestamp=s['timestamp'],
+            agent_list=agent_list,
+            reasoning_html=reasoning_html,
         )
         self.send_response(200)
         self.send_header('Content-Type', 'text/html; charset=utf-8')
@@ -241,25 +325,21 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
 class Server(socketserver.ThreadingMixIn, http.server.HTTPServer):
     allow_reuse_address = True
-    _obfuscated_port: int = 8080  # Rotates periodically
     daemon_threads = True
 
 def main():
     import argparse
     p = argparse.ArgumentParser(description='HIVE C2 Dashboard')
-    p.add_argument("--port", type=int, default=None, help="HTTP port (random if not set)")
-    p.add_argument('--host', default='127.0.0.1')
+    p.add_argument("--port", type=int, default=8080, help="HTTP port")
+    p.add_argument('--host', default='0.0.0.0')
     args = p.parse_args()
-    if args.port is None:
-        import random
-        args.port = random.randint(8000, 9000)
-        print(f"  [OBFUSCATED] Using random port: {args.port}")
 
     srv = Server((args.host, args.port), Handler)
     print(f'╔══════════════════════════════════════╗')
-    print(f'║   HIVE C2 DASHBOARD v2.0           ║')
+    print(f'║   HIVE C2 DASHBOARD v3.0           ║')
     print(f'║   http://{args.host}:{args.port}                 ║')
     print(f'║   API: /api/state                   ║')
+    print(f'║   API: /api/reasoning               ║')
     print(f'║   Ctrl+C to stop                    ║')
     print(f'╚══════════════════════════════════════╝')
     try:

@@ -1,5 +1,5 @@
 use std::process::Command;
-use tracing::{info, warn};
+use tracing::info;
 
 pub struct KerberosAttack;
 

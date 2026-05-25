@@ -1,7 +1,7 @@
 use std::path::Path;
 use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
-use tracing::{info, warn};
+use tracing::info;
 
 pub struct AntiForensics;
 
@@ -183,7 +183,6 @@ impl AntiForensics {
 
         #[cfg(unix)]
         {
-            let ts_str = format!("{}", ts);
             let status = Command::new("touch")
                 .args(["-t", &format!("@{}", ts), path.to_str().unwrap_or("")])
                 .status()
@@ -197,26 +196,30 @@ impl AntiForensics {
             // For now, fallback to fs::set_file_times (Rust std)
             let atime = std::time::UNIX_EPOCH + std::time::Duration::from_secs(ts as u64);
             let mtime = atime;
-            std::fs::File::open(path)
-                .and_then(|f| {
-                    use std::os::windows::io::AsRawHandle;
-                    // set_file_time is unstable in std, use Windows API
-                    let handle = f.as_raw_handle() as isize as *mut std::ffi::c_void;
-                    extern "system" {
-                        fn SetFileTime(
-                            hFile: *mut std::ffi::c_void,
-                            lpCreationTime: *const i64,
-                            lpLastAccessTime: *const i64,
-                            lpLastWriteTime: *const i64,
-                        ) -> i32;
+            let _result = match std::fs::File::open(path) {
+                Ok(f) => {
+                    #[cfg(windows)]
+                    {
+                        use std::os::windows::io::AsRawHandle;
+                        let handle = f.as_raw_handle() as isize as *mut std::ffi::c_void;
+                        extern "system" {
+                            fn SetFileTime(
+                                hFile: *mut std::ffi::c_void,
+                                lpCreationTime: *const i64,
+                                lpLastAccessTime: *const i64,
+                                lpLastWriteTime: *const i64,
+                            ) -> i32;
+                        }
+                        let ts_100ns = ts as i64 * 10_000_000 + 116_444_736_00_000_000_0i64;
+                        unsafe {
+                            SetFileTime(handle, std::ptr::null(), &ts_100ns, &ts_100ns);
+                        }
                     }
-                    let ts_100ns = ts as i64 * 10_000_000 + 116_444_736_00_000_000_0i64;
-                    unsafe {
-                        SetFileTime(handle, std::ptr::null(), &ts_100ns, &ts_100ns);
-                    }
-                    0i32
-                })
-                .is_ok()
+                    true
+                }
+                Err(_) => false,
+            };
+            _result
         }
 
         #[cfg(not(any(unix, windows)))]

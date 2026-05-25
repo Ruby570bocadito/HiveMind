@@ -1,6 +1,5 @@
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
-use tracing::{info, warn};
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum CloudProvider {

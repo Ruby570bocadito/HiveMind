@@ -73,6 +73,7 @@ pub fn scan_privilege_escalation() -> Vec<PrivEscVector> {
     vectors.extend(scan_docker_group());
     vectors.extend(scan_nfs_shares());
     vectors.extend(scan_kernel_exploits());
+    vectors.extend(scan_container_escapes());
     vectors.sort_by_key(|v| v.risk);
     info!("PRIVESC: found {} potential vectors", vectors.len());
     vectors
@@ -129,6 +130,12 @@ fn try_exploit(vector: &PrivEscVector) -> PrivEscResult {
             root_shell: false, new_uid: None,
             output: "NFS requires remote mount — not attempted".into(),
         };
+    }
+    if vector.technique.contains("cgroup escape") {
+        return exploit_cgroup_escape();
+    }
+    if vector.technique.contains("proc1 root") {
+        return exploit_proc1_root();
     }
     PrivEscResult {
         success: false, technique: vector.technique.clone(),
@@ -350,6 +357,33 @@ fn scan_kernel_exploits() -> Vec<PrivEscVector> {
                 mitre_id: "T1068",
                 risk: RiskLevel::Critical,
             });
+        }
+    }
+    vectors
+}
+
+fn scan_container_escapes() -> Vec<PrivEscVector> {
+    let mut vectors = Vec::new();
+    if let Ok(content) = std::fs::read_to_string("/proc/1/cgroup") {
+        if content.lines().any(|l| l.contains("docker") || l.contains("kubepods") || l.contains("containerd")) {
+            vectors.push(PrivEscVector {
+                binary: String::new(),
+                technique: "cgroup escape".into(),
+                confidence: 0.65,
+                description: "Cgroup release_agent escape from container".into(),
+                mitre_id: "T1611",
+                risk: RiskLevel::Critical,
+            });
+            if std::path::Path::new("/proc/1/root").exists() {
+                vectors.push(PrivEscVector {
+                    binary: String::new(),
+                    technique: "proc1 root".into(),
+                    confidence: 0.70,
+                    description: "/proc/1/root container escape".into(),
+                    mitre_id: "T1611",
+                    risk: RiskLevel::Critical,
+                });
+            }
         }
     }
     vectors

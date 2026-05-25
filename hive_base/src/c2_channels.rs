@@ -173,6 +173,7 @@ impl DnsTunnel {
     }
 
     /// Fallback: use dig command.
+    #[cfg(not(target_os = "linux"))]
     fn send_via_dig(&self, query: &str) -> Result<Vec<u8>, String> {
         let output = std::process::Command::new("dig")
             .arg("+short")
