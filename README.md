@@ -8,47 +8,35 @@
     H I V E   C O L O N Y
 ```
 
-**Multi-agent autonomous security assessment framework.**
+**Rust-based post-exploitation framework.**
 Bee-inspired swarm architecture con agentes especializados, evasión por capas y C2 diverso.
 
-[Documentation](docs/README.md) | [Operator Guide](docs/OPERATOR_GUIDE.md) | [MITRE Coverage](docs/MITRE_MAPPING.md) | [Evasion](docs/EVASION.md)
-
----
-
-## Quick Start (3 pasos)
+## Quick Start
 
 ```bash
-# 1. Entorno
-source build_env.sh
-pip install -r requirements.txt
+# 1. Compilar todo
+cargo build --release --workspace
 
-# 2. Compilar
-./hive.sh build
+# 2. Generar payloads
+./scripts/deploy.sh all
 
-# 3. Ejecutar
-./hive.sh dev      # Agentes en terminal (desarrollo)
-./hive.sh all      # Stack completo (C2 + dashboard + agentes)
-./hive.sh test     # Tests unitarios (+ integración)
-./hive.sh e2e      # Test de integración end-to-end
-./hive.sh status   # Ver agentes vivos
-./hive.sh stop     # Matar todo
+# 3. Despliegue local
+./scripts/launch_colony.sh
+
+# 4. Payload monolítico (auto-extraíble)
+./scripts/build_payload.sh
 ```
 
-## Comandos
+## Vectores de despliegue
 
-| Comando | Qué hace |
-|---------|----------|
-| `./hive.sh dev` | Lanza 6 agentes en terminal (Queen+Worker+Drone+Honeybee+Weaver+Swarm) |
-| `./hive.sh all` | Stack completo: C2 + dashboard + 6 agentes |
-| `./hive.sh docker` | Despliegue Docker Compose (colonia completa) |
-| `./hive.sh test` | Ejecuta tests unitarios (319) |
-| `./hive.sh e2e` | Test end-to-end cross-agent |
-| `./hive.sh status` | Muestra PIDs y memoria de agentes vivos |
-| `./hive.sh stop` | Mata todos los procesos |
-| `./hive.sh build` | Compila workspace completo |
-| `./hive.sh build-win` | Cross-compile a Windows x86_64 |
-| `./hive.sh build-android` | Cross-compile a Android aarch64 |
-| `./hive.sh clean` | Limpia procesos + `cargo clean` |
+| Vector | Comando | Output |
+|--------|---------|--------|
+| Network | `./scripts/deploy.sh network` | `payloads/network/` — stager bash + payload.b64 + oneliner |
+| USB | `./scripts/deploy.sh usb` | `payloads/usb/` — `.install.sh` + `manifest.dat` + `.ps1` |
+| Phishing | `./scripts/deploy.sh phishing` | `payloads/phishing/` — HTML smuggling + VBA macro |
+| EXE | `./scripts/deploy.sh exe --windows` | `payloads/executable/` — C# loader + queen cifrado |
+
+Opciones: `--obfuscate` (PE obfuscation), `--windows`, `--c2-host HOST`, `--c2-port PORT`
 
 ## 6 Agent Types
 
@@ -80,7 +68,7 @@ Queen ─── HTTP(S) ─── C2 Server
 Failover: Priority → Race → RoundRobin con backoff exponencial
 ```
 
-## Evasion por Capas
+## Evasión por Capas
 
 | Capa | Técnica | Estado |
 |------|---------|--------|
@@ -95,9 +83,13 @@ Failover: Priority → Race → RoundRobin con backoff exponencial
 | 9 | OPSEC: Jitter, DecoyProfile, ActivitySchedule, TrafficMimic | ✅ |
 | 10 | Hibernación adaptativa + channel rotation | ✅ |
 
-## Windows Support (D-2)
+## Windows Support
 
-El framework cross-compila a Windows x86_64 con todos los módulos de evasión:
+```bash
+./setup_cross.sh win          # Toolchain
+cargo build --release --target x86_64-pc-windows-gnu -p queen
+./scripts/deploy.sh exe --windows --obfuscate
+```
 
 | Módulo | Capacidad |
 |--------|-----------|
@@ -107,109 +99,40 @@ El framework cross-compila a Windows x86_64 con todos los módulos de evasión:
 | `fileless` | NtCreateSection + NtMapViewOfSection |
 | `leech` | LSASS (syscalls directas), SAM, DPAPI |
 | `anti_analysis` | PEB BeingDebugged, sandbox por USER/CPU |
-| `system_info` | Toolhelp32Snapshot, GetAdaptersAddresses, GetSystemTimes |
-| `runtime` | EDR detection (30+ firmas) |
 | `phoenix` | Persistencia: Registry Run, Startup, SchTasks, WMI |
-| `remote_shell` | Shell interactiva vía WebSocket (WS) |
-| `cloud_worker` | Pivot a AWS / GCP / Azure / K8s |
-
-```bash
-./hive.sh build-win   # Cross-compile
-# Requiere: mingw-w64 (apt install mingw-w64)
-```
 
 ## MITRE ATT&CK
 
 36+ técnicas en 10+ tácticas. [Ver mapeo completo](docs/MITRE_MAPPING.md).
 
-## Arquitectura del proyecto
+## Scripts
 
 ```
-├── c2/                   # C2 server Rust (axum + WS + SQLite)
-├── hive_base/            # Core: 65+ módulos Rust
-│   ├── comms.rs          # HiveChamber (arena + opsec + failover + privesc + cloud + exec)
-│   ├── c2_channels.rs    # HTTP/DNS/ICMP/DeadDrop + FailoverDirector
-│   ├── opsec.rs          # Jitter, DecoyProfile, ActivitySchedule, TrafficMimic
-│   ├── privesc.rs        # SUID, sudo, LD_PRELOAD, Docker, PwnKit, DirtyPipe, cron
-│   ├── cloud_worker.rs   # AWS STS/EC2/S3/Lambda, GCP Compute/IAM/Functions, Azure VM/KeyVault
-│   ├── remote_shell.rs   # Command-exec + WebSocket interactive shell
-│   ├── anti_forensics.rs # Log wiping, shell history, timestomping, temp cleanup
-│   ├── kerberos.rs       # AS-REP roasting, Kerberoasting, Pass-the-Key
-│   ├── smb.rs            # SMB enum, exec (WMI/PsExec/SMBExec), named pipes
-│   ├── syscalls.rs       # Hell's Gate + Halo's Gate (Windows) / raw asm (Linux)
-│   ├── hades_gate.rs     # SSN desde ntdll.dll en memoria
-│   ├── stack_spoof.rs    # Ret-spoofing (Windows) / RBP chain (Linux)
-│   ├── fileless.rs       # memfd_create (Linux) / NtCreateSection (Windows)
-│   ├── leech.rs          # Credential harvester (shadow, proc/mem, cloud, LSASS, SAM)
-│   ├── anti_analysis.rs  # Debug/sandbox/VM detection
-│   ├── phoenix.rs        # Persistencia Windows (4 métodos)
-│   └── ...
-├── agents/
-│   ├── queen/            # Overmind: LLM + C2 bridge + HiveMind
-│   ├── worker/           # Scout: percepción + ONNX
-│   ├── drone/            # Shaper: decisiones + regeneración
-│   ├── honeybee/         # Hoarder: ejecutor final + privesc + cloud
-│   ├── weaver/           # Morph: mutación polimórfica
-│   └── swarm/            # Worm auto-propagante
-├── stinger/              # Dropper/payload inicial
-├── beekeeper/            # Consola del operador
-├── tests/                # C2 server + dashboard (Python) + EDR gauntlet
-├── training/             # ML: datasets, RandomForest, DQN
-├── docker-compose.yml    # Despliegue Docker (C2 + dashboard + 6 agentes + victim + monitor)
-└── hive.sh               # CLI principal
+scripts/
+├── deploy.sh            # Generador de payloads (4 vectores)
+├── build_payload.sh     # Stager monolítico auto-extraíble
+├── launch_colony.sh     # Despliegue local (Docker)
+├── obfuscate_pe.py      # PE obfuscator v2.2
+└── scenario.sh          # Tests de escenarios
 ```
 
 ## Docker Compose
 
 ```bash
-docker compose up -d          # Iniciar colonia completa
-docker compose logs -f        # Ver logs
-docker compose down           # Detener todo
-
-# Servicios:
-#   c2-server  :8444 ─── C2 HTTP endpoint
-#   dashboard  :8080 ─── Web dashboard
-#   queen/worker/drone/honeybee/weaver/swarm ─── agentes
-#   victim    ─── simulated target data
-#   monitor   ─── detection watch
-#   ollama    ─── LLM (perfil: llm, docker compose --profile llm up)
-```
-
-## Variables de Entorno
-
-| Variable | Propósito | Default |
-|----------|-----------|---------|
-| `__HIVE_ARENA` | Ruta del archivo de arena IPC | `/dev/shm/hive_arena` |
-| `HIVE_C2_URL` | Endpoint HTTP C2 | `https://c2:8444/collect` |
-| `HIVE_C2_DNS_DOMAIN` | Dominio para DNS tunnel | `tunnel.example.com` |
-| `HIVE_C2_ICMP_TARGET` | Target para ICMP tunnel | `8.8.8.8` |
-| `HIVE_C2_DEAD_DROP_TOKEN` | Token para Dead Drop (Gist) | — |
-| `HIVE_LAB_MODE` | Modo laboratorio (1=simulado) | `0` |
-| `HIVE_TELEMETRY_DIR` | Directorio de telemetría | `/tmp/hive_telemetry` |
-| `HIVE_EXEC_TIMEOUT` | Timeout por defecto para comandos (s) | `30` |
-| `RUST_LOG` | Nivel de logging | `info` |
-
-## Feature Flags
-
-```bash
-cargo build                           # Con ONNX (default)
-cargo build --no-default-features     # Sin ONNX, compilación rápida
-cargo build --target x86_64-pc-windows-gnu  # Windows cross-compile
+docker compose up -d
+docker compose logs -f
+docker compose down
 ```
 
 ## Requirements
 
-- **Rust** 1.70+ (`rustup default stable`)
+- **Rust** 1.70+
 - **OpenSSL** dev (`apt install libssl-dev pkg-config`)
-- **Python** 3.10+ con `flask`, `scikit-learn` (ver `requirements.txt`)
+- **Python** 3.10+ (ver `requirements.txt`)
 - **Linux** 3.17+ (kernel con `shm_open`)
-- **Docker** (opcional, para colonia containerizada)
+- **Docker** (opcional)
 - **Opcional:** Ollama, nmap, mingw-w64
 
 ## Research Use
 
 Este proyecto es exclusivamente para **investigación y educación** en ciberseguridad defensiva. No usar en sistemas sin autorización explícita por escrito.
-
-## License
-
-Research & educational use only.
