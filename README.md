@@ -11,6 +11,8 @@
 **Rust-based post-exploitation framework.**
 Bee-inspired swarm architecture con agentes especializados, evasión por capas y C2 diverso.
 
+[Deployment](docs/DEPLOYMENT.md) | [Operator Guide](docs/OPERATOR_GUIDE.md) | [Agents](docs/AGENTS.md) | [MITRE Coverage](docs/MITRE_MAPPING.md) | [Evasion](docs/EVASION.md)
+
 ## Quick Start
 
 ```bash
