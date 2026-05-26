@@ -10,3 +10,5 @@ __pycache__/
 .obsidian/
 session.txt
 loot/
+loot_e2e/
+payloads2/

