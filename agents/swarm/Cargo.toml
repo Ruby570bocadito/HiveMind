@@ -1,0 +1,13 @@
+[package]
+name = "swarm"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+hive_base = { path = "../../hive_base" }
+tokio = { version = "1", features = ["full"] }
+tracing = "0.1"
+tracing-subscriber = "0.3"
+uuid = { version = "1", features = ["v4"] }
+rand = "0.8"
+ndarray = "0.15"

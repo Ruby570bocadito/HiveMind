@@ -1,0 +1,78 @@
+# Hive Lab Dockerfile — multi-stage build.
+# Stage 1: compile Hive agents (Rust + deps)
+# Stage 2: operator runtime (C2 + dashboard)
+# Stage 3: victim runtime (SSH + fake data)
+
+# ── Stage 1: Rust builder ──────────────────────────────────────────────
+FROM rust:1.80-slim-bookworm AS builder
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    pkg-config libssl-dev python3 python3-pip \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /opt/hive
+COPY . .
+
+ENV OPENSSL_DIR=/usr
+ENV OPENSSL_LIB_DIR=/usr/lib/x86_64-linux-gnu
+ENV OPENSSL_INCLUDE_DIR=/usr/include
+
+# Build all agents in release mode (strip debug info)
+RUN cargo build --release --workspace 2>&1 | tail -5
+
+# ── Stage 2: Operator runtime ───────────────────────────────────────────
+FROM debian:bookworm-slim AS runtime
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libssl3 ca-certificates python3 curl procps netcat-openbsd \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /opt/hive
+
+# Copy compiled binaries
+COPY --from=builder /opt/hive/target/release/worker /opt/hive/bin/worker
+COPY --from=builder /opt/hive/target/release/drone /opt/hive/bin/drone
+COPY --from=builder /opt/hive/target/release/honeybee /opt/hive/bin/honeybee
+COPY --from=builder /opt/hive/target/release/weaver /opt/hive/bin/weaver
+COPY --from=builder /opt/hive/target/release/queen /opt/hive/bin/queen
+COPY --from=builder /opt/hive/target/release/swarm /opt/hive/bin/swarm
+COPY --from=builder /opt/hive/target/release/stinger /opt/hive/bin/stinger
+COPY --from=builder /opt/hive/target/release/beekeeper /opt/hive/bin/beekeeper
+COPY --from=builder /opt/hive/target/release/buzz /opt/hive/bin/buzz
+
+# Copy test scripts and config
+COPY --from=builder /opt/hive/tests/ /opt/hive/tests/
+COPY --from=builder /opt/hive/hive.toml /opt/hive/hive.toml
+COPY --from=builder /opt/hive/build_env.sh /opt/hive/build_env.sh
+
+# Set up operator safe IPs
+ENV HIVE_BRAIN_SAFE_IPS=192.168.10.2
+
+# ── Stage 3: Victim runtime ─────────────────────────────────────────────
+FROM debian:bookworm-slim AS victim
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    openssh-server libssl3 ca-certificates procps netcat-openbsd \
+    sshpass python3 curl vim-tiny \
+    && rm -rf /var/lib/apt/lists/*
+
+# Configure SSH
+RUN mkdir -p /var/run/sshd && \
+    echo 'PermitRootLogin yes' >> /etc/ssh/sshd_config && \
+    echo 'PasswordAuthentication yes' >> /etc/ssh/sshd_config && \
+    echo 'UsePAM no' >> /etc/ssh/sshd_config && \
+    echo 'root:root123' | chpasswd && \
+    useradd -m -s /bin/bash victim && \
+    echo 'victim:victim123' | chpasswd && \
+    ssh-keygen -A
+
+# Copy compiled binaries for deployment
+COPY --from=builder /opt/hive/target/release/worker /opt/hive/bin/worker
+COPY --from=builder /opt/hive/target/release/drone /opt/hive/bin/drone
+COPY --from=builder /opt/hive/target/release/honeybee /opt/hive/bin/honeybee
+COPY --from=builder /opt/hive/target/release/weaver /opt/hive/bin/weaver
+COPY --from=builder /opt/hive/target/release/queen /opt/hive/bin/queen
+COPY --from=builder /opt/hive/target/release/swarm /opt/hive/bin/swarm
+COPY --from=builder /opt/hive/target/release/stinger /opt/hive/bin/stinger
+
+WORKDIR /opt/hive

@@ -1,0 +1,14 @@
+process_count
+network_connections
+cpu_usage
+memory_usage
+disk_io
+has_edr_process
+has_backup_process
+admin_privileges
+domain_joined
+firewall_enabled
+powershell_logging
+script_block_logging
+amsi_enabled
+credential_guard

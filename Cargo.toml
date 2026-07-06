@@ -1,0 +1,28 @@
+[workspace]
+resolver = "2"
+members = [
+    "hive_base",
+    "agents/worker",
+    "agents/drone",
+    "agents/honeybee",
+    "agents/weaver",
+    "agents/queen",
+    "agents/swarm",
+    "stinger",
+    "beekeeper",
+    "buzz",
+    "c2",
+]
+
+[workspace.package]
+version = "3.0.0"
+edition = "2021"
+description = "Hive Colony v3.0 — Multi-Agent Autonomous Red Team Framework"
+authors = ["Hive Colony Team"]
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+strip = true
+panic = "abort"

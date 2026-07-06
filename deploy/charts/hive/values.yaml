@@ -1,0 +1,66 @@
+replicaCount: 1
+
+image:
+  repository: hive-colony
+  tag: latest
+  pullPolicy: IfNotPresent
+
+arena:
+  storageClass: "standard"
+  size: 64Mi
+
+c2:
+  url: "http://hive-c2:8444/collect"
+  dnsDomain: "tunnel.example.com"
+  icmpTarget: "8.8.8.8"
+  deadDropToken: ""
+
+agents:
+  queen:
+    enabled: true
+    replicas: 1
+    resources:
+      limits: { cpu: 500m, memory: 256Mi }
+      requests: { cpu: 100m, memory: 64Mi }
+  worker:
+    enabled: true
+    replicas: 1
+    resources:
+      limits: { cpu: 500m, memory: 256Mi }
+      requests: { cpu: 100m, memory: 64Mi }
+  drone:
+    enabled: true
+    replicas: 1
+    resources:
+      limits: { cpu: 500m, memory: 256Mi }
+      requests: { cpu: 100m, memory: 64Mi }
+  honeybee:
+    enabled: true
+    replicas: 1
+    resources:
+      limits: { cpu: 500m, memory: 256Mi }
+      requests: { cpu: 100m, memory: 64Mi }
+  weaver:
+    enabled: true
+    replicas: 1
+    resources:
+      limits: { cpu: 500m, memory: 256Mi }
+      requests: { cpu: 100m, memory: 64Mi }
+  swarm:
+    enabled: true
+    replicas: 1
+    resources:
+      limits: { cpu: 500m, memory: 256Mi }
+      requests: { cpu: 100m, memory: 64Mi }
+
+serviceAccount:
+  create: true
+  name: ""
+
+securityContext:
+  runAsNonRoot: false
+  privileged: true
+
+nodeSelector: {}
+tolerations: []
+affinity: {}

@@ -1,0 +1,15 @@
+# Cross-compilation linker configuration for Hive Colony
+# Windows: uses mingw-w64 GCC linker (provides kernel32, advapi32, etc.)
+# Android: uses rust-lld bundled with Rust toolchain.
+
+[target.x86_64-pc-windows-gnu]
+linker = "x86_64-w64-mingw32-gcc"
+ar = "x86_64-w64-mingw32-ar"
+
+[target.aarch64-linux-android]
+linker = "rust-lld"
+ar = "rust-ar"
+
+[target.armv7-linux-androideabi]
+linker = "rust-lld"
+ar = "rust-ar"

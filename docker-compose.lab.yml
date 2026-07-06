@@ -1,0 +1,39 @@
+services:
+  victim1:
+    image: linuxserver/openssh-server:latest
+    container_name: hive-victim1
+    hostname: victim1
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - TZ=UTC
+      - USER_NAME=victim
+      - USER_PASSWORD=victim123
+      - SUDO_ACCESS=true
+      - PASSWORD_ACCESS=true
+    networks:
+      hive-net:
+        ipv4_address: 192.168.10.10
+
+  victim2:
+    image: linuxserver/openssh-server:latest
+    container_name: hive-victim2
+    hostname: victim2
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - TZ=UTC
+      - USER_NAME=victim
+      - USER_PASSWORD=victim123
+      - SUDO_ACCESS=true
+      - PASSWORD_ACCESS=true
+    networks:
+      hive-net:
+        ipv4_address: 192.168.10.11
+
+networks:
+  hive-net:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 192.168.10.0/24

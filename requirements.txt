@@ -1,0 +1,6 @@
+# Hive Colony - Python Dependencies
+# pip install -r requirements.txt
+
+# Test infrastructure (C2 server + dashboard)
+flask>=3.0
+flask-cors>=4.0
