@@ -350,6 +350,11 @@ impl Chrononaut {
     /// Appends the entry to the current user's crontab (via `crontab -l` + `crontab`).
     /// The `schedule` parameter follows standard cron format, e.g. `"0 2 * * *"`.
     pub fn install_cron_job(script_path: &Path, schedule: &str) -> Result<(), String> {
+        // Dry-run mode (HIVE_PERSISTENCE_DRY_RUN=1): never touch the real
+        // user crontab (used by tests).
+        if std::env::var("HIVE_PERSISTENCE_DRY_RUN").is_ok() {
+            return Ok(());
+        }
         let cron_line = format!("{} {}\n", schedule, script_path.display());
 
         // Read existing crontab (if any)
@@ -604,14 +609,14 @@ mod tests {
 
     #[test]
     fn test_install_cron_job_permission_denied() {
-        // Writing to crontab may fail gracefully in test environments.
+        // NEVER modify the real crontab during tests: run in dry-run mode.
+        std::env::set_var("HIVE_PERSISTENCE_DRY_RUN", "1");
         let tmp_script = std::env::temp_dir().join("chrononaut_cron_test.sh");
         std::fs::write(&tmp_script, "#!/bin/sh\necho test").unwrap();
 
         let result = Chrononaut::install_cron_job(&tmp_script, "0 2 * * *");
-        // This may succeed or fail depending on environment; either is acceptable.
-        // We just verify no panic and a Result is returned.
-        assert!(result.is_ok() || result.is_err());
+        // Dry-run always succeeds without touching the system crontab.
+        assert!(result.is_ok(), "dry-run install should succeed: {:?}", result);
 
         let _ = std::fs::remove_file(&tmp_script);
     }

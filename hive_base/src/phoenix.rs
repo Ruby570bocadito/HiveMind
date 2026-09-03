@@ -450,6 +450,29 @@ impl Phoenix {
         let mut results = Vec::new();
         let _ = base_path;
 
+        // Dry-run mode (HIVE_PERSISTENCE_DRY_RUN=1): return the mechanism list
+        // WITHOUT touching the real system. Used by tests (never modify the
+        // operator's crontab/bashrc/systemd on `cargo test`) and by operators
+        // who want to preview what would be installed.
+        if std::env::var("HIVE_PERSISTENCE_DRY_RUN").is_ok() {
+            for (name, mechanism_type, path) in [
+                ("systemd_user_service", "systemd", format!("{}/.config/systemd/user/hive-colony.service", home)),
+                ("cron_job", "cron", "crontab entry".to_string()),
+                ("bashrc_sourcing", "bashrc", format!("{}/.bashrc", home)),
+                ("zshrc_sourcing", "zshrc", format!("{}/.zshrc", home)),
+                ("windows_registry_simulation", "windows_registry", "hive_registry.reg".to_string()),
+            ] {
+                results.push(PersistenceMechanism {
+                    name: name.into(),
+                    path,
+                    mechanism_type: mechanism_type.into(),
+                    installed: true,
+                    description: format!("DRY-RUN (HIVE_PERSISTENCE_DRY_RUN set): {}", loader_script),
+                });
+            }
+            return results;
+        }
+
         // 1. Systemd user service
         let systemd_dir = PathBuf::from(&home).join(".config/systemd/user");
         let service_name = "hive-colony.service";
@@ -1112,6 +1135,9 @@ mod tests {
 
     #[test]
     fn test_install_persistence_mechanisms() {
+        // NEVER install real persistence during tests: the mechanism list is
+        // generated in dry-run mode and nothing on the host is modified.
+        std::env::set_var("HIVE_PERSISTENCE_DRY_RUN", "1");
         let dir = std::env::temp_dir().join("hive_test_persistence");
         let _ = std::fs::create_dir_all(&dir);
 
@@ -1120,24 +1146,24 @@ mod tests {
 
         // Should have at least 5 mechanisms (systemd + cron + bashrc + zshrc + windows reg)
         assert!(results.len() >= 5, "Expected >=5 mechanisms, got {}", results.len());
-
-        // Check systemd service file existence
-        let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".into());
-        let systemd_path = std::path::PathBuf::from(&home)
-            .join(".config/systemd/user/hive-colony.service");
-        if systemd_path.exists() {
-            let content = std::fs::read_to_string(&systemd_path).unwrap_or_default();
+        for r in &results {
             assert!(
-                content.contains(loader),
-                "Systemd unit should reference the loader script"
+                r.description.contains("DRY-RUN"),
+                "mechanism {} should be a dry-run entry, got: {}",
+                r.name,
+                r.description
             );
         }
 
-        // Check windows registry simulation file
-        let reg_path = dir.join("hive_registry.reg");
-        assert!(reg_path.exists(), "Registry .reg file should exist");
-        let reg_content = std::fs::read_to_string(&reg_path).unwrap_or_default();
-        assert!(reg_content.contains("HiveColony"), "Registry file should contain HiveColony entry");
+        // The real systemd service file must NOT have been created.
+        let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".into());
+        let systemd_path = std::path::PathBuf::from(&home)
+            .join(".config/systemd/user/hive-colony.service");
+        assert!(
+            !systemd_path.exists(),
+            "dry-run must not create the real systemd unit at {:?}",
+            systemd_path
+        );
 
         let _ = std::fs::remove_dir_all(&dir);
     }
