@@ -14,6 +14,23 @@ members = [
     "c2",
 ]
 
+# stinger embeds release binaries (include_bytes! on target/release/*),
+# so it must be built explicitly AFTER a release build:
+#   cargo build --release -p worker -p drone -p honeybee -p weaver -p queen
+#   cargo build -p stinger
+default-members = [
+    "hive_base",
+    "agents/worker",
+    "agents/drone",
+    "agents/honeybee",
+    "agents/weaver",
+    "agents/queen",
+    "agents/swarm",
+    "beekeeper",
+    "buzz",
+    "c2",
+]
+
 [workspace.package]
 version = "3.0.0"
 edition = "2021"

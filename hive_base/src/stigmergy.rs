@@ -10,12 +10,11 @@
 //
 // All trail data is ChaCha20 encrypted with a colony-derived key.
 
-use crate::crypto::{encrypt_chacha20, decrypt_chacha20, derive_key};
+use crate::crypto::{encrypt_chacha20, decrypt_chacha20, colony_key};
 use tracing::info;
 
 const XATTR_NAME: &str = "user.hive_trail";
 const ADS_STREAM: &str = "hive_trail";
-const TRAIL_SEED: &[u8] = b"STIGMERGY_COLONY_KEY_V2_X9kM3pQ";
 
 // ── Linux xattr trails ────────────────────────────────────────────────
 
@@ -224,12 +223,12 @@ pub fn clean_trails() {
 // ── Encryption helpers ─────────────────────────────────────────────────
 
 fn encrypt_trail(data: &[u8]) -> Vec<u8> {
-    let key = derive_key(std::str::from_utf8(TRAIL_SEED).unwrap_or("default"));
+    let key = colony_key();
     encrypt_chacha20(data, &key)
 }
 
 fn decrypt_trail(encrypted: &[u8]) -> Option<Vec<u8>> {
-    let key = derive_key(std::str::from_utf8(TRAIL_SEED).unwrap_or("default"));
+    let key = colony_key();
     decrypt_chacha20(encrypted, &key)
 }
 

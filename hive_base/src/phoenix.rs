@@ -8,10 +8,11 @@ use uuid::Uuid;
 
 /// Derive a 32-byte ChaCha20 key from fragment_id using SHA-256.
 /// Prevents casual filesystem reads from revealing fragment data.
+/// Keyed from the colony key (HIVE_MASTER_KEY env, or a documented fallback).
 fn fragment_key(fragment_id: u32) -> [u8; 32] {
     use sha2::{Sha256, Digest};
     let mut hasher = Sha256::new();
-    hasher.update(b"HIVE_FRAG_KEY");
+    hasher.update(crate::crypto::colony_key());
     hasher.update(fragment_id.to_le_bytes());
     let result = hasher.finalize();
     let mut key = [0u8; 32];

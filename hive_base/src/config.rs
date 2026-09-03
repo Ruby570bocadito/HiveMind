@@ -226,8 +226,12 @@ impl HiveConfig {
     /// Load config from colmena.toml, falling back to defaults.
     pub fn load() -> Self {
         let paths = [
+            "hive.toml", // documented in the README (legacy name)
             "colmena.toml",
+            "/etc/swarm/hive.toml",
             "/etc/swarm/colmena.toml",
+            &format!("{}/.config/swarm/hive.toml",
+                std::env::var("HOME").unwrap_or_else(|_| "/tmp".into())),
             &format!("{}/.config/swarm/colmena.toml",
                 std::env::var("HOME").unwrap_or_else(|_| "/tmp".into())),
         ];

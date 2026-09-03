@@ -90,6 +90,18 @@ pub fn derive_seed(seed_str: &str) -> Vec<u8> {
     hasher.finalize().to_vec()
 }
 
+/// Colony-wide key used for cross-agent secrets (stigmergy trails, fragment
+/// encryption, nectar chunks). Read from `HIVE_MASTER_KEY` so operators can
+/// provision a unique key per deployment; falls back to a documented default
+/// for backward compatibility only (identical across all deployments — set
+/// `HIVE_MASTER_KEY` in real operations).
+pub fn colony_key() -> [u8; 32] {
+    match std::env::var("HIVE_MASTER_KEY") {
+        Ok(k) if !k.trim().is_empty() => derive_key(&k),
+        _ => derive_key("HIVE_COLONY_DEFAULT_KEY_CHANGE_ME"),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -153,9 +153,31 @@ fn install_bashrc() -> bool {
 
 /// Uninstall all persistence mechanisms.
 pub fn uninstall_persistence() {
-    // Remove crontab entry
-    let _ = std::process::Command::new("crontab")
-        .arg("-r").output();
+    // Remove ONLY the hive crontab entry (never `crontab -r`: that wipes the
+    // user's whole crontab, including unrelated jobs).
+    if let Ok(out) = std::process::Command::new("crontab").arg("-l").output() {
+        if out.status.success() {
+            let current = String::from_utf8_lossy(&out.stdout);
+            let cleaned: String = current
+                .lines()
+                .filter(|l| !l.contains("HIVE_PERSISTENCE_MARKER") && !l.contains("@reboot") && !l.contains("nohup"))
+                .map(|l| l.to_string())
+                .collect::<Vec<_>>()
+                .join("\n");
+            if let Ok(mut child) = std::process::Command::new("crontab")
+                .stdin(std::process::Stdio::piped())
+                .stdout(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::piped())
+                .spawn()
+            {
+                use std::io::Write;
+                if let Some(mut stdin) = child.stdin.take() {
+                    let _ = stdin.write_all(cleaned.as_bytes());
+                }
+                let _ = child.wait_with_output();
+            }
+        }
+    }
 
     // Remove systemd service
     let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".into());

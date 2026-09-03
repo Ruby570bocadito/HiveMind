@@ -33,8 +33,10 @@ impl DomainFront {
     /// Send data via domain fronted HTTP request.
     /// The request goes to front_domain, but the Host header says backend_host.
     pub fn send(&self, data: &[u8]) -> Result<Vec<u8>, String> {
+        // SECURITY: certificate verification is only disabled in lab mode
+        // (HIVE_LAB_MODE env var) — never in production.
         let client = reqwest::blocking::Client::builder()
-            .danger_accept_invalid_certs(true)
+            .danger_accept_invalid_certs(std::env::var("HIVE_LAB_MODE").is_ok())
             .build()
             .map_err(|e| format!("DomainFront: client: {}", e))?;
 
