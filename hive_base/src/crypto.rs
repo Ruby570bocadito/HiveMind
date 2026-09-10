@@ -3,8 +3,8 @@
 // deobfuscated in memory at runtime. Keys exist only in the binary.
 // Supports ChaCha20 for stronger encryption when needed.
 
-use chacha20::ChaCha20;
 use chacha20::cipher::{KeyIvInit, StreamCipher};
+use chacha20::ChaCha20;
 use rand::Rng;
 
 type ChaCha = ChaCha20;
@@ -30,10 +30,16 @@ pub fn decrypt_model(encrypted: &[u8], seed: &[u8]) -> Option<Vec<u8>> {
 
 fn keystream_byte(seed: &[u8], nonce: &[u8], pos: usize) -> u8 {
     let mut h: u32 = 0x9e3779b9;
-    for &b in seed { h = h.wrapping_mul(31).wrapping_add(b as u32); }
-    for &b in nonce { h = h.wrapping_mul(31).wrapping_add(b as u32); }
+    for &b in seed {
+        h = h.wrapping_mul(31).wrapping_add(b as u32);
+    }
+    for &b in nonce {
+        h = h.wrapping_mul(31).wrapping_add(b as u32);
+    }
     h = h.wrapping_mul(31).wrapping_add(pos as u32);
-    h = h.wrapping_mul(31).wrapping_add(pos.wrapping_mul(0x517cc1b7) as u32);
+    h = h
+        .wrapping_mul(31)
+        .wrapping_add(pos.wrapping_mul(0x517cc1b7) as u32);
     ((h >> 16) ^ h) as u8
 }
 

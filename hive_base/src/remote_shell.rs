@@ -3,7 +3,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
-use tracing::{info, warn, error};
+use tracing::{error, info, warn};
 
 #[derive(Debug, Clone)]
 pub struct CommandResult {
@@ -20,9 +20,7 @@ const MAX_OUTPUT_LEN: usize = 1_048_576; // 1MB
 /// Truncates output beyond MAX_OUTPUT_LEN to avoid arena saturation.
 pub fn execute_command(cmd: &str) -> CommandResult {
     let start = Instant::now();
-    let output = Command::new("sh")
-        .args(["-c", cmd])
-        .output();
+    let output = Command::new("sh").args(["-c", cmd]).output();
 
     let duration_ms = start.elapsed().as_millis() as u64;
 
@@ -44,7 +42,13 @@ pub fn execute_command(cmd: &str) -> CommandResult {
                 truncated = true;
             }
 
-            CommandResult { stdout, stderr, exit_code, duration_ms, truncated }
+            CommandResult {
+                stdout,
+                stderr,
+                exit_code,
+                duration_ms,
+                truncated,
+            }
         }
         Err(e) => CommandResult {
             stdout: String::new(),
@@ -68,13 +72,15 @@ pub fn execute_command_with_timeout(cmd: &str, timeout_secs: u64) -> CommandResu
         .spawn()
     {
         Ok(c) => c,
-        Err(e) => return CommandResult {
-            stdout: String::new(),
-            stderr: format!("Failed to spawn: {}", e),
-            exit_code: -1,
-            duration_ms: start.elapsed().as_millis() as u64,
-            truncated: false,
-        },
+        Err(e) => {
+            return CommandResult {
+                stdout: String::new(),
+                stderr: format!("Failed to spawn: {}", e),
+                exit_code: -1,
+                duration_ms: start.elapsed().as_millis() as u64,
+                truncated: false,
+            }
+        }
     };
 
     let status = loop {
@@ -117,7 +123,10 @@ pub fn execute_command_with_timeout(cmd: &str, timeout_secs: u64) -> CommandResu
     if let Some(out_reader) = child.stdout.take() {
         use std::io::Read;
         let mut buf = String::new();
-        if let Ok(_) = std::io::BufReader::new(out_reader).read_to_string(&mut buf) {
+        if std::io::BufReader::new(out_reader)
+            .read_to_string(&mut buf)
+            .is_ok()
+        {
             if buf.len() > MAX_OUTPUT_LEN {
                 stdout = buf.chars().take(MAX_OUTPUT_LEN).collect();
                 stdout.push_str("\n--- TRUNCATED ---");
@@ -130,7 +139,10 @@ pub fn execute_command_with_timeout(cmd: &str, timeout_secs: u64) -> CommandResu
     if let Some(err_reader) = child.stderr.take() {
         use std::io::Read;
         let mut buf = String::new();
-        if let Ok(_) = std::io::BufReader::new(err_reader).read_to_string(&mut buf) {
+        if std::io::BufReader::new(err_reader)
+            .read_to_string(&mut buf)
+            .is_ok()
+        {
             if buf.len() > MAX_OUTPUT_LEN {
                 stderr = buf.chars().take(MAX_OUTPUT_LEN).collect();
                 stderr.push_str("\n--- TRUNCATED ---");
@@ -186,7 +198,10 @@ impl ExecSession {
         self.last_command = Some(cmd.to_string());
         self.last_result = Some(result.clone());
 
-        info!("EXEC: cmd={} exit={} duration={}ms", cmd, result.exit_code, result.duration_ms);
+        info!(
+            "EXEC: cmd={} exit={} duration={}ms",
+            cmd, result.exit_code, result.duration_ms
+        );
         result
     }
 }
@@ -201,7 +216,6 @@ impl Default for ExecSession {
 
 const WS_PING_INTERVAL: Duration = Duration::from_secs(15);
 const WS_RECONNECT_DELAY: Duration = Duration::from_millis(3000);
-
 
 /// A bidirectional shell tunnel over WebSocket.
 ///
@@ -270,20 +284,27 @@ impl Drop for WsShell {
 }
 
 async fn run_shell_session(url: &str, running: &AtomicBool) {
+    use futures::{SinkExt, StreamExt};
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::process::Command as TokioCommand;
     use tokio_tungstenite::connect_async;
     use tokio_tungstenite::tungstenite::Message;
-    use futures::{SinkExt, StreamExt};
-    use tokio::io::{AsyncWriteExt, AsyncReadExt};
-    use tokio::process::Command as TokioCommand;
 
     let ws = match connect_async(url).await {
         Ok((ws, _)) => ws,
-        Err(e) => { warn!("WS-SHELL: connect failed: {}", e); return; }
+        Err(e) => {
+            warn!("WS-SHELL: connect failed: {}", e);
+            return;
+        }
     };
     info!("WS-SHELL: connected");
     let ws = Arc::new(tokio::sync::Mutex::new(ws));
 
-    let shell_cmd = if cfg!(target_os = "windows") { "cmd.exe" } else { "/bin/sh" };
+    let shell_cmd = if cfg!(target_os = "windows") {
+        "cmd.exe"
+    } else {
+        "/bin/sh"
+    };
 
     let mut child = match TokioCommand::new(shell_cmd)
         .stdin(Stdio::piped())
@@ -292,7 +313,10 @@ async fn run_shell_session(url: &str, running: &AtomicBool) {
         .spawn()
     {
         Ok(c) => c,
-        Err(e) => { warn!("WS-SHELL: spawn failed: {}", e); return; }
+        Err(e) => {
+            warn!("WS-SHELL: spawn failed: {}", e);
+            return;
+        }
     };
 
     let mut stdin = child.stdin.take().unwrap();
@@ -321,8 +345,15 @@ async fn run_shell_session(url: &str, running: &AtomicBool) {
                     let _ = stdin.flush().await;
                 }
                 Ok(Some(Ok(Message::Close(_)))) | Ok(None) => break,
-                Ok(Some(Err(e))) => { warn!("WS-SHELL: recv: {}", e); break; }
-                _ => { if !r1.load(Ordering::Relaxed) { break; } }
+                Ok(Some(Err(e))) => {
+                    warn!("WS-SHELL: recv: {}", e);
+                    break;
+                }
+                _ => {
+                    if !r1.load(Ordering::Relaxed) {
+                        break;
+                    }
+                }
             }
         }
     });
@@ -338,12 +369,21 @@ async fn run_shell_session(url: &str, running: &AtomicBool) {
                 Ok(Ok(0)) => break,
                 Ok(Ok(n)) => {
                     let mut locked = ws2.lock().await;
-                    let _ = locked.send(Message::Text(
-                        String::from_utf8_lossy(&buf[..n]).to_string()
-                    )).await;
+                    let _ = locked
+                        .send(Message::Text(
+                            String::from_utf8_lossy(&buf[..n]).to_string(),
+                        ))
+                        .await;
                 }
-                Ok(Err(e)) => { warn!("WS-SHELL: stdout: {}", e); break; }
-                Err(_) => { if !r2.load(Ordering::Relaxed) { break; } }
+                Ok(Err(e)) => {
+                    warn!("WS-SHELL: stdout: {}", e);
+                    break;
+                }
+                Err(_) => {
+                    if !r2.load(Ordering::Relaxed) {
+                        break;
+                    }
+                }
             }
         }
     });
@@ -359,12 +399,21 @@ async fn run_shell_session(url: &str, running: &AtomicBool) {
                 Ok(Ok(0)) => break,
                 Ok(Ok(n)) => {
                     let mut locked = ws3.lock().await;
-                    let _ = locked.send(Message::Text(
-                        String::from_utf8_lossy(&buf[..n]).to_string()
-                    )).await;
+                    let _ = locked
+                        .send(Message::Text(
+                            String::from_utf8_lossy(&buf[..n]).to_string(),
+                        ))
+                        .await;
                 }
-                Ok(Err(e)) => { warn!("WS-SHELL: stderr: {}", e); break; }
-                Err(_) => { if !r3.load(Ordering::Relaxed) { break; } }
+                Ok(Err(e)) => {
+                    warn!("WS-SHELL: stderr: {}", e);
+                    break;
+                }
+                Err(_) => {
+                    if !r3.load(Ordering::Relaxed) {
+                        break;
+                    }
+                }
             }
         }
     });
@@ -376,9 +425,13 @@ async fn run_shell_session(url: &str, running: &AtomicBool) {
         let mut interval = tokio::time::interval(WS_PING_INTERVAL);
         loop {
             interval.tick().await;
-            if !r4.load(Ordering::Relaxed) { break; }
+            if !r4.load(Ordering::Relaxed) {
+                break;
+            }
             let mut locked = ws4.lock().await;
-            if locked.send(Message::Ping(vec![])).await.is_err() { break; }
+            if locked.send(Message::Ping(vec![])).await.is_err() {
+                break;
+            }
         }
     });
 

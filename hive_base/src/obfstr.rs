@@ -71,7 +71,9 @@ mod tests {
         let original = b"Hello World!";
         let len = original.len();
         let encrypted = xor_encrypt::<12>(original, 0x42, len);
-        let decrypted: Vec<u8> = encrypted.iter().enumerate()
+        let decrypted: Vec<u8> = encrypted
+            .iter()
+            .enumerate()
             .map(|(i, &b)| b ^ 0x42u8.wrapping_add(i as u8))
             .collect();
         assert_eq!(original.as_slice(), decrypted.as_slice());

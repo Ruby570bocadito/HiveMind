@@ -34,11 +34,17 @@ impl HiveResources {
     /// Returns 0 if resources are tight, up to 4 if abundant.
     pub fn recommend_workers(&self) -> usize {
         if self.ram_free_mb < 500 {
-            warn!("HIVE_SCALE: low memory ({}MB free), keeping minimum", self.ram_free_mb);
+            warn!(
+                "HIVE_SCALE: low memory ({}MB free), keeping minimum",
+                self.ram_free_mb
+            );
             return 0;
         }
         if self.cpu_load_pct > 80.0 {
-            info!("HIVE_SCALE: high CPU ({}%), skipping new workers", self.cpu_load_pct);
+            info!(
+                "HIVE_SCALE: high CPU ({}%), skipping new workers",
+                self.cpu_load_pct
+            );
             return 0;
         }
 
@@ -71,10 +77,18 @@ fn read_meminfo() -> (u64, u64) {
     let mut available = 0u64;
     for line in content.lines() {
         if line.starts_with("MemTotal:") {
-            total = line.split_whitespace().nth(1).and_then(|s| s.parse().ok()).unwrap_or(0);
+            total = line
+                .split_whitespace()
+                .nth(1)
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(0);
         }
         if line.starts_with("MemAvailable:") {
-            available = line.split_whitespace().nth(1).and_then(|s| s.parse().ok()).unwrap_or(0);
+            available = line
+                .split_whitespace()
+                .nth(1)
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(0);
         }
     }
     (total, available)
@@ -82,10 +96,7 @@ fn read_meminfo() -> (u64, u64) {
 
 fn read_disk_free() -> f32 {
     // Check root partition
-    if let Ok(out) = std::process::Command::new("df")
-        .args(["-h", "/"])
-        .output()
-    {
+    if let Ok(out) = std::process::Command::new("df").args(["-h", "/"]).output() {
         let text = String::from_utf8_lossy(&out.stdout);
         for line in text.lines().skip(1) {
             let parts: Vec<&str> = line.split_whitespace().collect();

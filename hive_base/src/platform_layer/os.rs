@@ -39,19 +39,28 @@ impl OsTrait for LinuxOs {
     }
 
     fn monotonic_ms() -> u64 {
-        let mut ts = libc::timespec { tv_sec: 0, tv_nsec: 0 };
-        unsafe { libc::clock_gettime(libc::CLOCK_MONOTONIC, &mut ts); }
+        let mut ts = libc::timespec {
+            tv_sec: 0,
+            tv_nsec: 0,
+        };
+        unsafe {
+            libc::clock_gettime(libc::CLOCK_MONOTONIC, &mut ts);
+        }
         (ts.tv_sec as u64 * 1000) + (ts.tv_nsec as u64 / 1_000_000)
     }
 
     fn wallclock_ms() -> u64 {
-        let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default();
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default();
         now.as_millis() as u64
     }
 
     fn sleep_ms(ms: u64) {
         if ms > 0 {
-            unsafe { libc::usleep((ms * 1000) as libc::useconds_t); }
+            unsafe {
+                libc::usleep((ms * 1000) as libc::useconds_t);
+            }
         }
     }
 
@@ -94,16 +103,24 @@ impl OsTrait for WindowsOs {
         }
         let freq_val = unsafe { *freq.QuadPart() };
         let count_val = unsafe { *count.QuadPart() };
-        if freq_val > 0 { (count_val as u64 * 1000) / freq_val as u64 } else { 0 }
+        if freq_val > 0 {
+            (count_val as u64 * 1000) / freq_val as u64
+        } else {
+            0
+        }
     }
 
     fn wallclock_ms() -> u64 {
-        let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default();
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default();
         now.as_millis() as u64
     }
 
     fn sleep_ms(ms: u64) {
-        unsafe { winapi::um::synchapi::Sleep(ms as u32); }
+        unsafe {
+            winapi::um::synchapi::Sleep(ms as u32);
+        }
     }
 
     fn exe_path() -> io::Result<String> {
@@ -113,18 +130,24 @@ impl OsTrait for WindowsOs {
 
     fn is_process_alive(pid: u32) -> bool {
         const STILL_ACTIVE: u32 = 259;
-        let handle = unsafe { winapi::um::processthreadsapi::OpenProcess(
-            winapi::um::winnt::PROCESS_QUERY_INFORMATION,
-            0,
-            pid,
-        )};
-        if handle.is_null() { return false; }
+        let handle = unsafe {
+            winapi::um::processthreadsapi::OpenProcess(
+                winapi::um::winnt::PROCESS_QUERY_INFORMATION,
+                0,
+                pid,
+            )
+        };
+        if handle.is_null() {
+            return false;
+        }
         let mut exit_code = 0u32;
         let alive = unsafe {
             winapi::um::processthreadsapi::GetExitCodeProcess(handle, &mut exit_code as *mut _) != 0
-            && exit_code == STILL_ACTIVE
+                && exit_code == STILL_ACTIVE
         };
-        unsafe { winapi::um::handleapi::CloseHandle(handle); }
+        unsafe {
+            winapi::um::handleapi::CloseHandle(handle);
+        }
         alive
     }
 
@@ -140,18 +163,34 @@ pub struct GenericOs;
 
 #[cfg(not(any(target_os = "linux", target_os = "windows")))]
 impl OsTrait for GenericOs {
-    fn getpid() -> u32 { std::process::id() }
-    fn gettid() -> u64 { std::process::id() as u64 }
+    fn getpid() -> u32 {
+        std::process::id()
+    }
+    fn gettid() -> u64 {
+        std::process::id() as u64
+    }
     fn monotonic_ms() -> u64 {
-        SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_millis() as u64
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as u64
     }
     fn wallclock_ms() -> u64 {
-        SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_millis() as u64
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as u64
     }
-    fn sleep_ms(ms: u64) { std::thread::sleep(std::time::Duration::from_millis(ms)); }
+    fn sleep_ms(ms: u64) {
+        std::thread::sleep(std::time::Duration::from_millis(ms));
+    }
     fn exe_path() -> io::Result<String> {
         Ok(std::env::current_exe()?.to_string_lossy().to_string())
     }
-    fn is_process_alive(_pid: u32) -> bool { true }
-    fn temp_dir() -> String { std::env::temp_dir().to_string_lossy().to_string() }
+    fn is_process_alive(_pid: u32) -> bool {
+        true
+    }
+    fn temp_dir() -> String {
+        std::env::temp_dir().to_string_lossy().to_string()
+    }
 }

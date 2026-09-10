@@ -1,6 +1,5 @@
 use std::path::Path;
 use std::process::Command;
-use std::time::{SystemTime, UNIX_EPOCH};
 use tracing::{error, info};
 
 fn call_ollama(prompt: &str, model: &str) -> Option<String> {
@@ -28,8 +27,7 @@ pub fn llm_rewrite(code_snippet: &str, language: &str) -> Option<String> {
         language, code_snippet
     );
 
-    call_ollama(&prompt, "codellama:7b")
-        .or_else(|| call_ollama(&prompt, "tinyllama"))
+    call_ollama(&prompt, "codellama:7b").or_else(|| call_ollama(&prompt, "tinyllama"))
 }
 
 pub fn llm_mutate_binary(binary: &[u8], agent_name: &str) -> Option<Vec<u8>> {
@@ -41,7 +39,8 @@ pub fn llm_mutate_binary(binary: &[u8], agent_name: &str) -> Option<Vec<u8>> {
          suggest 3 safe byte-level mutations (XOR positions) that change the hash\n\
          but keep the binary functional. Skip the first 4096 bytes (header).\n\
          Respond: pos1:byte1,pos2:byte2,pos3:byte3 [/INST]",
-        binary.len(), agent_name
+        binary.len(),
+        agent_name
     );
 
     let response = call_ollama(&prompt, "tinyllama")?;
@@ -50,9 +49,10 @@ pub fn llm_mutate_binary(binary: &[u8], agent_name: &str) -> Option<Vec<u8>> {
     for part in response.split(',') {
         let parts: Vec<&str> = part.split(':').collect();
         if parts.len() == 2 {
-            if let (Ok(pos), Ok(byte)) =
-                (parts[0].trim().parse::<usize>(), u8::from_str_radix(parts[1].trim(), 16))
-            {
+            if let (Ok(pos), Ok(byte)) = (
+                parts[0].trim().parse::<usize>(),
+                u8::from_str_radix(parts[1].trim(), 16),
+            ) {
                 let idx = 4096 + (pos % body.len());
                 if idx < mutated.len() {
                     mutated[idx] ^= byte;
@@ -80,6 +80,7 @@ pub fn llm_mutate_binary(binary: &[u8], agent_name: &str) -> Option<Vec<u8>> {
 /// 3. Replace the block with the LLM-rewritten version
 /// 4. Compile the mutated source with `cargo build`
 /// 5. Copy the new binary to the target path
+///
 /// Returns the path to the new binary if successful.
 pub fn reactive_cycle(
     agent_src_dir: &str,
@@ -97,10 +98,7 @@ pub fn reactive_cycle(
     let chunk_region_end = source_len * 2 / 3;
     let chunk_size = std::cmp::min(600, chunk_region_end - chunk_region_start);
     let chunk_start = chunk_region_start
-        + (SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_millis() as usize
+        + ((crate::utils::timestamp_now() as usize * 1000)
             % (chunk_region_end - chunk_region_start - chunk_size));
 
     let chunk: &str = &source[chunk_start..chunk_start + chunk_size];
@@ -119,7 +117,12 @@ pub fn reactive_cycle(
     }
 
     // Replace the chunk in the source
-    let new_source = format!("{}{}{}", &source[..chunk_start], rewritten, &source[chunk_start + chunk_size..]);
+    let new_source = format!(
+        "{}{}{}",
+        &source[..chunk_start],
+        rewritten,
+        &source[chunk_start + chunk_size..]
+    );
 
     // Write mutated source to a variant file
     let variant_rs = Path::new(agent_src_dir).join("src").join("variant.rs");
@@ -146,10 +149,7 @@ pub fn reactive_cycle(
         workspace_dir,
         agent_name.replace('-', "_")
     );
-    let ts = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_secs();
+    let ts = crate::utils::timestamp_now();
     let variant_path = Path::new(output_dir).join(format!("{}_{}", agent_name, ts));
     std::fs::create_dir_all(output_dir).ok()?;
     std::fs::copy(&binary_path, &variant_path).ok()?;

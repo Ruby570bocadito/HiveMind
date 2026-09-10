@@ -1,5 +1,5 @@
 use std::io;
-use std::net::{TcpStream, TcpListener, UdpSocket, ToSocketAddrs};
+use std::net::{TcpListener, TcpStream, ToSocketAddrs, UdpSocket};
 
 /// Cross-platform TCP connect
 pub fn tcp_connect<A: ToSocketAddrs>(addr: A) -> io::Result<TcpStream> {
@@ -22,12 +22,12 @@ pub fn udp_bind<A: ToSocketAddrs>(addr: A) -> io::Result<UdpSocket> {
 
 /// Resolve hostname to IP addresses
 pub fn resolve_hostname(host: &str) -> io::Result<Vec<std::net::IpAddr>> {
-    let addrs: Vec<std::net::IpAddr> = (host, 0)
-        .to_socket_addrs()?
-        .map(|sa| sa.ip())
-        .collect();
+    let addrs: Vec<std::net::IpAddr> = (host, 0).to_socket_addrs()?.map(|sa| sa.ip()).collect();
     if addrs.is_empty() {
-        Err(io::Error::new(io::ErrorKind::NotFound, "no addresses resolved"))
+        Err(io::Error::new(
+            io::ErrorKind::NotFound,
+            "no addresses resolved",
+        ))
     } else {
         Ok(addrs)
     }

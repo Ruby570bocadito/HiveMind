@@ -12,12 +12,26 @@ use tracing::{info, warn};
 
 /// IR detection indicators
 const IR_PROCESSES: &[&str] = &[
-    "volatility", "rekall", "lime", "avml",           // memory forensics
-    "procmon", "processhacker", "procexp",              // process monitors
-    "wireshark", "tcpdump", "tshark",                   // network capture
-    "strace", "ltrace", "gdb", "lldb",                   // debuggers
-    "clamscan", "chkrootkit", "rkhunter",               // AV scanners
-    "sysmon", "auditd", "osquery",                       // system monitors
+    "volatility",
+    "rekall",
+    "lime",
+    "avml", // memory forensics
+    "procmon",
+    "processhacker",
+    "procexp", // process monitors
+    "wireshark",
+    "tcpdump",
+    "tshark", // network capture
+    "strace",
+    "ltrace",
+    "gdb",
+    "lldb", // debuggers
+    "clamscan",
+    "chkrootkit",
+    "rkhunter", // AV scanners
+    "sysmon",
+    "auditd",
+    "osquery", // system monitors
 ];
 
 /// Check if incident response activity is detected.
@@ -39,7 +53,8 @@ pub fn detect_ir_activity() -> bool {
 fn check_memory_pressure() -> bool {
     std::fs::read_to_string("/proc/meminfo")
         .map(|s| {
-            let free: u64 = s.lines()
+            let free: u64 = s
+                .lines()
                 .find(|l| l.starts_with("MemAvailable:"))
                 .and_then(|l| l.split_whitespace().nth(1)?.parse().ok())
                 .unwrap_or(999999);

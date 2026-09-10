@@ -5,10 +5,10 @@ use uuid::Uuid;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TimeCapsule {
     pub capsule_id: Uuid,
-    pub trigger_timestamp: u64,      // Unix epoch: execute when this time arrives
-    pub command: String,             // action to execute
-    pub payload: Vec<u8>,            // optional encrypted payload
-    pub host_hint: String,           // which host this targets
+    pub trigger_timestamp: u64, // Unix epoch: execute when this time arrives
+    pub command: String,        // action to execute
+    pub payload: Vec<u8>,       // optional encrypted payload
+    pub host_hint: String,      // which host this targets
     pub executed: bool,
 }
 
@@ -21,7 +21,9 @@ impl Default for Chrononaut {
 }
 
 impl Chrononaut {
-    pub fn new() -> Self { Self }
+    pub fn new() -> Self {
+        Self
+    }
 
     /// Encode a command into a file's modification timestamp.
     /// Uses sub-second precision to encode capsule metadata.
@@ -33,7 +35,9 @@ impl Chrononaut {
         }
 
         let metadata = std::fs::metadata(path).map_err(|e| e.to_string())?;
-        let accessed = metadata.accessed().unwrap_or_else(|_| std::time::SystemTime::now());
+        let accessed = metadata
+            .accessed()
+            .unwrap_or_else(|_| std::time::SystemTime::now());
 
         // Encode trigger_timestamp in the mtime seconds
         // Use capsule_id low bits as nanosecond marker
@@ -47,8 +51,10 @@ impl Chrononaut {
         {
             // Convert to filetime for libc utimensat
             let atime = libc::timespec {
-                tv_sec: accessed.duration_since(std::time::UNIX_EPOCH)
-                    .unwrap_or_default().as_secs() as i64,
+                tv_sec: accessed
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs() as i64,
                 tv_nsec: 0,
             };
             let mtime_ts = libc::timespec {
@@ -56,8 +62,8 @@ impl Chrononaut {
                 tv_nsec: nanos as i64,
             };
 
-            let path_c = std::ffi::CString::new(path.to_str().unwrap())
-                .map_err(|e| e.to_string())?;
+            let path_c =
+                std::ffi::CString::new(path.to_str().unwrap()).map_err(|e| e.to_string())?;
             let res = unsafe {
                 libc::utimensat(
                     libc::AT_FDCWD,
@@ -67,7 +73,10 @@ impl Chrononaut {
                 )
             };
             if res != 0 {
-                return Err(format!("utimensat failed: {}", std::io::Error::last_os_error()));
+                return Err(format!(
+                    "utimensat failed: {}",
+                    std::io::Error::last_os_error()
+                ));
             }
 
             // Also store the full capsule in xattr for roundtrip recovery
@@ -120,7 +129,9 @@ impl Chrononaut {
         // Fallback: reconstruct what we can from the mtime
         let metadata = std::fs::metadata(path).map_err(|e| e.to_string())?;
         let mtime = metadata.modified().map_err(|e| e.to_string())?;
-        let duration = mtime.duration_since(std::time::UNIX_EPOCH).map_err(|e| e.to_string())?;
+        let duration = mtime
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|e| e.to_string())?;
 
         let trigger_secs = duration.as_secs();
         let nanos = duration.subsec_nanos();
@@ -137,8 +148,12 @@ impl Chrononaut {
             Uuid::nil()
         };
 
-        let cmd = format!("check_{}", path.file_name()
-            .and_then(|n| n.to_str()).unwrap_or("unknown"));
+        let cmd = format!(
+            "check_{}",
+            path.file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("unknown")
+        );
 
         Ok(TimeCapsule {
             capsule_id: recovered_uuid,
@@ -153,20 +168,12 @@ impl Chrononaut {
     /// Try to load a full capsule from Linux extended attributes.
     #[cfg(target_os = "linux")]
     fn load_from_xattr(path: &Path) -> Result<TimeCapsule, String> {
-        let path_c = std::ffi::CString::new(path.to_str().unwrap())
-            .map_err(|e| e.to_string())?;
-        let attr = std::ffi::CString::new("user.hive_chrono")
-            .map_err(|e| e.to_string())?;
+        let path_c = std::ffi::CString::new(path.to_str().unwrap()).map_err(|e| e.to_string())?;
+        let attr = std::ffi::CString::new("user.hive_chrono").map_err(|e| e.to_string())?;
 
         // First call with null buffer to get the size
-        let size = unsafe {
-            libc::getxattr(
-                path_c.as_ptr(),
-                attr.as_ptr(),
-                std::ptr::null_mut(),
-                0,
-            )
-        };
+        let size =
+            unsafe { libc::getxattr(path_c.as_ptr(), attr.as_ptr(), std::ptr::null_mut(), 0) };
         if size < 0 {
             return Err("xattr not found".into());
         }
@@ -181,7 +188,10 @@ impl Chrononaut {
             )
         };
         if len < 0 {
-            return Err(format!("getxattr failed: {}", std::io::Error::last_os_error()));
+            return Err(format!(
+                "getxattr failed: {}",
+                std::io::Error::last_os_error()
+            ));
         }
 
         buf.truncate(len as usize);
@@ -198,10 +208,9 @@ impl Chrononaut {
 
         #[cfg(target_os = "linux")]
         {
-            let path_c = std::ffi::CString::new(path.to_str().unwrap())
-                .map_err(|e| e.to_string())?;
-            let attr = std::ffi::CString::new("user.hive_chrono")
-                .map_err(|e| e.to_string())?;
+            let path_c =
+                std::ffi::CString::new(path.to_str().unwrap()).map_err(|e| e.to_string())?;
+            let attr = std::ffi::CString::new("user.hive_chrono").map_err(|e| e.to_string())?;
             let res = unsafe {
                 libc::setxattr(
                     path_c.as_ptr(),
@@ -212,7 +221,10 @@ impl Chrononaut {
                 )
             };
             if res != 0 {
-                return Err(format!("setxattr failed: {}", std::io::Error::last_os_error()));
+                return Err(format!(
+                    "setxattr failed: {}",
+                    std::io::Error::last_os_error()
+                ));
             }
         }
 
@@ -228,7 +240,9 @@ impl Chrononaut {
     /// Scan filesystem for chrononaut capsules ready to execute.
     pub fn scan_for_triggers(root: &Path, now: u64) -> Vec<TimeCapsule> {
         let mut ready = Vec::new();
-        if !root.exists() { return ready; }
+        if !root.exists() {
+            return ready;
+        }
 
         if let Ok(paths) = walkdir(root) {
             for path in paths {
@@ -327,7 +341,7 @@ impl Chrononaut {
         }
 
         let enable = std::process::Command::new("systemctl")
-            .args(&["enable", &format!("{}.timer", name)])
+            .args(["enable", &format!("{}.timer", name)])
             .status()
             .map_err(|e| format!("systemctl enable failed: {}", e))?;
         if !enable.success() {
@@ -335,7 +349,7 @@ impl Chrononaut {
         }
 
         let start = std::process::Command::new("systemctl")
-            .args(&["start", &format!("{}.timer", name)])
+            .args(["start", &format!("{}.timer", name)])
             .status()
             .map_err(|e| format!("systemctl start failed: {}", e))?;
         if !start.success() {
@@ -481,18 +495,30 @@ mod tests {
 
         // Verify roundtrip correctness
         let decoded = decoded.unwrap();
-        assert_eq!(decoded.capsule_id, capsule.capsule_id,
-            "capsule_id should survive roundtrip");
-        assert_eq!(decoded.trigger_timestamp, capsule.trigger_timestamp,
-            "trigger_timestamp should survive roundtrip");
-        assert_eq!(decoded.command, capsule.command,
-            "command should survive roundtrip");
-        assert_eq!(decoded.payload, capsule.payload,
-            "payload should survive roundtrip");
-        assert_eq!(decoded.host_hint, capsule.host_hint,
-            "host_hint should survive roundtrip");
-        assert_eq!(decoded.executed, capsule.executed,
-            "executed flag should survive roundtrip");
+        assert_eq!(
+            decoded.capsule_id, capsule.capsule_id,
+            "capsule_id should survive roundtrip"
+        );
+        assert_eq!(
+            decoded.trigger_timestamp, capsule.trigger_timestamp,
+            "trigger_timestamp should survive roundtrip"
+        );
+        assert_eq!(
+            decoded.command, capsule.command,
+            "command should survive roundtrip"
+        );
+        assert_eq!(
+            decoded.payload, capsule.payload,
+            "payload should survive roundtrip"
+        );
+        assert_eq!(
+            decoded.host_hint, capsule.host_hint,
+            "host_hint should survive roundtrip"
+        );
+        assert_eq!(
+            decoded.executed, capsule.executed,
+            "executed flag should survive roundtrip"
+        );
 
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -514,7 +540,11 @@ mod tests {
         };
 
         let result = Chrononaut::store_in_xattr(&file_path, &capsule);
-        assert!(result.is_ok(), "xattr store should work: {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "xattr store should work: {:?}",
+            result.err()
+        );
 
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -528,7 +558,8 @@ mod tests {
 
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default().as_secs();
+            .unwrap_or_default()
+            .as_secs();
 
         let capsule = TimeCapsule {
             capsule_id: Uuid::new_v4(),
@@ -564,9 +595,16 @@ mod tests {
         };
 
         let result = Chrononaut::execute_capsule(&mut capsule);
-        assert!(result.is_ok(), "Execution should succeed: {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "Execution should succeed: {:?}",
+            result.err()
+        );
         let output = result.unwrap();
-        assert!(output.contains("hello_chrononaut"), "Output should contain command echo");
+        assert!(
+            output.contains("hello_chrononaut"),
+            "Output should contain command echo"
+        );
         assert!(capsule.executed, "Capsule should be marked executed");
     }
 
@@ -583,7 +621,10 @@ mod tests {
 
         let result = Chrononaut::execute_capsule(&mut capsule);
         assert!(result.is_err(), "Exit 42 should cause an error");
-        assert!(capsule.executed, "Capsule should still be marked executed even on failure");
+        assert!(
+            capsule.executed,
+            "Capsule should still be marked executed even on failure"
+        );
     }
 
     #[test]
@@ -596,8 +637,11 @@ mod tests {
         assert!(result.is_err(), "systemd install should fail without root");
         let err = result.err().unwrap();
         // Should mention permission denied or similar
-        assert!(err.contains("denied") || err.contains("Failed") || err.contains("failed"),
-            "Error should indicate failure: {}", err);
+        assert!(
+            err.contains("denied") || err.contains("Failed") || err.contains("failed"),
+            "Error should indicate failure: {}",
+            err
+        );
 
         let _ = std::fs::remove_file(&tmp_script);
     }

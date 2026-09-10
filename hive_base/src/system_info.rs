@@ -64,8 +64,11 @@ impl SystemInfo for LinuxInfo {
     fn cpu_usage_percent() -> f32 {
         if let Ok(stat) = std::fs::read_to_string("/proc/stat") {
             let line = stat.lines().next().unwrap_or("");
-            let parts: Vec<f32> = line.split_whitespace().skip(1)
-                .filter_map(|v| v.parse().ok()).collect();
+            let parts: Vec<f32> = line
+                .split_whitespace()
+                .skip(1)
+                .filter_map(|v| v.parse().ok())
+                .collect();
             if parts.len() >= 4 {
                 let idle = parts[3];
                 let total: f32 = parts.iter().sum();
@@ -83,12 +86,18 @@ impl SystemInfo for LinuxInfo {
             let mut avail: u64 = 0;
             for line in meminfo.lines() {
                 if line.starts_with("MemTotal:") {
-                    total = line.split_whitespace().nth(1)
-                        .and_then(|v| v.parse().ok()).unwrap_or(0);
+                    total = line
+                        .split_whitespace()
+                        .nth(1)
+                        .and_then(|v| v.parse().ok())
+                        .unwrap_or(0);
                 }
                 if line.starts_with("MemAvailable:") {
-                    avail = line.split_whitespace().nth(1)
-                        .and_then(|v| v.parse().ok()).unwrap_or(0);
+                    avail = line
+                        .split_whitespace()
+                        .nth(1)
+                        .and_then(|v| v.parse().ok())
+                        .unwrap_or(0);
                 }
             }
             if total > 0 {
@@ -112,8 +121,12 @@ impl SystemInfo for LinuxInfo {
         std::env::var("USER").unwrap_or_else(|_| "unknown".into())
     }
 
-    fn os_type() -> &'static str { "linux" }
-    fn arch() -> &'static str { std::env::consts::ARCH }
+    fn os_type() -> &'static str {
+        "linux"
+    }
+    fn arch() -> &'static str {
+        std::env::consts::ARCH
+    }
 }
 
 // ── Windows implementation ────────────────────────────────────────────
@@ -124,10 +137,13 @@ impl SystemInfo for WindowsInfo {
     fn running_processes() -> Vec<String> {
         #[cfg(target_os = "windows")]
         {
-            use winapi::um::tlhelp32::{CreateToolhelp32Snapshot, Process32FirstW, Process32NextW, TH32CS_SNAPPROCESS, PROCESSENTRY32W};
-            use winapi::um::handleapi::CloseHandle;
-            use winapi::um::winnt::WCHAR;
             use std::mem;
+            use winapi::um::handleapi::CloseHandle;
+            use winapi::um::tlhelp32::{
+                CreateToolhelp32Snapshot, Process32FirstW, Process32NextW, PROCESSENTRY32W,
+                TH32CS_SNAPPROCESS,
+            };
+            use winapi::um::winnt::WCHAR;
             let mut processes = Vec::new();
             unsafe {
                 let snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
@@ -160,18 +176,37 @@ impl SystemInfo for WindowsInfo {
     fn network_interface_count() -> usize {
         #[cfg(target_os = "windows")]
         {
-            use winapi::um::iphlpapi::GetAdaptersAddresses;
-            use winapi::um::iptypes::{GAA_FLAG_SKIP_ANYCAST, GAA_FLAG_SKIP_MULTICAST, GAA_FLAG_SKIP_DNS_SERVER, IP_ADAPTER_ADDRESSES_LH};
-            use winapi::shared::ws2def::AF_UNSPEC;
-            use winapi::shared::winerror::ERROR_BUFFER_OVERFLOW;
             use std::mem;
+            use winapi::shared::winerror::ERROR_BUFFER_OVERFLOW;
+            use winapi::shared::ws2def::AF_UNSPEC;
+            use winapi::um::iphlpapi::GetAdaptersAddresses;
+            use winapi::um::iptypes::{
+                GAA_FLAG_SKIP_ANYCAST, GAA_FLAG_SKIP_DNS_SERVER, GAA_FLAG_SKIP_MULTICAST,
+                IP_ADAPTER_ADDRESSES_LH,
+            };
             unsafe {
                 let mut size: u32 = 0;
-                let ret = GetAdaptersAddresses(AF_UNSPEC as u32, GAA_FLAG_SKIP_ANYCAST | GAA_FLAG_SKIP_MULTICAST | GAA_FLAG_SKIP_DNS_SERVER, std::ptr::null_mut(), std::ptr::null_mut(), &mut size);
-                if ret == winapi::shared::winerror::ERROR_BUFFER_OVERFLOW || ret == winapi::shared::winerror::NO_ERROR {
-                    let buf = std::alloc::alloc(std::alloc::Layout::from_size_align(size as usize, 1).unwrap());
+                let ret = GetAdaptersAddresses(
+                    AF_UNSPEC as u32,
+                    GAA_FLAG_SKIP_ANYCAST | GAA_FLAG_SKIP_MULTICAST | GAA_FLAG_SKIP_DNS_SERVER,
+                    std::ptr::null_mut(),
+                    std::ptr::null_mut(),
+                    &mut size,
+                );
+                if ret == winapi::shared::winerror::ERROR_BUFFER_OVERFLOW
+                    || ret == winapi::shared::winerror::NO_ERROR
+                {
+                    let buf = std::alloc::alloc(
+                        std::alloc::Layout::from_size_align(size as usize, 1).unwrap(),
+                    );
                     let ptr = buf as *mut IP_ADAPTER_ADDRESSES_LH;
-                    let ret2 = GetAdaptersAddresses(AF_UNSPEC as u32, GAA_FLAG_SKIP_ANYCAST | GAA_FLAG_SKIP_MULTICAST | GAA_FLAG_SKIP_DNS_SERVER, std::ptr::null_mut(), ptr, &mut size);
+                    let ret2 = GetAdaptersAddresses(
+                        AF_UNSPEC as u32,
+                        GAA_FLAG_SKIP_ANYCAST | GAA_FLAG_SKIP_MULTICAST | GAA_FLAG_SKIP_DNS_SERVER,
+                        std::ptr::null_mut(),
+                        ptr,
+                        &mut size,
+                    );
                     if ret2 == 0 {
                         let mut count = 0;
                         let mut current = ptr;
@@ -179,10 +214,16 @@ impl SystemInfo for WindowsInfo {
                             count += 1;
                             current = (*current).Next as *mut IP_ADAPTER_ADDRESSES_LH;
                         }
-                        std::alloc::dealloc(buf, std::alloc::Layout::from_size_align(size as usize, 1).unwrap());
+                        std::alloc::dealloc(
+                            buf,
+                            std::alloc::Layout::from_size_align(size as usize, 1).unwrap(),
+                        );
                         return count;
                     }
-                    std::alloc::dealloc(buf, std::alloc::Layout::from_size_align(size as usize, 1).unwrap());
+                    std::alloc::dealloc(
+                        buf,
+                        std::alloc::Layout::from_size_align(size as usize, 1).unwrap(),
+                    );
                 }
             }
             0
@@ -209,7 +250,8 @@ impl SystemInfo for WindowsInfo {
                 let mut user: FILETIME = mem::zeroed();
                 if GetSystemTimes(&mut idle, &mut kernel, &mut user) != 0 {
                     let idle_val = (idle.dwHighDateTime as u64) << 32 | idle.dwLowDateTime as u64;
-                    let kernel_val = (kernel.dwHighDateTime as u64) << 32 | kernel.dwLowDateTime as u64;
+                    let kernel_val =
+                        (kernel.dwHighDateTime as u64) << 32 | kernel.dwLowDateTime as u64;
                     let user_val = (user.dwHighDateTime as u64) << 32 | user.dwLowDateTime as u64;
                     let total = kernel_val + user_val;
                     if total > 0 {
@@ -224,8 +266,8 @@ impl SystemInfo for WindowsInfo {
     fn memory_usage_percent() -> f32 {
         #[cfg(target_os = "windows")]
         {
-            use winapi::um::sysinfoapi::{GlobalMemoryStatusEx, MEMORYSTATUSEX};
             use std::mem;
+            use winapi::um::sysinfoapi::{GlobalMemoryStatusEx, MEMORYSTATUSEX};
             unsafe {
                 let mut mem: MEMORYSTATUSEX = mem::zeroed();
                 mem.dwLength = mem::size_of::<MEMORYSTATUSEX>() as u32;
@@ -249,8 +291,12 @@ impl SystemInfo for WindowsInfo {
         std::env::var("USERNAME").unwrap_or_else(|_| "unknown".into())
     }
 
-    fn os_type() -> &'static str { "windows" }
-    fn arch() -> &'static str { std::env::consts::ARCH }
+    fn os_type() -> &'static str {
+        "windows"
+    }
+    fn arch() -> &'static str {
+        std::env::consts::ARCH
+    }
 }
 
 // ── Auto-detect platform ──────────────────────────────────────────────
@@ -264,14 +310,30 @@ pub type PlatformInfo = LinuxInfo;
 
 /// Check if a process name matches known EDR process signatures
 pub fn is_edr_process(name: &str) -> bool {
-    let edr: &[&str] = &["csfalcon", "csagent", "msmpeng", "sentinelone", "carbonblack", "cylancesvc", "symantec", "mcafee"];
+    let edr: &[&str] = &[
+        "csfalcon",
+        "csagent",
+        "msmpeng",
+        "sentinelone",
+        "carbonblack",
+        "cylancesvc",
+        "symantec",
+        "mcafee",
+    ];
     let lower = name.to_lowercase();
     edr.iter().any(|e| lower.contains(e))
 }
 
 /// Check if a process name matches known backup process signatures
 pub fn is_backup_process(name: &str) -> bool {
-    let backup: &[&str] = &["veeam", "backup_exec", "commvault", "netbackup", "backup_agent", "vss"];
+    let backup: &[&str] = &[
+        "veeam",
+        "backup_exec",
+        "commvault",
+        "netbackup",
+        "backup_agent",
+        "vss",
+    ];
     let lower = name.to_lowercase();
     backup.iter().any(|b| lower.contains(b))
 }

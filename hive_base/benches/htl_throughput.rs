@@ -34,8 +34,8 @@ fn bench_telemetry_buffer_write(c: &mut Criterion) {
 }
 
 fn bench_arena_claim_write_read(c: &mut Criterion) {
-    let layout = std::alloc::Layout::from_size_align(
-        hive_base::shared_arena::arena_size(), 64).unwrap();
+    let layout =
+        std::alloc::Layout::from_size_align(hive_base::shared_arena::arena_size(), 64).unwrap();
     let ptr = unsafe { std::alloc::alloc_zeroed(layout) };
     hive_base::shared_arena::init_arena(ptr);
 
@@ -49,12 +49,24 @@ fn bench_arena_claim_write_read(c: &mut Criterion) {
                 let (_seq, slot_idx) = hive_base::shared_arena::claim_slot(black_box(ptr));
                 let slot = hive_base::shared_arena::message_slot_mut(ptr, slot_idx);
                 hive_base::shared_arena::write_message_slot(
-                    black_box(slot), i, now, agent_id, [0u8; 32], [0u8; 64], 0, &payload);
+                    black_box(slot),
+                    i,
+                    now,
+                    agent_id,
+                    [0u8; 32],
+                    [0u8; 64],
+                    0,
+                    &payload,
+                );
             }
             black_box(())
         })
     });
 }
 
-criterion_group!(benches, bench_telemetry_buffer_write, bench_arena_claim_write_read);
+criterion_group!(
+    benches,
+    bench_telemetry_buffer_write,
+    bench_arena_claim_write_read
+);
 criterion_main!(benches);

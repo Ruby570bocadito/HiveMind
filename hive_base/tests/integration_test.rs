@@ -1,7 +1,7 @@
 // Integration test: deploys the full swarm and validates end-to-end behavior.
 
-use std::time::Duration;
 use std::net::TcpStream;
+use std::time::Duration;
 
 /// Test 1: Swarm agents don't open TCP ports (operator ports 8080/8443 excluded).
 #[test]
@@ -12,8 +12,10 @@ fn test_swarm_no_tcp_ports() {
             TcpStream::connect_timeout(
                 &format!("127.0.0.1:{}", port).parse().unwrap(),
                 Duration::from_millis(300),
-            ).is_err(),
-            "Port {} is OPEN — swarm should not have TCP listeners", port
+            )
+            .is_err(),
+            "Port {} is OPEN — swarm should not have TCP listeners",
+            port
         );
     }
 }
@@ -24,7 +26,10 @@ fn test_arena_name_unique() {
     let name1 = hive_base::shared_arena::generate_arena_name();
     let name2 = hive_base::shared_arena::generate_arena_name();
     assert_ne!(name1, name2, "Arena names must be unique");
-    assert!(name1.starts_with("/swarm_"), "Arena name must start with /swarm_");
+    assert!(
+        name1.starts_with("/swarm_"),
+        "Arena name must start with /swarm_"
+    );
 }
 
 /// Test 3: Consensus engine reaches correct decisions.
@@ -98,10 +103,16 @@ fn test_crypto_roundtrip() {
 
 fn keystream_byte(seed: &[u8], nonce: &[u8], pos: usize) -> u8 {
     let mut h: u32 = 0x9e3779b9;
-    for &b in seed { h = h.wrapping_mul(31).wrapping_add(b as u32); }
-    for &b in nonce { h = h.wrapping_mul(31).wrapping_add(b as u32); }
+    for &b in seed {
+        h = h.wrapping_mul(31).wrapping_add(b as u32);
+    }
+    for &b in nonce {
+        h = h.wrapping_mul(31).wrapping_add(b as u32);
+    }
     h = h.wrapping_mul(31).wrapping_add(pos as u32);
-    h = h.wrapping_mul(31).wrapping_add(pos.wrapping_mul(0x517cc1b7) as u32);
+    h = h
+        .wrapping_mul(31)
+        .wrapping_add(pos.wrapping_mul(0x517cc1b7) as u32);
     ((h >> 16) ^ h) as u8
 }
 
@@ -112,7 +123,10 @@ fn test_config_default_loads() {
     assert!(cfg.agents.edr_processes.contains(&"csfalcon".to_string()));
     assert_eq!(cfg.consensus.threshold, 0.66);
     assert!(cfg.exploits.safe_mode, "Exploits must default to safe mode");
-    assert!(!cfg.exploits.operator_approved, "Exploits must require operator approval");
+    assert!(
+        !cfg.exploits.operator_approved,
+        "Exploits must require operator approval"
+    );
 }
 
 /// Test 7: Obfuscate string at compile time.

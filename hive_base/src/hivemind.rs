@@ -1,7 +1,7 @@
+use crate::ldc::{Decision, Message, Payload, Role, Value};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use uuid::Uuid;
-use crate::ldc::{Decision, Message, Payload, Role, Value};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HiveDirective {
@@ -50,8 +50,12 @@ impl HiveMind {
         serde_json::from_slice(&data).ok()
     }
 
-    pub fn propose_directive(&mut self, proposer_id: Uuid, action: String,
-                              params: HashMap<String, String>) -> Uuid {
+    pub fn propose_directive(
+        &mut self,
+        proposer_id: Uuid,
+        action: String,
+        params: HashMap<String, String>,
+    ) -> Uuid {
         let directive_id = Uuid::new_v4();
         self.directives.push(HiveDirective {
             directive_id,
@@ -67,8 +71,11 @@ impl HiveMind {
     }
 
     pub fn cast_vote(&mut self, directive_id: Uuid, agent_id: Uuid, decision: Decision) -> bool {
-        if let Some(directive) = self.directives.iter_mut()
-            .find(|d| d.directive_id == directive_id && !d.approved) {
+        if let Some(directive) = self
+            .directives
+            .iter_mut()
+            .find(|d| d.directive_id == directive_id && !d.approved)
+        {
             directive.votes.insert(agent_id, decision);
             true
         } else {
@@ -77,12 +84,19 @@ impl HiveMind {
     }
 
     pub fn tally_votes(&mut self, directive_id: Uuid, reputation_map: &HashMap<Uuid, f32>) -> bool {
-        if let Some(directive) = self.directives.iter_mut()
-            .find(|d| d.directive_id == directive_id) {
-            let total_weight: f32 = directive.votes.keys()
+        if let Some(directive) = self
+            .directives
+            .iter_mut()
+            .find(|d| d.directive_id == directive_id)
+        {
+            let total_weight: f32 = directive
+                .votes
+                .keys()
                 .filter_map(|id| reputation_map.get(id))
                 .sum();
-            let support_weight: f32 = directive.votes.iter()
+            let support_weight: f32 = directive
+                .votes
+                .iter()
                 .filter(|(_, d)| matches!(d, Decision::Support))
                 .filter_map(|(id, _)| reputation_map.get(id))
                 .sum();
@@ -114,10 +128,18 @@ impl HiveMind {
 
     /// Execute approved directives and produce arena messages for each.
     /// Returns list of (directive_id, action, Message) that can be published.
-    pub fn execute_approved_with_messages(&mut self, agent_id: Uuid) -> Vec<(Uuid, String, Message)> {
-        let approved_ids: Vec<(Uuid, String)> = self.directives.iter_mut()
+    pub fn execute_approved_with_messages(
+        &mut self,
+        agent_id: Uuid,
+    ) -> Vec<(Uuid, String, Message)> {
+        let approved_ids: Vec<(Uuid, String)> = self
+            .directives
+            .iter_mut()
             .filter(|d| d.approved && !d.executed)
-            .map(|d| { d.executed = true; (d.directive_id, d.action.clone()) })
+            .map(|d| {
+                d.executed = true;
+                (d.directive_id, d.action.clone())
+            })
             .collect();
         let mut results = Vec::new();
         for (id, action) in approved_ids {
@@ -132,42 +154,66 @@ impl HiveMind {
     /// Convert an approved directive into an arena Message for broadcast.
     pub fn to_directive_message(&self, directive: &HiveDirective, agent_id: Uuid) -> Message {
         let params_json = serde_json::to_string(&directive.params).unwrap_or_default();
-        let detail = format!("hivemind:{}:{}:{}:threshold={}:votes={}",
-            directive.action, params_json, directive.directive_id,
-            directive.threshold, directive.votes.len());
-        Message::status_event(agent_id, Role::Queen, "hive_directive_approved",
-            directive.directive_id, Role::Queen, &detail)
+        let detail = format!(
+            "hivemind:{}:{}:{}:threshold={}:votes={}",
+            directive.action,
+            params_json,
+            directive.directive_id,
+            directive.threshold,
+            directive.votes.len()
+        );
+        Message::status_event(
+            agent_id,
+            Role::Queen,
+            "hive_directive_approved",
+            directive.directive_id,
+            Role::Queen,
+            &detail,
+        )
     }
 
     pub fn get_pending_directives(&self) -> Vec<&HiveDirective> {
-        self.directives.iter()
-            .filter(|d| !d.approved)
-            .collect()
+        self.directives.iter().filter(|d| !d.approved).collect()
     }
 
-    pub fn propose_from_operator(&mut self, operator_id: Uuid, action: String,
-                                  params: HashMap<String, String>) -> Uuid {
+    pub fn propose_from_operator(
+        &mut self,
+        operator_id: Uuid,
+        action: String,
+        params: HashMap<String, String>,
+    ) -> Uuid {
         self.propose_directive(operator_id, action, params)
     }
 
     /// Process an incoming arena Message and update HiveMind state.
     /// Handles Proposal (new directive), Vote (cast vote), StatusEvent (finalize).
     /// Returns (directive_id, action, action_type) if action is needed.
-    pub fn process_arena_message(&mut self, msg: &Message, reputation: &HashMap<Uuid, f32>)
-        -> Option<(Uuid, String, &'static str)>
-    {
+    pub fn process_arena_message(
+        &mut self,
+        msg: &Message,
+        reputation: &HashMap<Uuid, f32>,
+    ) -> Option<(Uuid, String, &'static str)> {
         if !self.enabled {
             return None;
         }
         let agent_id = msg.agent_id;
         let payload = msg.payload.clone();
         match payload {
-            Payload::Proposal { action, argument, .. } => {
-                let did = self.propose_directive(agent_id, action.clone(),
-                    [("argument".into(), argument)].into());
+            Payload::Proposal {
+                action, argument, ..
+            } => {
+                let did = self.propose_directive(
+                    agent_id,
+                    action.clone(),
+                    [("argument".into(), argument)].into(),
+                );
                 Some((did, action, "proposed"))
             }
-            Payload::Vote { proposal_id, decision, .. } => {
+            Payload::Vote {
+                proposal_id,
+                decision,
+                ..
+            } => {
                 let dec = decision;
                 if self.cast_vote(proposal_id, agent_id, dec) {
                     let approved = self.tally_votes(proposal_id, reputation);
@@ -185,7 +231,9 @@ impl HiveMind {
                 if let Ok(did) = Uuid::parse_str(did_str) {
                     if let Value::String(meta) = value {
                         if meta.contains("approved") {
-                            if let Some(d) = self.directives.iter_mut().find(|d| d.directive_id == did) {
+                            if let Some(d) =
+                                self.directives.iter_mut().find(|d| d.directive_id == did)
+                            {
                                 d.approved = true;
                                 return Some((did, d.action.clone(), "belief_approved"));
                             }
@@ -199,15 +247,25 @@ impl HiveMind {
     }
 
     pub fn to_belief(&self, directive: &HiveDirective, agent_id: Uuid) -> Message {
-        let params_str: Vec<String> = directive.params.iter()
+        let params_str: Vec<String> = directive
+            .params
+            .iter()
             .map(|(k, v)| format!("{}={}", k, v))
             .collect();
-        let value = Value::String(format!("hivemind:{}:{}:{}",
-            directive.action, params_str.join(","), directive.directive_id));
+        let value = Value::String(format!(
+            "hivemind:{}:{}:{}",
+            directive.action,
+            params_str.join(","),
+            directive.directive_id
+        ));
 
-        Message::belief(agent_id, Role::Queen,
+        Message::belief(
+            agent_id,
+            Role::Queen,
             format!("directive:{}", directive.directive_id),
-            value, 0.9)
+            value,
+            0.9,
+        )
     }
 }
 
@@ -299,8 +357,8 @@ mod tests {
         let rep = HashMap::new();
 
         let agent = Uuid::new_v4();
-        let (proposal_msg, _pid) = Message::proposal(agent, Role::Worker,
-            "scan_target".into(), "10.0.0.5".into());
+        let (proposal_msg, _pid) =
+            Message::proposal(agent, Role::Worker, "scan_target".into(), "10.0.0.5".into());
 
         let result = hive.process_arena_message(&proposal_msg, &rep);
         assert!(result.is_some());
@@ -324,7 +382,7 @@ mod tests {
         assert_eq!(hive.directives.len(), 1);
 
         let vote_a = Message::vote(agent_b, Role::Drone, did, Decision::Support, 1.0);
-        let vote_b = Message::vote(agent_c, Role::Honeybee, did, Decision::Support, 1.0);
+        let _vote_b = Message::vote(agent_c, Role::Honeybee, did, Decision::Support, 1.0);
 
         let mut rep = HashMap::new();
         rep.insert(agent_b, 1.0);

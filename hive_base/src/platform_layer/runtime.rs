@@ -1,11 +1,11 @@
 /// Runtime environment detection: sandbox, debugger, EDR presence.
-
+///
 /// Returns true if running in a known sandbox or VM environment.
 #[cfg(target_os = "linux")]
 pub fn detect_sandbox() -> bool {
     // Check common VM/sandbox indicators
     let indicators = [
-        "/proc/self/status",          // always present
+        "/proc/self/status", // always present
         "/sys/class/dmi/id/product_name",
         "/sys/class/dmi/id/sys_vendor",
     ];
@@ -68,7 +68,9 @@ pub fn detect_debugger() -> bool {
         let peb: *const u8;
         std::arch::asm!("mov {0}, gs:[0x60]", out(reg) peb);
         let being_debugged = *((peb as usize + 2) as *const u8);
-        if being_debugged != 0 { return true; }
+        if being_debugged != 0 {
+            return true;
+        }
     }
     false
 }
@@ -80,7 +82,15 @@ pub fn detect_debugger() -> bool {
 
 #[cfg(target_os = "linux")]
 pub fn detect_edr() -> bool {
-    let edr_procs = ["falcon_sensor", "osqueryd", "auditd", "sophos", "sav", "avast", "clamd"];
+    let edr_procs = [
+        "falcon_sensor",
+        "osqueryd",
+        "auditd",
+        "sophos",
+        "sav",
+        "avast",
+        "clamd",
+    ];
     if let Ok(dir) = std::fs::read_dir("/proc") {
         for entry in dir.flatten() {
             let pid = entry.file_name();
@@ -89,7 +99,9 @@ pub fn detect_edr() -> bool {
                 if let Ok(cmdline) = std::fs::read_to_string(&cmdline_path) {
                     let lower = cmdline.to_lowercase();
                     for proc in &edr_procs {
-                        if lower.contains(proc) { return true; }
+                        if lower.contains(proc) {
+                            return true;
+                        }
                     }
                 }
             }
@@ -101,30 +113,70 @@ pub fn detect_edr() -> bool {
 #[cfg(target_os = "windows")]
 pub fn detect_edr() -> bool {
     let edr_procs = [
-        "msmpeng", "sentinelhelper", "sentinelstaticengine", "csfalcon", "csagent",
-        "carbonblack", "cb.exe", "sep", "symantec", "norton",
-        "mcshield", "mfehav", "mcafee", "sophos", "savservice",
-        "cylance", "cyservice", "tmccsf", "tmbmsrv", "pccntmon",
-        "avast", "avg", "kaspersky", "kavfs", "ekrn",
-        "bdagent", "bdredline", "bitdefender", "f-secure", "fsma",
-        "trendmicro", "amsp", "coreserviceshell", "elastic-endpoint",
+        "msmpeng",
+        "sentinelhelper",
+        "sentinelstaticengine",
+        "csfalcon",
+        "csagent",
+        "carbonblack",
+        "cb.exe",
+        "sep",
+        "symantec",
+        "norton",
+        "mcshield",
+        "mfehav",
+        "mcafee",
+        "sophos",
+        "savservice",
+        "cylance",
+        "cyservice",
+        "tmccsf",
+        "tmbmsrv",
+        "pccntmon",
+        "avast",
+        "avg",
+        "kaspersky",
+        "kavfs",
+        "ekrn",
+        "bdagent",
+        "bdredline",
+        "bitdefender",
+        "f-secure",
+        "fsma",
+        "trendmicro",
+        "amsp",
+        "coreserviceshell",
+        "elastic-endpoint",
     ];
     unsafe {
-        use winapi::um::tlhelp32::{CreateToolhelp32Snapshot, Process32FirstW, Process32NextW, TH32CS_SNAPPROCESS, PROCESSENTRY32W};
-        use winapi::um::handleapi::CloseHandle;
         use std::mem;
+        use winapi::um::handleapi::CloseHandle;
+        use winapi::um::tlhelp32::{
+            CreateToolhelp32Snapshot, Process32FirstW, Process32NextW, PROCESSENTRY32W,
+            TH32CS_SNAPPROCESS,
+        };
         let snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
-        if snapshot as isize == -1 { return false; }
+        if snapshot as isize == -1 {
+            return false;
+        }
         let mut entry: PROCESSENTRY32W = mem::zeroed();
         entry.dwSize = mem::size_of::<PROCESSENTRY32W>() as u32;
-        if Process32FirstW(snapshot, &mut entry) == 0 { CloseHandle(snapshot); return false; }
+        if Process32FirstW(snapshot, &mut entry) == 0 {
+            CloseHandle(snapshot);
+            return false;
+        }
         loop {
             let len = entry.szExeFile.iter().position(|&c| c == 0).unwrap_or(260);
             let name = String::from_utf16_lossy(&entry.szExeFile[..len]).to_lowercase();
             for proc in &edr_procs {
-                if name.contains(proc) { CloseHandle(snapshot); return true; }
+                if name.contains(proc) {
+                    CloseHandle(snapshot);
+                    return true;
+                }
             }
-            if Process32NextW(snapshot, &mut entry) == 0 { break; }
+            if Process32NextW(snapshot, &mut entry) == 0 {
+                break;
+            }
         }
         CloseHandle(snapshot);
     }
@@ -139,8 +191,14 @@ pub fn detect_edr() -> bool {
 /// Overall evasion check: returns Vec of strings describing risks.
 pub fn evasion_check() -> Vec<String> {
     let mut risks = Vec::new();
-    if detect_sandbox() { risks.push("sandbox_detected".into()); }
-    if detect_debugger() { risks.push("debugger_detected".into()); }
-    if detect_edr() { risks.push("edr_detected".into()); }
+    if detect_sandbox() {
+        risks.push("sandbox_detected".into());
+    }
+    if detect_debugger() {
+        risks.push("debugger_detected".into());
+    }
+    if detect_edr() {
+        risks.push("edr_detected".into());
+    }
     risks
 }

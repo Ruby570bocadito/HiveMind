@@ -5,7 +5,13 @@ use uuid::Uuid;
 
 fn bench_ipc_validation(c: &mut Criterion) {
     let id = Uuid::new_v4();
-    let valid_msg = Message::belief(id, Role::Worker, "test_asset".into(), Value::Bool(true), 0.95);
+    let valid_msg = Message::belief(
+        id,
+        Role::Worker,
+        "test_asset".into(),
+        Value::Bool(true),
+        0.95,
+    );
 
     c.bench_function("ipc_validate_valid_message", |b| {
         b.iter(|| {

@@ -7,7 +7,10 @@ pub fn init_logging(agent_name: &str) {
         let file = std::fs::File::create(&log_path)
             .unwrap_or_else(|_| panic!("Cannot create log file {}", log_path));
         #[cfg(unix)]
-        let log_fd = { use std::os::unix::io::AsRawFd; file.as_raw_fd() };
+        let log_fd = {
+            use std::os::unix::io::AsRawFd;
+            file.as_raw_fd()
+        };
 
         tracing_subscriber::fmt()
             .with_target(false)
@@ -48,16 +51,15 @@ pub fn safe_init(agent_name: &str) -> bool {
     std::thread::sleep(std::time::Duration::from_secs(delay));
 
     // Run anti-analysis
-    let safe = crate::anti_analysis::AntiAnalysis::is_safe();
 
-    safe
+    crate::anti_analysis::AntiAnalysis::is_safe()
 }
 
 pub fn timestamp_now() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_secs()
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
 }
 
 pub fn random_delay(min_secs: u64, max_secs: u64) -> u64 {
@@ -65,7 +67,6 @@ pub fn random_delay(min_secs: u64, max_secs: u64) -> u64 {
     let mut rng = rand::thread_rng();
     rng.gen_range(min_secs..=max_secs)
 }
-
 
 #[cfg(test)]
 mod tests {

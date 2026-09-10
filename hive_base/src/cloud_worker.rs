@@ -61,11 +61,17 @@ impl CloudWorker {
                 std::thread::sleep(self.min_interval - elapsed);
             }
         }
-        self.rate_limiter.insert(provider.to_string(), Instant::now());
+        self.rate_limiter
+            .insert(provider.to_string(), Instant::now());
     }
 
     pub fn check_connectivity() -> bool {
-        let targets = ["https://aws.amazon.com", "https://cloud.google.com", "https://azure.microsoft.com", "https://api.github.com"];
+        let targets = [
+            "https://aws.amazon.com",
+            "https://cloud.google.com",
+            "https://azure.microsoft.com",
+            "https://api.github.com",
+        ];
         targets.iter().any(|url| {
             reqwest::blocking::Client::builder()
                 .timeout(Duration::from_secs(3))
@@ -128,48 +134,57 @@ impl CloudWorker {
         );
         let ec2_count = if ec2.success {
             ec2.output.matches("instanceId").count() as u32
-        } else { 0 };
+        } else {
+            0
+        };
         results.push(CloudResult {
             provider: CloudProvider::Aws,
             action: "ec2_describe".into(),
             success: ec2.success,
-            output: if ec2.success { format!("EC2: {} instances", ec2_count) } else { ec2.output },
+            output: if ec2.success {
+                format!("EC2: {} instances", ec2_count)
+            } else {
+                ec2.output
+            },
             resources_found: ec2_count,
         });
 
         self.check_rate_limit("aws");
-        let s3 = self.aws_api_call(
-            "s3",
-            "ListBuckets",
-            &cred.token,
-            "",
-        );
+        let s3 = self.aws_api_call("s3", "ListBuckets", &cred.token, "");
         let s3_count = if s3.success {
             s3.output.matches("<Bucket>").count() as u32
-        } else { 0 };
+        } else {
+            0
+        };
         results.push(CloudResult {
             provider: CloudProvider::Aws,
             action: "s3_list".into(),
             success: s3.success,
-            output: if s3.success { format!("S3: {} buckets", s3_count) } else { s3.output },
+            output: if s3.success {
+                format!("S3: {} buckets", s3_count)
+            } else {
+                s3.output
+            },
             resources_found: s3_count,
         });
 
         self.check_rate_limit("aws");
-        let lambda = self.aws_api_call(
-            "lambda",
-            "ListFunctions",
-            &cred.token,
-            "Version=2015-03-31",
-        );
+        let lambda =
+            self.aws_api_call("lambda", "ListFunctions", &cred.token, "Version=2015-03-31");
         let lambda_count = if lambda.success {
             lambda.output.matches("FunctionName").count() as u32
-        } else { 0 };
+        } else {
+            0
+        };
         results.push(CloudResult {
             provider: CloudProvider::Aws,
             action: "lambda_list".into(),
             success: lambda.success,
-            output: if lambda.success { format!("Lambda: {} functions", lambda_count) } else { lambda.output },
+            output: if lambda.success {
+                format!("Lambda: {} functions", lambda_count)
+            } else {
+                lambda.output
+            },
             resources_found: lambda_count,
         });
 
@@ -188,7 +203,8 @@ impl CloudWorker {
             "https://compute.googleapis.com/compute/v1/projects/{}/aggregated/instances",
             project
         );
-        let (compute_ok, compute_count) = match self.client
+        let (compute_ok, compute_count) = match self
+            .client
             .get(&compute_url)
             .header("Authorization", &token)
             .send()
@@ -205,7 +221,11 @@ impl CloudWorker {
             provider: CloudProvider::Gcp,
             action: "compute_list".into(),
             success: compute_ok,
-            output: if compute_ok { format!("Compute: {} instances", compute_count) } else { "GCP token invalid".into() },
+            output: if compute_ok {
+                format!("Compute: {} instances", compute_count)
+            } else {
+                "GCP token invalid".into()
+            },
             resources_found: compute_count,
         });
 
@@ -218,7 +238,8 @@ impl CloudWorker {
             "https://cloudresourcemanager.googleapis.com/v1/projects/{}:getIamPolicy",
             project
         );
-        let iam_resp = self.client
+        let iam_resp = self
+            .client
             .post(&iam_url)
             .header("Authorization", &token)
             .header("Content-Type", "application/json")
@@ -229,7 +250,11 @@ impl CloudWorker {
             provider: CloudProvider::Gcp,
             action: "iam_policy".into(),
             success: iam_ok,
-            output: if iam_ok { "IAM policy readable".into() } else { "IAM denied".into() },
+            output: if iam_ok {
+                "IAM policy readable".into()
+            } else {
+                "IAM denied".into()
+            },
             resources_found: if iam_ok { 1 } else { 0 },
         });
 
@@ -238,7 +263,8 @@ impl CloudWorker {
             "https://cloudfunctions.googleapis.com/v1/projects/{}/locations/-/functions",
             project
         );
-        let (func_ok, func_count) = match self.client
+        let (func_ok, func_count) = match self
+            .client
             .get(&functions_url)
             .header("Authorization", &token)
             .send()
@@ -267,7 +293,8 @@ impl CloudWorker {
         let token = format!("Bearer {}", cred.token);
 
         // Validate token — list subscriptions
-        let subs_resp = self.client
+        let subs_resp = self
+            .client
             .get("https://management.azure.com/subscriptions?api-version=2020-01-01")
             .header("Authorization", &token)
             .send();
@@ -298,7 +325,8 @@ impl CloudWorker {
             "https://management.azure.com/subscriptions/{}/providers/Microsoft.Compute/virtualMachines?api-version=2022-03-01",
             sub_id
         );
-        let (vm_ok, vm_count) = match self.client
+        let (vm_ok, vm_count) = match self
+            .client
             .get(&vm_url)
             .header("Authorization", &token)
             .send()
@@ -322,7 +350,8 @@ impl CloudWorker {
             "https://management.azure.com/subscriptions/{}/providers/Microsoft.KeyVault/vaults?api-version=2022-07-01",
             sub_id
         );
-        let (kv_ok, kv_count) = match self.client
+        let (kv_ok, kv_count) = match self
+            .client
             .get(&kv_url)
             .header("Authorization", &token)
             .send()
@@ -351,8 +380,9 @@ impl CloudWorker {
         let server = cred.account_id.trim();
         let token = &cred.token;
 
-        let cluster_resp = self.client
-            .get(&format!("{}/api/v1/namespaces/default", server))
+        let cluster_resp = self
+            .client
+            .get(format!("{}/api/v1/namespaces/default", server))
             .header("Authorization", format!("Bearer {}", token))
             .header("Accept", "application/json")
             .send();
@@ -376,8 +406,9 @@ impl CloudWorker {
         });
 
         self.check_rate_limit("k8s");
-        let (pods_ok, pod_count) = match self.client
-            .get(&format!("{}/api/v1/pods", server))
+        let (pods_ok, pod_count) = match self
+            .client
+            .get(format!("{}/api/v1/pods", server))
             .header("Authorization", format!("Bearer {}", token))
             .header("Accept", "application/json")
             .send()
@@ -397,8 +428,9 @@ impl CloudWorker {
         });
 
         self.check_rate_limit("k8s");
-        let (secrets_ok, secret_count) = match self.client
-            .get(&format!("{}/api/v1/secrets", server))
+        let (secrets_ok, secret_count) = match self
+            .client
+            .get(format!("{}/api/v1/secrets", server))
             .header("Authorization", format!("Bearer {}", token))
             .header("Accept", "application/json")
             .send()
@@ -425,12 +457,19 @@ impl CloudWorker {
         let host = format!("{}.amazonaws.com", service);
         let url = format!("https://{}", host);
 
-        let resp = self.client
+        let resp = self
+            .client
             .post(&url)
             .header("Host", &host)
             .header("X-Amz-Date", "20260101T000000Z")
             .header("X-Amz-Security-Token", token)
-            .header("Authorization", format!("AWS4-HMAC-SHA256 Credential={}/20260101/{}/{}/aws4_request", token, region, service))
+            .header(
+                "Authorization",
+                format!(
+                    "AWS4-HMAC-SHA256 Credential={}/20260101/{}/{}/aws4_request",
+                    token, region, service
+                ),
+            )
             .header("Content-Type", "application/x-www-form-urlencoded")
             .header("User-Agent", "Hive/3.0")
             .body(body.to_string())
@@ -447,7 +486,12 @@ impl CloudWorker {
                     output: if status.is_success() {
                         format!("{}: OK ({} bytes)", action, text.len())
                     } else {
-                        format!("{}: HTTP {} — {}", action, status.as_u16(), &text[..text.len().min(200)])
+                        format!(
+                            "{}: HTTP {} — {}",
+                            action,
+                            status.as_u16(),
+                            &text[..text.len().min(200)]
+                        )
                     },
                     resources_found: if status.is_success() { 1 } else { 0 },
                 }
@@ -522,15 +566,13 @@ mod tests {
     fn test_pivot_all_no_connectivity() {
         // Should handle gracefully without panic even without internet
         let mut w = CloudWorker::new_with_interval(0);
-        let creds = vec![
-            CloudCredential {
-                provider: CloudProvider::Aws,
-                token: "test".into(),
-                account_id: "000000".into(),
-                region: "us-east-1".into(),
-                source: "test".into(),
-            }
-        ];
+        let creds = vec![CloudCredential {
+            provider: CloudProvider::Aws,
+            token: "test".into(),
+            account_id: "000000".into(),
+            region: "us-east-1".into(),
+            source: "test".into(),
+        }];
         let results = w.pivot_all(&creds);
         assert!(!results.is_empty());
         // Will fail (no real token) but should not panic

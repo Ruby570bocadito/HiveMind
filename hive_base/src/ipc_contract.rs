@@ -99,7 +99,11 @@ impl AgentStateMachine {
         AgentState::from_u8(self.state.load(Ordering::Acquire))
     }
 
-    pub fn transition(&mut self, to: AgentState, reason: impl Into<String>) -> Result<StateTransition, &'static str> {
+    pub fn transition(
+        &mut self,
+        to: AgentState,
+        reason: impl Into<String>,
+    ) -> Result<StateTransition, &'static str> {
         let from = self.state();
         if !StateTransition::is_valid(from, to) {
             return Err("Invalid state transition");
@@ -114,7 +118,13 @@ impl AgentStateMachine {
             reason: reason.into(),
             timestamp: ts,
         };
-        info!("Agent {} state: {} → {} ({})", self.agent_id, from.label(), to.label(), t.reason);
+        info!(
+            "Agent {} state: {} → {} ({})",
+            self.agent_id,
+            from.label(),
+            to.label(),
+            t.reason
+        );
         self.state.store(to.to_u8(), Ordering::Release);
         self.history.push(t.clone());
         Ok(t)
@@ -128,7 +138,10 @@ impl AgentStateMachine {
         self.transition(AgentState::Degraded, reason)
     }
 
-    pub fn mark_dead(&mut self, reason: impl Into<String>) -> Result<StateTransition, &'static str> {
+    pub fn mark_dead(
+        &mut self,
+        reason: impl Into<String>,
+    ) -> Result<StateTransition, &'static str> {
         self.transition(AgentState::Dead, reason)
     }
 
@@ -142,8 +155,12 @@ impl AgentStateMachine {
         self.total_messages_seen += 1;
         if !is_valid {
             self.invalid_message_count += 1;
-            if self.invalid_message_count >= self.degrade_threshold && self.state() == AgentState::Active {
-                if let Ok(t) = self.degrade(format!("{} invalid messages", self.invalid_message_count)) {
+            if self.invalid_message_count >= self.degrade_threshold
+                && self.state() == AgentState::Active
+            {
+                if let Ok(t) =
+                    self.degrade(format!("{} invalid messages", self.invalid_message_count))
+                {
                     return Some(t);
                 }
             }
@@ -169,7 +186,8 @@ impl AgentStateMachine {
 
     /// Reset the machine (e.g. after replay reset)
     pub fn reset(&mut self) {
-        self.state.store(AgentState::Init.to_u8(), Ordering::Release);
+        self.state
+            .store(AgentState::Init.to_u8(), Ordering::Release);
         self.history.clear();
         self.invalid_message_count = 0;
         self.total_messages_seen = 0;
@@ -213,7 +231,11 @@ impl ValidationResult {
 /// Validate a single Payload variant against its formal schema.
 pub fn validate_payload(payload: &Payload) -> ValidationResult {
     match payload {
-        Payload::Belief { asset, value, confidence } => {
+        Payload::Belief {
+            asset,
+            value,
+            confidence,
+        } => {
             let mut r = ValidationResult::ok();
             if asset.trim().is_empty() {
                 return ValidationResult::err("Belief.asset must not be empty");
@@ -251,7 +273,11 @@ pub fn validate_payload(payload: &Payload) -> ValidationResult {
             ValidationResult::ok()
         }
 
-        Payload::Proposal { action, argument, proposal_id: _ } => {
+        Payload::Proposal {
+            action,
+            argument,
+            proposal_id: _,
+        } => {
             if action.trim().is_empty() {
                 return ValidationResult::err("Proposal.action must not be empty");
             }
@@ -261,7 +287,11 @@ pub fn validate_payload(payload: &Payload) -> ValidationResult {
             ValidationResult::ok()
         }
 
-        Payload::Vote { proposal_id: _, decision, weight } => {
+        Payload::Vote {
+            proposal_id: _,
+            decision,
+            weight,
+        } => {
             if !(0.0..=10.0).contains(weight) {
                 return ValidationResult::err("Vote.weight must be in [0.0, 10.0]");
             }
@@ -271,14 +301,21 @@ pub fn validate_payload(payload: &Payload) -> ValidationResult {
             ValidationResult::ok()
         }
 
-        Payload::Request { service, payload: _ } => {
+        Payload::Request {
+            service,
+            payload: _,
+        } => {
             if service.trim().is_empty() {
                 return ValidationResult::err("Request.service must not be empty");
             }
             ValidationResult::ok()
         }
 
-        Payload::Query { dilemma, context, query_id: _ } => {
+        Payload::Query {
+            dilemma,
+            context,
+            query_id: _,
+        } => {
             if dilemma.trim().is_empty() {
                 return ValidationResult::err("Query.dilemma must not be empty");
             }
@@ -288,7 +325,11 @@ pub fn validate_payload(payload: &Payload) -> ValidationResult {
             ValidationResult::ok()
         }
 
-        Payload::Response { query_id: _, answer, confidence } => {
+        Payload::Response {
+            query_id: _,
+            answer,
+            confidence,
+        } => {
             if answer.trim().is_empty() {
                 return ValidationResult::err("Response.answer must not be empty");
             }
@@ -300,7 +341,12 @@ pub fn validate_payload(payload: &Payload) -> ValidationResult {
 
         Payload::Heartbeat => ValidationResult::ok(),
 
-        Payload::StatusEvent { event_type, subject_id: _, subject_role: _, detail } => {
+        Payload::StatusEvent {
+            event_type,
+            subject_id: _,
+            subject_role: _,
+            detail,
+        } => {
             if event_type.trim().is_empty() {
                 return ValidationResult::err("StatusEvent.event_type must not be empty");
             }
@@ -332,7 +378,7 @@ pub fn validate_message(msg: &Message) -> ValidationResult {
     if msg.timestamp > now + 3600 {
         r = r.with_warning("Message.timestamp is >1h in the future");
     }
-    if now > 0 && msg.timestamp < now - 86400 {
+    if now > 0 && msg.timestamp < now.saturating_sub(86400) {
         r = r.with_warning("Message.timestamp is >24h in the past");
     }
 
@@ -395,7 +441,12 @@ impl MessageValidator {
         if let Some(transition) = self.state_machine.record_message(schema_result.valid) {
             self.emit_security_trigger(
                 "state_transition",
-                &format!("{} → {}: {}", transition.from.label(), transition.to.label(), transition.reason),
+                &format!(
+                    "{} → {}: {}",
+                    transition.from.label(),
+                    transition.to.label(),
+                    transition.reason
+                ),
                 msg,
             );
         }
@@ -403,11 +454,7 @@ impl MessageValidator {
         if !schema_result.valid {
             self.reject_count += 1;
             // Emit HTL SecurityTrigger for each validation failure
-            self.emit_security_trigger(
-                "schema_violation",
-                &schema_result.errors.join("; "),
-                msg,
-            );
+            self.emit_security_trigger("schema_violation", &schema_result.errors.join("; "), msg);
             return Err(schema_result.errors);
         }
 
@@ -712,8 +759,7 @@ mod tests {
 
     #[test]
     fn test_state_machine_auto_degrade_on_invalid() {
-        let mut sm = AgentStateMachine::new(test_id())
-            .with_degrade_threshold(3);
+        let mut sm = AgentStateMachine::new(test_id()).with_degrade_threshold(3);
         sm.activate().unwrap();
 
         assert_eq!(sm.state(), AgentState::Active);
@@ -727,8 +773,7 @@ mod tests {
 
     #[test]
     fn test_state_machine_no_auto_degrade_below_threshold() {
-        let mut sm = AgentStateMachine::new(test_id())
-            .with_degrade_threshold(5);
+        let mut sm = AgentStateMachine::new(test_id()).with_degrade_threshold(5);
         sm.activate().unwrap();
 
         for _ in 0..3 {
@@ -787,14 +832,20 @@ mod tests {
             value: Value::Bool(true),
             confidence: 0.5,
         });
-        assert!(v.validate(&msg).is_err(), "Init state should reject non-heartbeat");
+        assert!(
+            v.validate(&msg).is_err(),
+            "Init state should reject non-heartbeat"
+        );
     }
 
     #[test]
     fn test_validator_accepts_heartbeat_in_init() {
         let mut v = MessageValidator::new(test_id());
         let msg = test_msg(Payload::Heartbeat);
-        assert!(v.validate(&msg).is_ok(), "Init state should accept heartbeat");
+        assert!(
+            v.validate(&msg).is_ok(),
+            "Init state should accept heartbeat"
+        );
     }
 
     #[test]
@@ -803,7 +854,10 @@ mod tests {
         v.state_machine_mut().activate().unwrap();
         v.state_machine_mut().mark_dead("test").unwrap();
         let msg = test_msg(Payload::Heartbeat);
-        assert!(v.validate(&msg).is_err(), "Dead state should reject everything");
+        assert!(
+            v.validate(&msg).is_err(),
+            "Dead state should reject everything"
+        );
     }
 
     #[test]
@@ -871,8 +925,7 @@ mod tests {
     fn test_contract_fault_flood_forces_degraded() {
         let agent_id = test_id();
         // Use the state machine directly — no arena needed for this test
-        let mut sm = AgentStateMachine::new(agent_id)
-            .with_degrade_threshold(3);
+        let mut sm = AgentStateMachine::new(agent_id).with_degrade_threshold(3);
         sm.activate().unwrap();
 
         let fault = ContractFault::FloodInvalidMessages(10);

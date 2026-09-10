@@ -76,18 +76,19 @@ impl StingerTrait for WindowsStinger {
 
         let mut si: winapi::um::processthreadsapi::STARTUPINFOW = unsafe { std::mem::zeroed() };
         si.cb = std::mem::size_of::<winapi::um::processthreadsapi::STARTUPINFOW>() as u32;
-        let mut pi: winapi::um::processthreadsapi::PROCESS_INFORMATION = unsafe { std::mem::zeroed() };
+        let mut pi: winapi::um::processthreadsapi::PROCESS_INFORMATION =
+            unsafe { std::mem::zeroed() };
 
         let rc = unsafe {
             winapi::um::processthreadsapi::CreateProcessW(
-                std::ptr::null_mut(),       // lpApplicationName
-                wide_cmd.as_mut_ptr(),      // lpCommandLine
-                std::ptr::null_mut(),       // lpProcessAttributes
-                std::ptr::null_mut(),       // lpThreadAttributes
-                0,                          // bInheritHandles
+                std::ptr::null_mut(),  // lpApplicationName
+                wide_cmd.as_mut_ptr(), // lpCommandLine
+                std::ptr::null_mut(),  // lpProcessAttributes
+                std::ptr::null_mut(),  // lpThreadAttributes
+                0,                     // bInheritHandles
                 winapi::um::winbase::CREATE_NO_WINDOW | winapi::um::winbase::DETACHED_PROCESS,
-                std::ptr::null_mut(),       // lpEnvironment
-                wide_dir.as_ptr(),          // lpCurrentDirectory
+                std::ptr::null_mut(), // lpEnvironment
+                wide_dir.as_ptr(),    // lpCurrentDirectory
                 &mut si,
                 &mut pi,
             )

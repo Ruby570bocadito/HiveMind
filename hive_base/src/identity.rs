@@ -1,4 +1,4 @@
-use ed25519_dalek::{SigningKey, VerifyingKey, Signature, Signer};
+use ed25519_dalek::{Signature, Signer, SigningKey, VerifyingKey};
 use rand::rngs::OsRng;
 use uuid::Uuid;
 
@@ -130,7 +130,10 @@ mod tests {
         let data = b"same data";
         let sig1 = id.sign_data(data);
         let sig2 = id.sign_data(data);
-        assert_eq!(sig1, sig2, "Same data + same key must produce same signature");
+        assert_eq!(
+            sig1, sig2,
+            "Same data + same key must produce same signature"
+        );
     }
 
     #[test]

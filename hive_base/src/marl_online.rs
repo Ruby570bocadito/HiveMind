@@ -10,7 +10,7 @@ use tracing::info;
 
 /// Lightweight Q-learning state tracker.
 pub struct OnlineMarl {
-    pub q_table: HashMap<(u64, usize), f32>,  // (state_hash, action) -> Q-value
+    pub q_table: HashMap<(u64, usize), f32>, // (state_hash, action) -> Q-value
     pub learning_rate: f32,
     pub discount_factor: f32,
     pub epsilon: f32,
@@ -67,14 +67,31 @@ impl OnlineMarl {
 
     /// Update Q-table with observed reward.
     /// Called after an action is executed and the result is known.
-    pub fn learn(&mut self, state_hash: u64, action: usize, reward: f32, next_state_hash: u64, num_actions: usize) {
+    pub fn learn(
+        &mut self,
+        state_hash: u64,
+        action: usize,
+        reward: f32,
+        next_state_hash: u64,
+        num_actions: usize,
+    ) {
         // Find max Q for next state
         let max_next_q = (0..num_actions)
-            .map(|a| self.q_table.get(&(next_state_hash, a)).copied().unwrap_or(0.0))
+            .map(|a| {
+                self.q_table
+                    .get(&(next_state_hash, a))
+                    .copied()
+                    .unwrap_or(0.0)
+            })
             .fold(f32::NEG_INFINITY, f32::max);
 
-        let current_q = self.q_table.get(&(state_hash, action)).copied().unwrap_or(0.0);
-        let new_q = current_q + self.learning_rate * (reward + self.discount_factor * max_next_q - current_q);
+        let current_q = self
+            .q_table
+            .get(&(state_hash, action))
+            .copied()
+            .unwrap_or(0.0);
+        let new_q = current_q
+            + self.learning_rate * (reward + self.discount_factor * max_next_q - current_q);
 
         self.q_table.insert((state_hash, action), new_q);
         self.episodes += 1;
@@ -84,23 +101,34 @@ impl OnlineMarl {
         self.epsilon = (self.epsilon * 0.999).max(0.01);
 
         if self.episodes.is_multiple_of(100) {
-            info!("MARL_ONLINE: ep={} avg_reward={:.3} epsilon={:.3} table_size={}",
-                self.episodes, self.total_reward / self.episodes as f32,
-                self.epsilon, self.q_table.len());
+            info!(
+                "MARL_ONLINE: ep={} avg_reward={:.3} epsilon={:.3} table_size={}",
+                self.episodes,
+                self.total_reward / self.episodes as f32,
+                self.epsilon,
+                self.q_table.len()
+            );
         }
     }
 
     /// Record the result of an attack: success = positive reward, detection = negative.
     #[allow(clippy::too_many_arguments)]
-    pub fn record_attack_result(&mut self, previous_state: &[f32], action: usize,
-                                 success: bool, detected: bool, value_score: f32,
-                                 next_state: &[f32], num_actions: usize) {
+    pub fn record_attack_result(
+        &mut self,
+        previous_state: &[f32],
+        action: usize,
+        success: bool,
+        detected: bool,
+        value_score: f32,
+        next_state: &[f32],
+        num_actions: usize,
+    ) {
         let reward = if detected {
-            -5.0  // Heavy penalty for detection
+            -5.0 // Heavy penalty for detection
         } else if success {
-            value_score * 10.0  // Reward proportional to target value
+            value_score * 10.0 // Reward proportional to target value
         } else {
-            -0.5  // Small penalty for failed attempt
+            -0.5 // Small penalty for failed attempt
         };
 
         let prev_hash = Self::hash_state(previous_state);
@@ -111,7 +139,9 @@ impl OnlineMarl {
 
     /// Export learned Q-values for sharing via Waggle Dance.
     pub fn export_top_policies(&self, top_n: usize) -> Vec<(u64, usize, f32)> {
-        let mut entries: Vec<_> = self.q_table.iter()
+        let mut entries: Vec<_> = self
+            .q_table
+            .iter()
             .map(|((s, a), q)| (*s, *a, *q))
             .collect();
         entries.sort_by(|a, b| b.2.partial_cmp(&a.2).unwrap());
@@ -121,11 +151,19 @@ impl OnlineMarl {
     /// Import Q-values shared by another agent via Waggle Dance.
     pub fn import_policies(&mut self, policies: &[(u64, usize, f32)]) {
         for (state_hash, action, q_value) in policies {
-            let existing = self.q_table.get(&(*state_hash, *action)).copied().unwrap_or(0.0);
+            let existing = self
+                .q_table
+                .get(&(*state_hash, *action))
+                .copied()
+                .unwrap_or(0.0);
             // Blend: 70% existing knowledge, 30% imported
-            self.q_table.insert((*state_hash, *action), existing * 0.7 + q_value * 0.3);
+            self.q_table
+                .insert((*state_hash, *action), existing * 0.7 + q_value * 0.3);
         }
-        info!("MARL_ONLINE: imported {} policies from colony", policies.len());
+        info!(
+            "MARL_ONLINE: imported {} policies from colony",
+            policies.len()
+        );
     }
 }
 
@@ -141,7 +179,10 @@ mod tests {
         let initial_q = marl.q_table.get(&(sh, 0)).copied().unwrap_or(0.0);
         marl.learn(sh, 0, 10.0, sh, 5);
         let new_q = marl.q_table.get(&(sh, 0)).copied().unwrap();
-        assert!(new_q > initial_q, "Q-value should increase with positive reward");
+        assert!(
+            new_q > initial_q,
+            "Q-value should increase with positive reward"
+        );
     }
 
     #[test]

@@ -7,7 +7,10 @@
 
 // ── Linux direct syscalls ────────────────────────────────────────────────────
 
-#[cfg(target_os = "linux")]
+// NOTE: the `syscall` instruction used in this module is x86_64-only
+// (aarch64 Linux uses a different register ABI with `svc`), so the module is
+// additionally gated on target_arch to keep aarch64 builds compiling.
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 pub mod linux {
 
     /// Execute a raw syscall with up to 6 arguments.
@@ -126,7 +129,17 @@ pub mod linux {
 
     /// Direct memory allocation via mmap (bypasses hooked malloc)
     pub fn raw_mmap(addr: usize, len: usize, prot: i32, flags: i32, fd: i32, offset: i64) -> i64 {
-        unsafe { syscall6_safe(9, addr as i64, len as i64, prot as i64, flags as i64, fd as i64, offset) }
+        unsafe {
+            syscall6_safe(
+                9,
+                addr as i64,
+                len as i64,
+                prot as i64,
+                flags as i64,
+                fd as i64,
+                offset,
+            )
+        }
     }
 
     #[inline(always)]
@@ -222,7 +235,8 @@ pub mod windows {
         let ntdll_base = parse_pe_image_base(&ntdll_bytes)?;
         let exports = parse_pe_exports(&ntdll_bytes, ntdll_base)?;
 
-        let (_, func_rva) = exports.iter()
+        let (_, func_rva) = exports
+            .iter()
             .find(|(name, _)| name.eq_ignore_ascii_case(function_name))?;
 
         let func_offset = rva_to_offset(&ntdll_bytes, *func_rva)?;
@@ -366,7 +380,8 @@ pub mod windows {
         let ntdll_base = parse_pe_image_base(&ntdll_bytes)?;
         let exports = parse_pe_exports(&ntdll_bytes, ntdll_base)?;
 
-        let (_, func_rva) = exports.iter()
+        let (_, func_rva) = exports
+            .iter()
             .find(|(name, _)| name.eq_ignore_ascii_case(function_name))?;
 
         // Get the function address in the LOADED ntdll (may be hooked)
@@ -385,8 +400,10 @@ pub mod windows {
                     for j in (search_start..i).rev() {
                         if mem_bytes[j] == 0xB8 && i - j >= 5 {
                             let ssn = u32::from_le_bytes([
-                                mem_bytes[j + 1], mem_bytes[j + 2],
-                                mem_bytes[j + 3], mem_bytes[j + 4],
+                                mem_bytes[j + 1],
+                                mem_bytes[j + 2],
+                                mem_bytes[j + 3],
+                                mem_bytes[j + 4],
                             ]);
                             if ssn < 0x1000 {
                                 return Some(ssn);
@@ -396,8 +413,10 @@ pub mod windows {
                     // Also check right before syscall: B8 <SSN4> 0F 05
                     if i >= 5 && mem_bytes[i - 5] == 0xB8 {
                         let ssn = u32::from_le_bytes([
-                            mem_bytes[i - 4], mem_bytes[i - 3],
-                            mem_bytes[i - 2], mem_bytes[i - 1],
+                            mem_bytes[i - 4],
+                            mem_bytes[i - 3],
+                            mem_bytes[i - 2],
+                            mem_bytes[i - 1],
                         ]);
                         if ssn < 0x1000 {
                             return Some(ssn);
@@ -429,7 +448,7 @@ pub mod windows {
             let mem = std::slice::from_raw_parts(ntdll_base as *const u8, 0x200000);
 
             for i in 0..mem.len().saturating_sub(3) {
-                if mem[i] == 0x0F && mem[i+1] == 0x05 && mem[i+2] == 0xC3 {
+                if mem[i] == 0x0F && mem[i + 1] == 0x05 && mem[i + 2] == 0xC3 {
                     return Some(ntdll_base + i);
                 }
             }
@@ -474,8 +493,10 @@ pub mod windows {
             None => return true,
         };
 
-        if let Some((_, func_rva)) = exports.iter()
-            .find(|(name, _)| name.eq_ignore_ascii_case(function_name)) {
+        if let Some((_, func_rva)) = exports
+            .iter()
+            .find(|(name, _)| name.eq_ignore_ascii_case(function_name))
+        {
             // Compare disk bytes vs memory bytes at the function address
             if let Some(func_offset) = rva_to_offset(&ntdll_bytes, *func_rva) {
                 if let Some(loaded_base) = crate::hades_gate::windows::get_loaded_ntdll_base() {
@@ -500,16 +521,23 @@ pub mod windows {
 
     /// Parse PE optional header to get image base.
     fn parse_pe_image_base(pe: &[u8]) -> Option<u64> {
-        if pe.len() < 64 { return None; }
+        if pe.len() < 64 {
+            return None;
+        }
         let pe_offset = u32::from_le_bytes([pe[0x3C], pe[0x3D], pe[0x3E], pe[0x3F]]) as usize;
         let magic = u16::from_le_bytes([pe[pe_offset + 24], pe[pe_offset + 25]]);
         let image_base = match magic {
-            0x20B => { // PE32+
+            0x20B => {
+                // PE32+
                 u64::from_le_bytes([
-                    pe[pe_offset + 24 + 0], pe[pe_offset + 24 + 1],
-                    pe[pe_offset + 24 + 2], pe[pe_offset + 24 + 3],
-                    pe[pe_offset + 24 + 4], pe[pe_offset + 24 + 5],
-                    pe[pe_offset + 24 + 6], pe[pe_offset + 24 + 7],
+                    pe[pe_offset + 24 + 0],
+                    pe[pe_offset + 24 + 1],
+                    pe[pe_offset + 24 + 2],
+                    pe[pe_offset + 24 + 3],
+                    pe[pe_offset + 24 + 4],
+                    pe[pe_offset + 24 + 5],
+                    pe[pe_offset + 24 + 6],
+                    pe[pe_offset + 24 + 7],
                 ])
             }
             _ => 0x400000, // PE32: default base
@@ -523,39 +551,51 @@ pub mod windows {
 
         // Export directory RVA at offset 0x70 in optional header for PE32+
         let export_rva = u32::from_le_bytes([
-            pe[pe_offset + 0x70], pe[pe_offset + 0x71],
-            pe[pe_offset + 0x72], pe[pe_offset + 0x73],
+            pe[pe_offset + 0x70],
+            pe[pe_offset + 0x71],
+            pe[pe_offset + 0x72],
+            pe[pe_offset + 0x73],
         ]);
 
         let export_offset = rva_to_offset(pe, export_rva)?;
         let num_names = u32::from_le_bytes([
-            pe[export_offset + 24], pe[export_offset + 25],
-            pe[export_offset + 26], pe[export_offset + 27],
+            pe[export_offset + 24],
+            pe[export_offset + 25],
+            pe[export_offset + 26],
+            pe[export_offset + 27],
         ]) as usize;
 
         let names_rva = u32::from_le_bytes([
-            pe[export_offset + 32], pe[export_offset + 33],
-            pe[export_offset + 34], pe[export_offset + 35],
+            pe[export_offset + 32],
+            pe[export_offset + 33],
+            pe[export_offset + 34],
+            pe[export_offset + 35],
         ]);
         let names_offset = rva_to_offset(pe, names_rva)?;
 
         let ordinals_rva = u32::from_le_bytes([
-            pe[export_offset + 36], pe[export_offset + 37],
-            pe[export_offset + 38], pe[export_offset + 39],
+            pe[export_offset + 36],
+            pe[export_offset + 37],
+            pe[export_offset + 38],
+            pe[export_offset + 39],
         ]);
         let ordinals_offset = rva_to_offset(pe, ordinals_rva)?;
 
         let functions_rva = u32::from_le_bytes([
-            pe[export_offset + 28], pe[export_offset + 29],
-            pe[export_offset + 30], pe[export_offset + 31],
+            pe[export_offset + 28],
+            pe[export_offset + 29],
+            pe[export_offset + 30],
+            pe[export_offset + 31],
         ]);
         let functions_offset = rva_to_offset(pe, functions_rva)?;
 
         let mut exports = Vec::new();
         for i in 0..num_names {
             let name_rva = u32::from_le_bytes([
-                pe[names_offset + i * 4], pe[names_offset + i * 4 + 1],
-                pe[names_offset + i * 4 + 2], pe[names_offset + i * 4 + 3],
+                pe[names_offset + i * 4],
+                pe[names_offset + i * 4 + 1],
+                pe[names_offset + i * 4 + 2],
+                pe[names_offset + i * 4 + 3],
             ]);
             let name_offset = match rva_to_offset(pe, name_rva) {
                 Some(o) => o,
@@ -567,15 +607,17 @@ pub mod windows {
             let mut j = 0;
             while j < 256 && name_offset + j < pe.len() {
                 let b = pe[name_offset + j];
-                if b == 0 { break; }
+                if b == 0 {
+                    break;
+                }
                 name.push(b);
                 j += 1;
             }
             let name = String::from_utf8_lossy(&name).to_string();
 
-            let ordinal_idx = u16::from_le_bytes([
-                pe[ordinals_offset + i * 2], pe[ordinals_offset + i * 2 + 1],
-            ]) as usize;
+            let ordinal_idx =
+                u16::from_le_bytes([pe[ordinals_offset + i * 2], pe[ordinals_offset + i * 2 + 1]])
+                    as usize;
 
             let func_rva = u32::from_le_bytes([
                 pe[functions_offset + ordinal_idx * 4],
@@ -596,20 +638,21 @@ pub mod windows {
         let magic = u16::from_le_bytes([pe[pe_offset + 24], pe[pe_offset + 25]]);
         let header_size = match magic {
             0x20B => 112, // PE32+
-            _ => 96,       // PE32
+            _ => 96,      // PE32
         };
 
-        let num_sections = u16::from_le_bytes([
-            pe[pe_offset + 6], pe[pe_offset + 7],
-        ]) as usize;
+        let num_sections = u16::from_le_bytes([pe[pe_offset + 6], pe[pe_offset + 7]]) as usize;
 
         let section_offset = pe_offset + 24 + header_size;
 
         for i in 0..num_sections {
             let sec = section_offset + i * 40;
-            let sec_va = u32::from_le_bytes([pe[sec + 12], pe[sec + 13], pe[sec + 14], pe[sec + 15]]);
-            let sec_size = u32::from_le_bytes([pe[sec + 8], pe[sec + 9], pe[sec + 10], pe[sec + 11]]);
-            let sec_offset = u32::from_le_bytes([pe[sec + 20], pe[sec + 21], pe[sec + 22], pe[sec + 23]]);
+            let sec_va =
+                u32::from_le_bytes([pe[sec + 12], pe[sec + 13], pe[sec + 14], pe[sec + 15]]);
+            let sec_size =
+                u32::from_le_bytes([pe[sec + 8], pe[sec + 9], pe[sec + 10], pe[sec + 11]]);
+            let sec_offset =
+                u32::from_le_bytes([pe[sec + 20], pe[sec + 21], pe[sec + 22], pe[sec + 23]]);
 
             if rva >= sec_va && rva < sec_va + sec_size {
                 return Some((rva - sec_va + sec_offset) as usize);
@@ -640,7 +683,7 @@ pub mod windows {
 
 // ── Re-exports ───────────────────────────────────────────────────────────────
 
-#[cfg(target_os = "linux")]
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 pub use linux::*;
 
 #[cfg(target_os = "windows")]

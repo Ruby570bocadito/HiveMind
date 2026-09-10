@@ -11,25 +11,25 @@
 //   - Royal Jelly directives
 
 use crate::ldc::{Message, Role, Value};
-use uuid::Uuid;
-use tracing::{info, warn};
 use std::collections::HashMap;
+use tracing::{info, warn};
+use uuid::Uuid;
 
 /// A remote hive that this hive has discovered.
 #[derive(Debug, Clone)]
 pub struct RemoteHive {
     pub hive_id: Uuid,
-    pub discovery_method: String,      // "c2_correlation", "dns", "stigmergy", "direct"
+    pub discovery_method: String, // "c2_correlation", "dns", "stigmergy", "direct"
     pub last_contact: u64,
     pub shared_hosts: Vec<String>,
     pub shared_techniques: Vec<String>,
-    pub threat_level: f32,             // EDR presence in that hive's network
+    pub threat_level: f32, // EDR presence in that hive's network
 }
 
 /// Federation manager: tracks remote hives and syncs intel.
 pub struct HiveFederation {
     pub remote_hives: HashMap<Uuid, RemoteHive>,
-    pub federation_id: Uuid,           // shared federation token
+    pub federation_id: Uuid, // shared federation token
 }
 
 impl Default for HiveFederation {
@@ -51,8 +51,16 @@ impl HiveFederation {
     pub fn advertise_dns(&self, domain: &str) {
         let payload = format!(
             "hive_id={}|fed_id={}|threat={:.2}|hosts={}",
-            Uuid::new_v4().to_string().chars().take(8).collect::<String>(),
-            self.federation_id.to_string().chars().take(8).collect::<String>(),
+            Uuid::new_v4()
+                .to_string()
+                .chars()
+                .take(8)
+                .collect::<String>(),
+            self.federation_id
+                .to_string()
+                .chars()
+                .take(8)
+                .collect::<String>(),
             0.0,
             1,
         );
@@ -62,7 +70,10 @@ impl HiveFederation {
         // Send via DNS lookup
         use std::net::ToSocketAddrs;
         if format!("{}:0", query).to_socket_addrs().is_ok() {
-            info!("FEDERATION: advertised via DNS: {}", &query[..40.min(query.len())]);
+            info!(
+                "FEDERATION: advertised via DNS: {}",
+                &query[..40.min(query.len())]
+            );
         }
     }
 
@@ -92,8 +103,12 @@ impl HiveFederation {
         for hive in self.remote_hives.values_mut() {
             if !hive.shared_techniques.contains(&technique.to_string()) {
                 hive.shared_techniques.push(technique.to_string());
-                info!("FEDERATION: shared technique '{}' ({:.0}%) with hive {}",
-                    technique, success_rate * 100.0, hive.hive_id);
+                info!(
+                    "FEDERATION: shared technique '{}' ({:.0}%) with hive {}",
+                    technique,
+                    success_rate * 100.0,
+                    hive.hive_id
+                );
             }
         }
     }
@@ -116,27 +131,34 @@ impl HiveFederation {
             hive.threat_level = hive.threat_level.max(threat);
         }
         if edr_detected {
-            warn!("FEDERATION: EDR '{}' detected, alerting {} remote hives",
-                edr_name, self.remote_hives.len());
+            warn!(
+                "FEDERATION: EDR '{}' detected, alerting {} remote hives",
+                edr_name,
+                self.remote_hives.len()
+            );
         }
     }
 
     /// Emit a federation beacon to the swarm so all agents know about remote hives.
     pub fn emit_federation_belief(&self, agent_id: Uuid) -> Vec<Message> {
-        self.remote_hives.values().map(|hive| {
-            Message::belief(
-                agent_id, Role::Queen,
-                format!("federation:hive:{}", hive.hive_id),
-                Value::String(format!(
-                    "method:{}|hosts:{}|techs:{}|threat:{:.2}",
-                    hive.discovery_method,
-                    hive.shared_hosts.len(),
-                    hive.shared_techniques.len(),
-                    hive.threat_level,
-                )),
-                1.0,
-            )
-        }).collect()
+        self.remote_hives
+            .values()
+            .map(|hive| {
+                Message::belief(
+                    agent_id,
+                    Role::Queen,
+                    format!("federation:hive:{}", hive.hive_id),
+                    Value::String(format!(
+                        "method:{}|hosts:{}|techs:{}|threat:{:.2}",
+                        hive.discovery_method,
+                        hive.shared_hosts.len(),
+                        hive.shared_techniques.len(),
+                        hive.threat_level,
+                    )),
+                    1.0,
+                )
+            })
+            .collect()
     }
 }
 
@@ -154,12 +176,26 @@ mod tests {
     fn test_share_technique() {
         let mut fed = HiveFederation::new();
         // Manually add a remote hive
-        fed.remote_hives.insert(Uuid::new_v4(), RemoteHive {
-            hive_id: Uuid::new_v4(), discovery_method: "test".into(),
-            last_contact: 0, shared_hosts: vec![], shared_techniques: vec![],
-            threat_level: 0.0,
-        });
+        fed.remote_hives.insert(
+            Uuid::new_v4(),
+            RemoteHive {
+                hive_id: Uuid::new_v4(),
+                discovery_method: "test".into(),
+                last_contact: 0,
+                shared_hosts: vec![],
+                shared_techniques: vec![],
+                threat_level: 0.0,
+            },
+        );
         fed.share_technique("ssh_pass_auth", 0.85);
-        assert_eq!(fed.remote_hives.values().next().unwrap().shared_techniques.len(), 1);
+        assert_eq!(
+            fed.remote_hives
+                .values()
+                .next()
+                .unwrap()
+                .shared_techniques
+                .len(),
+            1
+        );
     }
 }

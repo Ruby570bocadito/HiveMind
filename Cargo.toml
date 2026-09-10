@@ -17,6 +17,7 @@ members = [
 [workspace.package]
 version = "3.0.0"
 edition = "2021"
+rust-version = "1.82"
 description = "Hive Colony v3.0 — Multi-Agent Autonomous Red Team Framework"
 authors = ["Hive Colony Team"]
 
@@ -25,4 +26,7 @@ opt-level = "z"
 lto = true
 codegen-units = 1
 strip = true
-panic = "abort"
+# Note: panic = "unwind" (default) is intentional — worker relies on
+# std::panic::catch_unwind for the ML classifier fallback path, which is
+# impossible with panic = "abort".
+

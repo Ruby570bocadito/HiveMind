@@ -8,7 +8,9 @@ use std::io;
 use std::mem;
 use std::ptr;
 
-#[cfg(target_os = "linux")]
+// The raw syscall wrappers this module reuses are x86_64-only (see
+// syscalls::linux), so the ring implementation is gated on the arch too.
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 mod ring {
     use super::*;
 
@@ -64,7 +66,13 @@ mod ring {
     }
 
     unsafe fn io_uring_enter(ring_fd: i32, to_submit: u32, min_complete: u32, flags: u32) -> i32 {
-        crate::syscalls::syscall4(426, ring_fd as i64, to_submit as i64, min_complete as i64, flags as i64) as i32
+        crate::syscalls::syscall4(
+            426,
+            ring_fd as i64,
+            to_submit as i64,
+            min_complete as i64,
+            flags as i64,
+        ) as i32
     }
 
     /// Initialize io_uring with SQPOLL (kernel thread handles submissions).
@@ -96,7 +104,8 @@ mod ring {
             }
 
             // Map SQ ring
-            let sq_ring_size = params.sq_off[5] as usize + (entries as usize * mem::size_of::<IoUringSQE>());
+            let sq_ring_size =
+                params.sq_off[5] as usize + (entries as usize * mem::size_of::<IoUringSQE>());
             let sq_ptr = unsafe {
                 libc::mmap(
                     ptr::null_mut(),
@@ -108,7 +117,9 @@ mod ring {
                 )
             };
             if sq_ptr == libc::MAP_FAILED {
-                unsafe { libc::close(fd); }
+                unsafe {
+                    libc::close(fd);
+                }
                 return Err(io::Error::last_os_error());
             }
 
@@ -125,12 +136,15 @@ mod ring {
                 )
             };
             if sqe_ptr == libc::MAP_FAILED {
-                unsafe { libc::close(fd); }
+                unsafe {
+                    libc::close(fd);
+                }
                 return Err(io::Error::last_os_error());
             }
 
             // Map CQ ring
-            let cq_ring_size = params.cq_off[1] as usize + (entries as usize * mem::size_of::<IoUringCQE>());
+            let cq_ring_size =
+                params.cq_off[1] as usize + (entries as usize * mem::size_of::<IoUringCQE>());
             let cq_ptr = unsafe {
                 libc::mmap(
                     ptr::null_mut(),
@@ -142,23 +156,37 @@ mod ring {
                 )
             };
             if cq_ptr == libc::MAP_FAILED {
-                unsafe { libc::close(fd); }
+                unsafe {
+                    libc::close(fd);
+                }
                 return Err(io::Error::last_os_error());
             }
 
             let sq_head = unsafe { (sq_ptr as *mut u8).add(params.sq_off[0] as usize) as *mut u32 };
             let sq_tail = unsafe { (sq_ptr as *mut u8).add(params.sq_off[1] as usize) as *mut u32 };
-            let sq_mask_ptr = unsafe { (sq_ptr as *mut u8).add(params.sq_off[2] as usize) as *const u32 };
+            let sq_mask_ptr =
+                unsafe { (sq_ptr as *mut u8).add(params.sq_off[2] as usize) as *const u32 };
             let sq_mask = unsafe { ptr::read_unaligned(sq_mask_ptr) };
             let cq_head = unsafe { (cq_ptr as *mut u8).add(params.cq_off[0] as usize) as *mut u32 };
             let cq_tail = unsafe { (cq_ptr as *mut u8).add(params.cq_off[1] as usize) as *mut u32 };
-            let cq_mask_ptr = unsafe { (cq_ptr as *mut u8).add(params.cq_off[2] as usize) as *const u32 };
+            let cq_mask_ptr =
+                unsafe { (cq_ptr as *mut u8).add(params.cq_off[2] as usize) as *const u32 };
             let cq_mask = unsafe { ptr::read_unaligned(cq_mask_ptr) };
-            let cqes = unsafe { (cq_ptr as *mut u8).add(params.cq_off[5] as usize) as *mut IoUringCQE };
+            let cqes =
+                unsafe { (cq_ptr as *mut u8).add(params.cq_off[5] as usize) as *mut IoUringCQE };
 
             Ok(Self {
-                fd, sq_ptr: sqe_ptr as *mut IoUringSQE, sq_head, sq_tail, sq_mask,
-                cq_head, cq_tail, cq_mask, cqes, sq_ring_size, cq_ring_size,
+                fd,
+                sq_ptr: sqe_ptr as *mut IoUringSQE,
+                sq_head,
+                sq_tail,
+                sq_mask,
+                cq_head,
+                cq_tail,
+                cq_mask,
+                cqes,
+                sq_ring_size,
+                cq_ring_size,
                 next_sqe: 0,
             })
         }
@@ -176,16 +204,26 @@ mod ring {
         /// Submit all pending SQEs.
         unsafe fn submit(&mut self) -> io::Result<u32> {
             let submitted = self.next_sqe.wrapping_sub(*self.sq_tail);
-            if submitted == 0 { return Ok(0); }
+            if submitted == 0 {
+                return Ok(0);
+            }
             *self.sq_tail = self.next_sqe;
             let ret = io_uring_enter(self.fd, submitted, 0, 0);
-            if ret < 0 { Err(io::Error::last_os_error()) } else { Ok(ret as u32) }
+            if ret < 0 {
+                Err(io::Error::last_os_error())
+            } else {
+                Ok(ret as u32)
+            }
         }
 
         /// Wait for at least `min` completions.
         unsafe fn wait(&mut self, min: u32) -> io::Result<()> {
             let ret = io_uring_enter(self.fd, 0, min, 0);
-            if ret < 0 { Err(io::Error::last_os_error()) } else { Ok(()) }
+            if ret < 0 {
+                Err(io::Error::last_os_error())
+            } else {
+                Ok(())
+            }
         }
 
         /// Read file via io_uring (bypasses hooked read syscall).
@@ -255,10 +293,18 @@ pub struct IoUring;
 
 #[cfg(not(target_os = "linux"))]
 impl IoUring {
-    pub fn new(_: u32) -> io::Result<Self> { Ok(Self) }
-    pub fn stealth_read(&mut self, _fd: i32, _buf: &mut [u8], _offset: u64) -> io::Result<usize> { Ok(0) }
-    pub fn stealth_write(&mut self, _fd: i32, _buf: &[u8], _offset: u64) -> io::Result<usize> { Ok(0) }
-    pub fn stealth_send(&mut self, _fd: i32, _buf: &[u8]) -> io::Result<usize> { Ok(0) }
+    pub fn new(_: u32) -> io::Result<Self> {
+        Ok(Self)
+    }
+    pub fn stealth_read(&mut self, _fd: i32, _buf: &mut [u8], _offset: u64) -> io::Result<usize> {
+        Ok(0)
+    }
+    pub fn stealth_write(&mut self, _fd: i32, _buf: &[u8], _offset: u64) -> io::Result<usize> {
+        Ok(0)
+    }
+    pub fn stealth_send(&mut self, _fd: i32, _buf: &[u8]) -> io::Result<usize> {
+        Ok(0)
+    }
 }
 
 #[cfg(test)]

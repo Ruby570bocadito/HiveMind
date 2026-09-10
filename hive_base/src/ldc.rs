@@ -104,6 +104,15 @@ pub struct Message {
 }
 
 impl Message {
+    /// True when this message is the colony-wide kill-switch broadcast
+    /// published by the operator (`beekeeper kill-switch --confirm`).
+    /// Every agent checks this first in its message loop and shuts down.
+    pub fn is_kill_switch(&self) -> bool {
+        matches!(
+            &self.payload,
+            Payload::StatusEvent { event_type, .. } if event_type == "kill_switch"
+        )
+    }
     pub fn to_signed_bytes(&self) -> Vec<u8> {
         rmp_serde::to_vec(self).unwrap_or_default()
     }
@@ -116,35 +125,41 @@ impl Message {
         Self {
             agent_id,
             agent_role,
-            timestamp: std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_secs(),
+            timestamp: crate::utils::timestamp_now(),
             payload: Payload::Heartbeat,
         }
     }
 
-    pub fn belief(agent_id: Uuid, agent_role: Role, asset: String, value: Value, confidence: f32) -> Self {
+    pub fn belief(
+        agent_id: Uuid,
+        agent_role: Role,
+        asset: String,
+        value: Value,
+        confidence: f32,
+    ) -> Self {
         Self {
             agent_id,
             agent_role,
-            timestamp: std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_secs(),
-            payload: Payload::Belief { asset, value, confidence },
+            timestamp: crate::utils::timestamp_now(),
+            payload: Payload::Belief {
+                asset,
+                value,
+                confidence,
+            },
         }
     }
 
-    pub fn proposal(agent_id: Uuid, agent_role: Role, action: String, argument: String) -> (Self, Uuid) {
+    pub fn proposal(
+        agent_id: Uuid,
+        agent_role: Role,
+        action: String,
+        argument: String,
+    ) -> (Self, Uuid) {
         let proposal_id = Uuid::new_v4();
         let msg = Self {
             agent_id,
             agent_role,
-            timestamp: std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_secs(),
+            timestamp: crate::utils::timestamp_now(),
             payload: Payload::Proposal {
                 action,
                 argument,
@@ -154,14 +169,17 @@ impl Message {
         (msg, proposal_id)
     }
 
-    pub fn vote(agent_id: Uuid, agent_role: Role, proposal_id: Uuid, decision: Decision, weight: f32) -> Self {
+    pub fn vote(
+        agent_id: Uuid,
+        agent_role: Role,
+        proposal_id: Uuid,
+        decision: Decision,
+        weight: f32,
+    ) -> Self {
         Self {
             agent_id,
             agent_role,
-            timestamp: std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_secs(),
+            timestamp: crate::utils::timestamp_now(),
             payload: Payload::Vote {
                 proposal_id,
                 decision,
@@ -170,14 +188,18 @@ impl Message {
         }
     }
 
-    pub fn status_event(agent_id: Uuid, agent_role: Role, event_type: &str, subject_id: Uuid, subject_role: Role, detail: &str) -> Self {
+    pub fn status_event(
+        agent_id: Uuid,
+        agent_role: Role,
+        event_type: &str,
+        subject_id: Uuid,
+        subject_role: Role,
+        detail: &str,
+    ) -> Self {
         Self {
             agent_id,
             agent_role,
-            timestamp: std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_secs(),
+            timestamp: crate::utils::timestamp_now(),
             payload: Payload::StatusEvent {
                 event_type: event_type.to_string(),
                 subject_id,
@@ -214,7 +236,11 @@ mod tests {
         assert_eq!(msg.agent_id, id);
         assert_eq!(msg.agent_role, role);
         match &msg.payload {
-            Payload::Belief { asset, value, confidence } => {
+            Payload::Belief {
+                asset,
+                value,
+                confidence,
+            } => {
                 assert_eq!(asset, "edr");
                 assert!(matches!(value, Value::Bool(true)));
                 assert_eq!(*confidence, 0.95);
@@ -226,10 +252,15 @@ mod tests {
     #[test]
     fn test_proposal_message() {
         let (id, role) = test_agent();
-        let (msg, proposal_id) = Message::proposal(id, role, "encrypt".into(), "target secured".into());
+        let (msg, proposal_id) =
+            Message::proposal(id, role, "encrypt".into(), "target secured".into());
         assert_eq!(msg.agent_id, id);
         match &msg.payload {
-            Payload::Proposal { action, argument, proposal_id: pid } => {
+            Payload::Proposal {
+                action,
+                argument,
+                proposal_id: pid,
+            } => {
                 assert_eq!(action, "encrypt");
                 assert_eq!(argument, "target secured");
                 assert_eq!(*pid, proposal_id);
@@ -244,7 +275,11 @@ mod tests {
         let proposal_id = Uuid::new_v4();
         let msg = Message::vote(id, role, proposal_id, Decision::Support, 1.5);
         match &msg.payload {
-            Payload::Vote { proposal_id: pid, decision, weight } => {
+            Payload::Vote {
+                proposal_id: pid,
+                decision,
+                weight,
+            } => {
                 assert_eq!(*pid, proposal_id);
                 assert!(matches!(decision, Decision::Support));
                 assert_eq!(*weight, 1.5);
@@ -257,9 +292,21 @@ mod tests {
     fn test_status_event_message() {
         let (id, role) = test_agent();
         let subject = Uuid::new_v4();
-        let msg = Message::status_event(id, role, "agent_dead", subject, Role::Worker, "no heartbeat");
+        let msg = Message::status_event(
+            id,
+            role,
+            "agent_dead",
+            subject,
+            Role::Worker,
+            "no heartbeat",
+        );
         match &msg.payload {
-            Payload::StatusEvent { event_type, subject_id, subject_role, detail } => {
+            Payload::StatusEvent {
+                event_type,
+                subject_id,
+                subject_role,
+                detail,
+            } => {
                 assert_eq!(event_type, "agent_dead");
                 assert_eq!(*subject_id, subject);
                 assert!(matches!(subject_role, Role::Worker));
@@ -272,17 +319,33 @@ mod tests {
     #[test]
     fn test_messagepack_roundtrip() {
         let (id, role) = test_agent();
-        let original = Message::belief(id, role, "os_type".into(), Value::String("linux".into()), 1.0);
-        
+        let original = Message::belief(
+            id,
+            role,
+            "os_type".into(),
+            Value::String("linux".into()),
+            1.0,
+        );
+
         let bytes = rmp_serde::to_vec(&original).expect("Serialize failed");
         let restored: Message = rmp_serde::from_slice(&bytes).expect("Deserialize failed");
-        
+
         assert_eq!(original.agent_id, restored.agent_id);
         assert_eq!(original.agent_role, restored.agent_role);
         assert_eq!(original.timestamp, restored.timestamp);
         match (&original.payload, &restored.payload) {
-            (Payload::Belief { asset: a1, value: v1, confidence: c1 },
-             Payload::Belief { asset: a2, value: v2, confidence: c2 }) => {
+            (
+                Payload::Belief {
+                    asset: a1,
+                    value: v1,
+                    confidence: c1,
+                },
+                Payload::Belief {
+                    asset: a2,
+                    value: v2,
+                    confidence: c2,
+                },
+            ) => {
                 assert_eq!(a1, a2);
                 assert!(matches!((v1, v2), (Value::String(s1), Value::String(s2)) if s1 == s2));
                 assert_eq!(c1, c2);
@@ -294,11 +357,17 @@ mod tests {
     #[test]
     fn test_all_belief_value_types() {
         let (id, role) = test_agent();
-        
+
         let msg_bool = Message::belief(id, role, "a".into(), Value::Bool(true), 1.0);
         let msg_str = Message::belief(id, role, "b".into(), Value::String("hi".into()), 1.0);
         let msg_int = Message::belief(id, role, "c".into(), Value::Int(42), 1.0);
-        let msg_float = Message::belief(id, role, "d".into(), Value::Float(std::f64::consts::PI), 1.0);
+        let msg_float = Message::belief(
+            id,
+            role,
+            "d".into(),
+            Value::Float(std::f64::consts::PI),
+            1.0,
+        );
 
         for msg in &[msg_bool, msg_str, msg_int, msg_float] {
             let bytes = rmp_serde::to_vec(msg).expect("serialize");

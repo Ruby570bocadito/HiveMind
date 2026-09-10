@@ -14,20 +14,20 @@ use rand::Rng;
 ///
 /// Paillier-style simplified keypair.
 pub struct HomoKeypair {
-    pub n: u64,       // modulus (product of two primes, simplified)
-    pub g: u64,       // generator
-    pub lambda: u64,   // private key (Carmichael's function)
+    pub n: u64,      // modulus (product of two primes, simplified)
+    pub g: u64,      // generator
+    pub lambda: u64, // private key (Carmichael's function)
 }
 
 impl HomoKeypair {
     /// Generate a simplified keypair for demonstration.
     pub fn generate() -> Self {
         // Small primes for demonstration (real FHE needs 2048-bit primes)
-        let p: u64 = 499;  // prime
-        let q: u64 = 503;  // prime
+        let p: u64 = 499; // prime
+        let q: u64 = 503; // prime
         let n = p * q;
         let lambda = (p - 1) * (q - 1);
-        let g = n + 1;  // Simplified Paillier: g = n + 1
+        let g = n + 1; // Simplified Paillier: g = n + 1
 
         Self { n, g, lambda }
     }
@@ -51,7 +51,9 @@ impl HomoKeypair {
         let n_sq = self.n * self.n;
         let c_lambda = modular_pow(ciphertext as u128, self.lambda as u128, n_sq as u128) as u64;
         // L(x) = (x - 1) / n
-        if c_lambda < 1 { return 0; }
+        if c_lambda < 1 {
+            return 0;
+        }
         let l = (c_lambda - 1) / self.n;
         let mu = mod_inverse(self.lambda, self.n);
         (l as u128 * mu as u128 % self.n as u128) as u64
@@ -75,7 +77,9 @@ impl HomoKeypair {
 
 /// Modular exponentiation: base^exp mod modulus (u128 version).
 fn modular_pow(mut base: u128, mut exp: u128, modulus: u128) -> u128 {
-    if modulus == 1 { return 0; }
+    if modulus == 1 {
+        return 0;
+    }
     let mut result: u128 = 1;
     base %= modulus;
     while exp > 0 {
@@ -97,8 +101,12 @@ fn mod_inverse(a: u64, m: u64) -> u64 {
         (t, new_t) = (new_t, t - quotient * new_t);
         (r, new_r) = (new_r, r - quotient * new_r);
     }
-    if r > 1 { return 0; }
-    if t < 0 { t += m as i64; }
+    if r > 1 {
+        return 0;
+    }
+    if t < 0 {
+        t += m as i64;
+    }
     t as u64
 }
 
@@ -130,7 +138,10 @@ mod tests {
     #[test]
     fn test_tally_votes() {
         static SERIAL: std::sync::OnceLock<std::sync::Mutex<()>> = std::sync::OnceLock::new();
-        let _guard = SERIAL.get_or_init(|| std::sync::Mutex::new(())).lock().unwrap();
+        let _guard = SERIAL
+            .get_or_init(|| std::sync::Mutex::new(()))
+            .lock()
+            .unwrap();
         let kp = HomoKeypair::generate();
         let votes: Vec<u64> = vec![1, 1, 0, 1, 1]; // 4 support, 1 reject
         let encrypted_votes: Vec<u64> = votes.iter().map(|v| kp.encrypt(*v)).collect();
@@ -142,11 +153,16 @@ mod tests {
     #[test]
     fn test_encrypted_zero_doesnt_change_tally() {
         static SERIAL: std::sync::OnceLock<std::sync::Mutex<()>> = std::sync::OnceLock::new();
-        let _guard = SERIAL.get_or_init(|| std::sync::Mutex::new(())).lock().unwrap();
+        let _guard = SERIAL
+            .get_or_init(|| std::sync::Mutex::new(()))
+            .lock()
+            .unwrap();
         let kp = HomoKeypair::generate();
         let votes: Vec<u64> = vec![1, 0, 1, 0, 1];
         let encrypted: Vec<u64> = votes.iter().map(|v| kp.encrypt(*v)).collect();
-        let tally_ct = encrypted.iter().fold(kp.encrypt(0), |acc, v| kp.add_encrypted(acc, *v));
+        let tally_ct = encrypted
+            .iter()
+            .fold(kp.encrypt(0), |acc, v| kp.add_encrypted(acc, *v));
         let tally_pt = kp.decrypt(tally_ct);
         assert_eq!(tally_pt, 3); // 3 support votes, zeros don't affect
     }

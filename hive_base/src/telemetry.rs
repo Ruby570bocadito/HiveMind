@@ -185,10 +185,7 @@ impl Event {
         Self::new(agent_uuid, seq, event_type, vec![], None)
     }
 
-    pub fn with_payload(
-        mut self,
-        payload: Vec<u8>,
-    ) -> Self {
+    pub fn with_payload(mut self, payload: Vec<u8>) -> Self {
         self.payload = Some(payload);
         self
     }
@@ -273,34 +270,32 @@ impl TelemetryBuffer {
         }
 
         // Write the entry
-        let write_pos = self.write_cursor().fetch_add(4 + entry_len as u64, Ordering::AcqRel);
+        let write_pos = self
+            .write_cursor()
+            .fetch_add(4 + entry_len as u64, Ordering::AcqRel);
         let write_idx = (write_pos as usize) % self.capacity;
         let data_area = self.data_ptr();
 
         // Write length prefix (unaligned — ring buffer may wrap at any offset)
         unsafe {
             let len_bytes = (entry_len as u32).to_le_bytes();
-            std::ptr::copy_nonoverlapping(
-                len_bytes.as_ptr(),
-                data_area.add(write_idx),
-                4,
-            );
+            std::ptr::copy_nonoverlapping(len_bytes.as_ptr(), data_area.add(write_idx), 4);
         }
 
         // Write data (handle wrap-around)
         let data_start = (write_idx + 4) % self.capacity;
         if data_start + entry_len <= self.capacity {
             unsafe {
-                std::ptr::copy_nonoverlapping(
-                    bytes.as_ptr(),
-                    data_area.add(data_start),
-                    entry_len,
-                );
+                std::ptr::copy_nonoverlapping(bytes.as_ptr(), data_area.add(data_start), entry_len);
             }
         } else {
             let first_chunk = self.capacity - data_start;
             unsafe {
-                std::ptr::copy_nonoverlapping(bytes.as_ptr(), data_area.add(data_start), first_chunk);
+                std::ptr::copy_nonoverlapping(
+                    bytes.as_ptr(),
+                    data_area.add(data_start),
+                    first_chunk,
+                );
                 std::ptr::copy_nonoverlapping(
                     bytes.as_ptr().add(first_chunk),
                     data_area,
@@ -541,12 +536,7 @@ struct RotatingWriter {
 }
 
 impl RotatingWriter {
-    fn new(
-        dir: PathBuf,
-        prefix: &'static str,
-        max_size: u64,
-        max_age: Duration,
-    ) -> Self {
+    fn new(dir: PathBuf, prefix: &'static str, max_size: u64, max_age: Duration) -> Self {
         let path = dir.join(format!("{}_{}.jsonl", prefix, timestamp_str()));
         Self {
             dir,
@@ -588,11 +578,18 @@ impl RotatingWriter {
         if self.buf.is_empty() {
             return Ok(());
         }
-        std::fs::write(&self.current_path, &self.buf)?;
+        // Append instead of truncate: `fs::write` rewrites the file from
+        // scratch on every flush, destroying everything flushed before it.
+        // Multiple flushes into the same rotated file must accumulate.
+        use std::io::Write;
+        let mut file = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&self.current_path)?;
+        file.write_all(&self.buf)?;
         self.buf.clear();
         Ok(())
     }
-
 }
 
 impl TelemetryFileWriter {
@@ -698,7 +695,12 @@ impl TelemetryCollector {
     }
 
     /// Emit an event. Returns the EventId if emitted, None if discarded.
-    pub fn emit(&self, event_type: EventType, causes: Vec<EventId>, payload: Option<Vec<u8>>) -> Option<EventId> {
+    pub fn emit(
+        &self,
+        event_type: EventType,
+        causes: Vec<EventId>,
+        payload: Option<Vec<u8>>,
+    ) -> Option<EventId> {
         let seq = self.seq.fetch_add(1, Ordering::AcqRel);
         let event = Event::new(self.agent_uuid, seq, event_type, causes, payload);
 
@@ -814,12 +816,19 @@ pub fn spawn_drain_task(
             let drained = collector.drain(512);
 
             if drained > 0 {
-                info!("HTL drain: {} events flushed (buffer {:.1}%)", drained, occupancy * 100.0);
+                info!(
+                    "HTL drain: {} events flushed (buffer {:.1}%)",
+                    drained,
+                    occupancy * 100.0
+                );
             }
 
             // If hybrid mode and occupancy > 75%, signal help
             if collector.drain_mode() == DrainMode::Hybrid && occupancy > HIGH_WATERMARK {
-                info!("HTL: buffer {:.1}% full, signaling for shared drain help", occupancy * 100.0);
+                info!(
+                    "HTL: buffer {:.1}% full, signaling for shared drain help",
+                    occupancy * 100.0
+                );
             }
         }
     })
@@ -915,9 +924,11 @@ impl ReplayEngine {
         // Check causal dependencies
         for cause in &event.causes {
             if cause.seq != 0 && !self.state.processed_ids.contains(cause) {
-                self.state
-                    .errors
-                    .push(format!("Missing cause {} for event {}", cause.short(), event.id.short()));
+                self.state.errors.push(format!(
+                    "Missing cause {} for event {}",
+                    cause.short(),
+                    event.id.short()
+                ));
                 return None;
             }
         }
@@ -1026,7 +1037,10 @@ mod tests {
 
     #[test]
     fn test_event_criticality_from_type() {
-        assert_eq!(EventType::KillSwitchActivated.criticality(), Criticality::Critical);
+        assert_eq!(
+            EventType::KillSwitchActivated.criticality(),
+            Criticality::Critical
+        );
         assert_eq!(EventType::HeartbeatSent.criticality(), Criticality::Normal);
         assert_eq!(EventType::ModelInference.criticality(), Criticality::Debug);
     }
@@ -1089,7 +1103,9 @@ mod tests {
         let drained = buf.drain(10);
         assert_eq!(drained.len(), 1);
         assert_eq!(drained[0].id.seq, 1);
-        unsafe { destroy_test_buffer(&buf); }
+        unsafe {
+            destroy_test_buffer(&buf);
+        }
     }
 
     #[test]
@@ -1097,7 +1113,9 @@ mod tests {
         let buf = create_test_buffer();
         let drained = buf.drain(10);
         assert!(drained.is_empty());
-        unsafe { destroy_test_buffer(&buf); }
+        unsafe {
+            destroy_test_buffer(&buf);
+        }
     }
 
     #[test]
@@ -1112,7 +1130,9 @@ mod tests {
         for (i, e) in drained.iter().enumerate() {
             assert_eq!(e.id.seq, i as u64);
         }
-        unsafe { destroy_test_buffer(&buf); }
+        unsafe {
+            destroy_test_buffer(&buf);
+        }
     }
 
     #[test]
@@ -1125,7 +1145,9 @@ mod tests {
         }
         let occ = buf.occupancy_ratio();
         assert!(occ > 0.0);
-        unsafe { destroy_test_buffer(&buf); }
+        unsafe {
+            destroy_test_buffer(&buf);
+        }
     }
 
     #[test]
@@ -1137,7 +1159,9 @@ mod tests {
         assert_eq!(peeked.len(), 1);
         let drained = buf.drain(10);
         assert_eq!(drained.len(), 1, "peek should not advance cursor");
-        unsafe { destroy_test_buffer(&buf); }
+        unsafe {
+            destroy_test_buffer(&buf);
+        }
     }
 
     #[test]
@@ -1145,7 +1169,9 @@ mod tests {
         let buf = create_test_buffer();
         let event = Event::root_event(test_agent_id(), 1, EventType::KillSwitchActivated);
         assert!(buf.write_event(&event));
-        unsafe { destroy_test_buffer(&buf); }
+        unsafe {
+            destroy_test_buffer(&buf);
+        }
     }
 
     // ── AdaptiveSampler tests ──
@@ -1283,7 +1309,13 @@ mod tests {
     fn test_replay_causal_integrity_check() {
         let mut engine = ReplayEngine::new();
         let cause = EventId::new(test_agent_id(), 99);
-        let event = Event::new(test_agent_id(), 1, EventType::ConsensusReached, vec![cause], None);
+        let event = Event::new(
+            test_agent_id(),
+            1,
+            EventType::ConsensusReached,
+            vec![cause],
+            None,
+        );
         engine.events.push(event);
         engine.state.total_events = 1;
         let errors = engine.verify_causal_integrity();
@@ -1343,7 +1375,9 @@ mod tests {
         assert_eq!(id.unwrap().seq, 1);
 
         let _ = std::fs::remove_dir_all(&dir);
-        unsafe { dealloc_full_arena(ptr); }
+        unsafe {
+            dealloc_full_arena(ptr);
+        }
     }
 
     #[test]
@@ -1358,7 +1392,9 @@ mod tests {
         assert!(id2.unwrap().seq > id1.unwrap().seq);
 
         let _ = std::fs::remove_dir_all(&dir);
-        unsafe { dealloc_full_arena(ptr); }
+        unsafe {
+            dealloc_full_arena(ptr);
+        }
     }
 
     #[test]
@@ -1374,7 +1410,9 @@ mod tests {
         collector.flush().unwrap();
 
         let _ = std::fs::remove_dir_all(&dir);
-        unsafe { dealloc_full_arena(ptr); }
+        unsafe {
+            dealloc_full_arena(ptr);
+        }
     }
 
     #[test]
@@ -1389,6 +1427,8 @@ mod tests {
         assert_eq!(flushed, 1);
 
         let _ = std::fs::remove_dir_all(&dir);
-        unsafe { dealloc_full_arena(ptr); }
+        unsafe {
+            dealloc_full_arena(ptr);
+        }
     }
 }

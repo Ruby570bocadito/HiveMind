@@ -1,6 +1,6 @@
+use std::ffi::OsStr;
 use std::io;
 use std::process::{Child, Command, Stdio};
-use std::ffi::OsStr;
 
 /// Cross-platform process spawning with stdin/stdout/stderr pipes.
 ///
@@ -12,7 +12,9 @@ pub struct ChildProcess {
 
 impl ChildProcess {
     pub fn spawn<I, S>(program: &str, args: I) -> io::Result<Self>
-    where I: IntoIterator<Item = S>, S: AsRef<OsStr>,
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<OsStr>,
     {
         let child = Command::new(program)
             .args(args)
@@ -24,7 +26,9 @@ impl ChildProcess {
     }
 
     pub fn spawn_detached<I, S>(program: &str, args: I) -> io::Result<u32>
-    where I: IntoIterator<Item = S>, S: AsRef<OsStr>,
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<OsStr>,
     {
         let child = Self::spawn_detached_inner(program, args)?;
         Ok(child.id())
@@ -32,7 +36,9 @@ impl ChildProcess {
 
     #[cfg(target_os = "linux")]
     fn spawn_detached_inner<I, S>(program: &str, args: I) -> io::Result<Child>
-    where I: IntoIterator<Item = S>, S: AsRef<OsStr>,
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<OsStr>,
     {
         use std::os::unix::process::CommandExt;
         let mut cmd = Command::new(program);
@@ -52,7 +58,9 @@ impl ChildProcess {
 
     #[cfg(not(target_os = "linux"))]
     fn spawn_detached_inner<I, S>(program: &str, args: I) -> io::Result<Child>
-    where I: IntoIterator<Item = S>, S: AsRef<OsStr>,
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<OsStr>,
     {
         Command::new(program)
             .args(args)
@@ -70,7 +78,7 @@ impl ChildProcess {
         if let Some(ref mut child) = self.inner {
             child.wait()
         } else {
-            Err(io::Error::new(io::ErrorKind::Other, "no child process"))
+            Err(io::Error::other("no child process"))
         }
     }
 
@@ -78,7 +86,7 @@ impl ChildProcess {
         if let Some(ref mut child) = self.inner {
             child.try_wait()
         } else {
-            Err(io::Error::new(io::ErrorKind::Other, "no child process"))
+            Err(io::Error::other("no child process"))
         }
     }
 
@@ -86,33 +94,44 @@ impl ChildProcess {
         if let Some(ref mut child) = self.inner {
             child.kill()
         } else {
-            Err(io::Error::new(io::ErrorKind::Other, "no child process"))
+            Err(io::Error::other("no child process"))
         }
     }
 
     #[cfg(target_os = "linux")]
     pub fn kill_pid(pid: u32) -> io::Result<()> {
         let rc = unsafe { libc::kill(pid as i32, libc::SIGKILL) };
-        if rc == 0 { Ok(()) } else { Err(io::Error::last_os_error()) }
+        if rc == 0 {
+            Ok(())
+        } else {
+            Err(io::Error::last_os_error())
+        }
     }
 
     #[cfg(target_os = "windows")]
     pub fn kill_pid(pid: u32) -> io::Result<()> {
         let handle = unsafe {
-            winapi::um::processthreadsapi::OpenProcess(
-                winapi::um::winnt::PROCESS_TERMINATE,
-                0,
-                pid,
-            )
+            winapi::um::processthreadsapi::OpenProcess(winapi::um::winnt::PROCESS_TERMINATE, 0, pid)
         };
-        if handle.is_null() { return Err(io::Error::last_os_error()); }
+        if handle.is_null() {
+            return Err(io::Error::last_os_error());
+        }
         let rc = unsafe { winapi::um::processthreadsapi::TerminateProcess(handle, 1) };
-        unsafe { winapi::um::handleapi::CloseHandle(handle); }
-        if rc != 0 { Ok(()) } else { Err(io::Error::last_os_error()) }
+        unsafe {
+            winapi::um::handleapi::CloseHandle(handle);
+        }
+        if rc != 0 {
+            Ok(())
+        } else {
+            Err(io::Error::last_os_error())
+        }
     }
 
     #[cfg(not(any(target_os = "linux", target_os = "windows")))]
     pub fn kill_pid(pid: u32) -> io::Result<()> {
-        Err(io::Error::new(io::ErrorKind::Unsupported, "kill_pid not implemented"))
+        Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "kill_pid not implemented",
+        ))
     }
 }

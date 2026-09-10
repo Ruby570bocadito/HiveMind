@@ -168,7 +168,10 @@ impl ChaosRecipe {
     }
 
     pub fn corrupt_header() -> Self {
-        Self::new(Fault::CorruptArenaHeader, "Coordinated: corrupt arena header")
+        Self::new(
+            Fault::CorruptArenaHeader,
+            "Coordinated: corrupt arena header",
+        )
     }
 
     pub fn reorder() -> Self {
@@ -226,7 +229,10 @@ impl ChaosEngine {
     /// Inject a fault. Returns an InjectionResult describing what happened.
     pub fn inject(&mut self, recipe: &ChaosRecipe) -> InjectionResult {
         self.injected_count += 1;
-        info!("Chaos: injecting fault #{}: {}", self.injected_count, recipe.description);
+        info!(
+            "Chaos: injecting fault #{}: {}",
+            self.injected_count, recipe.description
+        );
         let result = self.execute_injection(recipe);
 
         // Emit HTL SecurityTrigger
@@ -292,7 +298,9 @@ impl ChaosEngine {
                 arena::mark_agent_dead(ptr, i);
                 // Also zero the heartbeat to ensure it's detected
                 let slot = arena::agent_slot_mut(ptr, i);
-                unsafe { (*slot).last_heartbeat.store(0, Ordering::Release); }
+                unsafe {
+                    (*slot).last_heartbeat.store(0, Ordering::Release);
+                }
                 slot_idx = Some(i);
                 self.killed_slots.insert(i);
                 break;
@@ -318,7 +326,9 @@ impl ChaosEngine {
             if slot_agent == *agent_id && (arena::agent_flags_val(ptr, i) & 1) != 0 {
                 // Set heartbeat to far in the past to simulate timeout
                 let slot = arena::agent_slot_mut(ptr, i);
-                unsafe { (*slot).last_heartbeat.store(1, Ordering::Release); }
+                unsafe {
+                    (*slot).last_heartbeat.store(1, Ordering::Release);
+                }
                 slot_idx = Some(i);
                 break;
             }
@@ -496,7 +506,11 @@ impl ChaosEngine {
                 let len = (*slot).payload_len as usize;
                 if len > 0 && len <= arena::MAX_MSG_SIZE {
                     let mut dup_payload = [0u8; arena::MAX_MSG_SIZE];
-                    std::ptr::copy_nonoverlapping((*slot).payload.as_ptr(), dup_payload.as_mut_ptr(), len);
+                    std::ptr::copy_nonoverlapping(
+                        (*slot).payload.as_ptr(),
+                        dup_payload.as_mut_ptr(),
+                        len,
+                    );
                     // Write to next slot as duplicate
                     let next_idx = (slot_idx + 1) % arena::MAX_MESSAGES;
                     let next_slot = arena::message_slot_mut(ptr, next_idx);
@@ -518,7 +532,11 @@ impl ChaosEngine {
                     );
                     (*next_slot).role = (*slot).role;
                     (*next_slot).payload_len = len as u32;
-                    std::ptr::copy_nonoverlapping(dup_payload.as_ptr(), (*next_slot).payload.as_mut_ptr(), len);
+                    std::ptr::copy_nonoverlapping(
+                        dup_payload.as_ptr(),
+                        (*next_slot).payload.as_mut_ptr(),
+                        len,
+                    );
                     (*next_slot).seq.store(dup_seq, Ordering::Release);
                 }
             }
@@ -530,7 +548,11 @@ impl ChaosEngine {
             fault: Fault::DuplicateMessage(slot_idx),
             success,
             detail: if success {
-                format!("Message at slot {} duplicated to slot {}", slot_idx, (slot_idx + 1) % arena::MAX_MESSAGES)
+                format!(
+                    "Message at slot {} duplicated to slot {}",
+                    slot_idx,
+                    (slot_idx + 1) % arena::MAX_MESSAGES
+                )
             } else {
                 format!("Invalid slot index {}", slot_idx)
             },
@@ -606,7 +628,10 @@ impl ChaosEngine {
         InjectionResult {
             fault: Fault::ReduceQuorum(_threshold),
             success: true,
-            detail: format!("Quorum reduction request for threshold {} recorded", _threshold),
+            detail: format!(
+                "Quorum reduction request for threshold {} recorded",
+                _threshold
+            ),
             agent_slot: None,
             message_slot: None,
         }
@@ -729,9 +754,7 @@ mod tests {
         let (seq, slot_idx) = arena::claim_slot(ptr);
         let slot = arena::message_slot_mut(ptr, slot_idx);
         let payload = b"test message payload";
-        arena::write_message_slot(
-            slot, seq, 1000, [1u8; 16], [2u8; 32], [3u8; 64], 0, payload,
-        );
+        arena::write_message_slot(slot, seq, 1000, [1u8; 16], [2u8; 32], [3u8; 64], 0, payload);
         slot_idx
     }
 
@@ -742,17 +765,25 @@ mod tests {
         let ptr = alloc_arena();
         let agent_id = [0xAAu8; 16];
         let slot = register_test_agent(ptr, agent_id);
-        assert!(arena::agent_flags_val(ptr, slot) & 2 == 0, "should be alive");
+        assert!(
+            arena::agent_flags_val(ptr, slot) & 2 == 0,
+            "should be alive"
+        );
 
         let mut engine = ChaosEngine::new(ptr);
         let recipe = ChaosRecipe::kill_agent(agent_id);
         let result = engine.inject(&recipe);
         assert!(result.success, "kill should succeed");
 
-        assert!(arena::agent_flags_val(ptr, slot) & 2 != 0, "agent should be dead");
+        assert!(
+            arena::agent_flags_val(ptr, slot) & 2 != 0,
+            "agent should be dead"
+        );
         assert_eq!(engine.alive_agent_count(), 0, "no alive agents");
         assert!(engine.arena_is_healthy());
-        unsafe { free_arena(ptr); }
+        unsafe {
+            free_arena(ptr);
+        }
     }
 
     #[test]
@@ -762,7 +793,9 @@ mod tests {
         let mut engine = ChaosEngine::new(ptr);
         let result = engine.inject(&ChaosRecipe::kill_agent(unknown_id));
         assert!(!result.success, "unknown agent should not be found");
-        unsafe { free_arena(ptr); }
+        unsafe {
+            free_arena(ptr);
+        }
     }
 
     #[test]
@@ -773,7 +806,9 @@ mod tests {
         let mut engine = ChaosEngine::new(ptr);
         let result = engine.inject(&ChaosRecipe::simulate_timeout(agent_id));
         assert!(result.success);
-        unsafe { free_arena(ptr); }
+        unsafe {
+            free_arena(ptr);
+        }
     }
 
     #[test]
@@ -792,7 +827,9 @@ mod tests {
 
         let seq = arena::read_slot_seq(arena::message_slot_ptr(ptr, slot_idx));
         assert_eq!(seq, 0, "dropped message seq should be 0");
-        unsafe { free_arena(ptr); }
+        unsafe {
+            free_arena(ptr);
+        }
     }
 
     // ── Byzantine-lite tests ──
@@ -820,8 +857,13 @@ mod tests {
             std::ptr::copy_nonoverlapping((*slot).payload.as_ptr(), buf.as_mut_ptr(), buf.len());
             buf
         };
-        assert_ne!(orig_payload, new_payload, "payload should differ after corruption");
-        unsafe { free_arena(ptr); }
+        assert_ne!(
+            orig_payload, new_payload,
+            "payload should differ after corruption"
+        );
+        unsafe {
+            free_arena(ptr);
+        }
     }
 
     #[test]
@@ -841,8 +883,13 @@ mod tests {
             let slot = arena::message_slot_ptr(ptr, slot_idx);
             (*slot).signature
         };
-        assert_ne!(orig_sig, new_sig, "signature should differ after corruption");
-        unsafe { free_arena(ptr); }
+        assert_ne!(
+            orig_sig, new_sig,
+            "signature should differ after corruption"
+        );
+        unsafe {
+            free_arena(ptr);
+        }
     }
 
     #[test]
@@ -866,7 +913,9 @@ mod tests {
             (*slot).agent_id
         };
         assert_ne!(orig_id, new_id);
-        unsafe { free_arena(ptr); }
+        unsafe {
+            free_arena(ptr);
+        }
     }
 
     #[test]
@@ -879,7 +928,9 @@ mod tests {
         let mut engine = ChaosEngine::new(ptr);
         let result = engine.inject(&ChaosRecipe::reorder());
         assert!(result.success, "reorder needs > 1 message");
-        unsafe { free_arena(ptr); }
+        unsafe {
+            free_arena(ptr);
+        }
     }
 
     #[test]
@@ -895,10 +946,20 @@ mod tests {
         ));
         assert!(result.success);
 
-        let dup_seq = unsafe { (*arena::message_slot_ptr(ptr, next_idx)).seq.load(Ordering::Acquire) };
-        let orig_seq = unsafe { (*arena::message_slot_ptr(ptr, slot_idx)).seq.load(Ordering::Acquire) };
+        let dup_seq = unsafe {
+            (*arena::message_slot_ptr(ptr, next_idx))
+                .seq
+                .load(Ordering::Acquire)
+        };
+        let orig_seq = unsafe {
+            (*arena::message_slot_ptr(ptr, slot_idx))
+                .seq
+                .load(Ordering::Acquire)
+        };
         assert_eq!(dup_seq, orig_seq, "duplicate should have same seq");
-        unsafe { free_arena(ptr); }
+        unsafe {
+            free_arena(ptr);
+        }
     }
 
     // ── Coordinated tests ──
@@ -915,7 +976,9 @@ mod tests {
         let result = engine.inject(&ChaosRecipe::degrade_agents(vec![id1, id2]));
         assert!(result.success);
         assert!(result.detail.contains("2"), "should degrade 2 agents");
-        unsafe { free_arena(ptr); }
+        unsafe {
+            free_arena(ptr);
+        }
     }
 
     #[test]
@@ -927,7 +990,9 @@ mod tests {
         let result = engine.inject(&ChaosRecipe::corrupt_header());
         assert!(result.success);
         assert!(!engine.arena_is_healthy(), "arena should be corrupted");
-        unsafe { free_arena(ptr); }
+        unsafe {
+            free_arena(ptr);
+        }
     }
 
     #[test]
@@ -940,7 +1005,9 @@ mod tests {
         // Verify first flooded slot has the garbage seq
         let seq = arena::read_slot_seq(arena::message_slot_ptr(ptr, 0));
         assert_eq!(seq, u64::MAX, "flooded slot should have max seq");
-        unsafe { free_arena(ptr); }
+        unsafe {
+            free_arena(ptr);
+        }
     }
 
     #[test]
@@ -962,7 +1029,9 @@ mod tests {
         assert!(survived, "arena should survive fail-stop");
         // Only the killed agent is gone; timed-out agent still has flags & 1
         assert_eq!(engine.alive_agent_count(), 1);
-        unsafe { free_arena(ptr); }
+        unsafe {
+            free_arena(ptr);
+        }
     }
 
     #[test]
@@ -983,7 +1052,9 @@ mod tests {
         assert!(results.iter().all(|r| r.success));
         // Corrupt header not included, so arena should survive
         assert!(survived);
-        unsafe { free_arena(ptr); }
+        unsafe {
+            free_arena(ptr);
+        }
     }
 
     #[test]
@@ -998,7 +1069,9 @@ mod tests {
         assert_eq!(engine.injected_count(), 1);
         engine.inject(&ChaosRecipe::kill_agent(id)); // already dead, will fail
         assert_eq!(engine.injected_count(), 2);
-        unsafe { free_arena(ptr); }
+        unsafe {
+            free_arena(ptr);
+        }
     }
 
     #[test]
@@ -1014,7 +1087,9 @@ mod tests {
         engine.reset();
         assert_eq!(engine.injected_count(), 0);
         assert!(engine.arena_is_healthy());
-        unsafe { free_arena(ptr); }
+        unsafe {
+            free_arena(ptr);
+        }
     }
 
     #[test]
@@ -1024,6 +1099,8 @@ mod tests {
         assert!(engine.arena_is_healthy());
         engine.inject(&ChaosRecipe::corrupt_header());
         assert!(!engine.arena_is_healthy());
-        unsafe { free_arena(ptr); }
+        unsafe {
+            free_arena(ptr);
+        }
     }
 }

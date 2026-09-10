@@ -1,5 +1,5 @@
-use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use uuid::Uuid;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -22,10 +22,10 @@ pub struct TelemetrySample {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DetectionPrediction {
-    pub probability: f32,              // 0.0-1.0
+    pub probability: f32, // 0.0-1.0
     pub estimated_soc_response_secs: u64,
-    pub most_likely_vector: String,    // "network" | "endpoint" | "behavioral" | "log"
-    pub confidence: f32,               // 0.0-1.0
+    pub most_likely_vector: String, // "network" | "endpoint" | "behavioral" | "log"
+    pub confidence: f32,            // 0.0-1.0
 }
 
 /// Action recommendation from the Seer feedback loop.
@@ -91,7 +91,11 @@ impl Seer {
         }
     }
 
-    pub fn predict_detection(&self, telemetry: &TelemetrySample, action: &str) -> DetectionPrediction {
+    pub fn predict_detection(
+        &self,
+        telemetry: &TelemetrySample,
+        action: &str,
+    ) -> DetectionPrediction {
         let base_risk = self.model.base_risk_for_action(action);
         let edr_risk = self.model.edr_risk_score(telemetry);
         let env_risk = self.model.env_risk_score(telemetry);
@@ -101,17 +105,29 @@ impl Seer {
 
         let response_time = match telemetry {
             t if t.has_crowdstrike || t.has_sentinelone => {
-                if t.is_domain_controller { 120 } else { 300 }
+                if t.is_domain_controller {
+                    120
+                } else {
+                    300
+                }
             }
             t if t.has_defender => {
-                if t.is_domain_controller { 300 } else { 600 }
+                if t.is_domain_controller {
+                    300
+                } else {
+                    600
+                }
             }
             _ => 900,
         };
 
         let vector = self.predict_vector(telemetry, action);
 
-        let base_confidence = if telemetry.total_processes > 50 { 0.85 } else { 0.65 };
+        let base_confidence = if telemetry.total_processes > 50 {
+            0.85
+        } else {
+            0.65
+        };
         let confidence = (base_confidence + self.confidence_adjustment).clamp(0.0, 1.0);
 
         DetectionPrediction {
@@ -138,35 +154,35 @@ impl Seer {
     }
 
     fn predict_vector(&self, telemetry: &TelemetrySample, action: &str) -> String {
-        let has_edr = telemetry.has_crowdstrike || telemetry.has_sentinelone
-            || telemetry.has_defender || telemetry.has_carbonblack;
+        let has_edr = telemetry.has_crowdstrike
+            || telemetry.has_sentinelone
+            || telemetry.has_defender
+            || telemetry.has_carbonblack;
 
-        if (action.contains("scan") || action.contains("port"))
-            && telemetry.firewall_rules > 10 {
-                return "network".into();
-            }
-        if (action.contains("exfil") || action.contains("upload"))
-            && telemetry.listening_ports > 5 {
-                return "network".into();
-            }
+        if (action.contains("scan") || action.contains("port")) && telemetry.firewall_rules > 10 {
+            return "network".into();
+        }
+        if (action.contains("exfil") || action.contains("upload")) && telemetry.listening_ports > 5
+        {
+            return "network".into();
+        }
         if (action.contains("exec") || action.contains("run") || action.contains("process"))
-            && has_edr {
-                return "endpoint".into();
-            }
-        if (action.contains("ssh") || action.contains("scp"))
-            && telemetry.logged_in_users > 2 {
-                return "log".into();
-            }
-        if (action.contains("persist") || action.contains("boot"))
-            && telemetry.is_vm {
-                return "behavioral".into();
-            }
+            && has_edr
+        {
+            return "endpoint".into();
+        }
+        if (action.contains("ssh") || action.contains("scp")) && telemetry.logged_in_users > 2 {
+            return "log".into();
+        }
+        if (action.contains("persist") || action.contains("boot")) && telemetry.is_vm {
+            return "behavioral".into();
+        }
         "behavioral".into()
     }
 
     /// Process telemetry events by event type name and adjust risk accordingly.
     /// This method can be called to feed explicit event types into the feedback loop.
-    /// 
+    ///
     /// Event mappings:
     /// - HeartbeatSent → slightly positive (+0.01 confidence)
     /// - SafetyTrigger → negative (-0.1, detection risk increased)
@@ -195,7 +211,8 @@ impl Seer {
     /// Returns the number of events processed.
     pub fn process_telemetry_events(&mut self) -> usize {
         // If we have a collector, drain it (events go to file), count them
-        let base_count = if let Some(ref mut _collector) = self.collector {
+
+        if let Some(ref mut _collector) = self.collector {
             // Note: collector.drain() returns usize (count), and internally
             // it processes Vec<Event>. We count them.
             //
@@ -205,9 +222,7 @@ impl Seer {
             0
         } else {
             0
-        };
-
-        base_count
+        }
     }
 
     /// Propose a directive to the HiveMind based on current detection prediction.
@@ -222,20 +237,12 @@ impl Seer {
 
         if pred.probability > threshold {
             // High detection risk: RETREAT_AND_PURGE
-            let directive_id = hive.propose_directive(
-                seer_id,
-                "RETREAT_AND_PURGE".into(),
-                params,
-            );
+            let directive_id = hive.propose_directive(seer_id, "RETREAT_AND_PURGE".into(), params);
             self.record_action(SeerAction::Retreat);
             Some(directive_id)
         } else if pred.probability < 0.3 && pred.confidence > 0.7 {
             // Low risk, high confidence: ESCALATE operations
-            let directive_id = hive.propose_directive(
-                seer_id,
-                "ESCALATE".into(),
-                params,
-            );
+            let directive_id = hive.propose_directive(seer_id, "ESCALATE".into(), params);
             self.record_action(SeerAction::Proceed);
             Some(directive_id)
         } else {
@@ -348,23 +355,52 @@ impl SimplePredictor {
         let mut score = 0.0;
         let mut count = 0;
 
-        if telemetry.has_crowdstrike { score += 0.9; count += 1; }
-        if telemetry.has_sentinelone { score += 0.85; count += 1; }
-        if telemetry.has_defender { score += 0.6; count += 1; }
-        if telemetry.has_carbonblack { score += 0.8; count += 1; }
-        if telemetry.has_symantec { score += 0.5; count += 1; }
+        if telemetry.has_crowdstrike {
+            score += 0.9;
+            count += 1;
+        }
+        if telemetry.has_sentinelone {
+            score += 0.85;
+            count += 1;
+        }
+        if telemetry.has_defender {
+            score += 0.6;
+            count += 1;
+        }
+        if telemetry.has_carbonblack {
+            score += 0.8;
+            count += 1;
+        }
+        if telemetry.has_symantec {
+            score += 0.5;
+            count += 1;
+        }
 
-        if count > 0 { score / count as f32 } else { 0.2 }
+        if count > 0 {
+            score / count as f32
+        } else {
+            0.2
+        }
     }
 
     fn env_risk_score(&self, telemetry: &TelemetrySample) -> f32 {
         let mut score = 0.3;
 
-        if telemetry.is_domain_controller { score += 0.3; }
-        if telemetry.is_server_os { score += 0.2; }
-        if telemetry.is_vm { score += 0.1; }
-        if telemetry.logged_in_users > 5 { score += 0.1; }
-        if telemetry.firewall_rules > 20 { score += 0.1; }
+        if telemetry.is_domain_controller {
+            score += 0.3;
+        }
+        if telemetry.is_server_os {
+            score += 0.2;
+        }
+        if telemetry.is_vm {
+            score += 0.1;
+        }
+        if telemetry.logged_in_users > 5 {
+            score += 0.1;
+        }
+        if telemetry.firewall_rules > 20 {
+            score += 0.1;
+        }
         if telemetry.edr_process_count > 0 {
             score += (telemetry.edr_process_count as f32) * 0.1;
         }
@@ -402,7 +438,10 @@ mod tests {
         let seer = Seer::new();
         let telemetry = sample_telemetry();
         let prediction = seer.predict_detection(&telemetry, "exploit eternalblue");
-        assert!(prediction.probability > 0.5, "High risk action should have >0.5 probability");
+        assert!(
+            prediction.probability > 0.5,
+            "High risk action should have >0.5 probability"
+        );
         assert!(prediction.estimated_soc_response_secs > 0);
     }
 
@@ -486,8 +525,10 @@ mod tests {
         let pred2 = seer.predict_detection(&telemetry, "scan network");
 
         // Check that risk increased
-        assert!(pred2.probability > pred1.probability,
-                "SafetyTrigger events should increase detection probability");
+        assert!(
+            pred2.probability > pred1.probability,
+            "SafetyTrigger events should increase detection probability"
+        );
     }
 
     #[test]
@@ -507,7 +548,10 @@ mod tests {
         // Threshold of 0.5, probability 0.8 should trigger RETREAT
         let directive_id = seer.steer(&mut hive, 0.5);
 
-        assert!(directive_id.is_some(), "steer() should return a directive_id");
+        assert!(
+            directive_id.is_some(),
+            "steer() should return a directive_id"
+        );
 
         let did = directive_id.unwrap();
 
@@ -537,7 +581,10 @@ mod tests {
         // With threshold of 0.5, but probability 0.2 meets the low+confidence path
         let directive_id = seer.steer(&mut hive, 0.5);
 
-        assert!(directive_id.is_some(), "steer() should return ESCALATE directive for low risk + high confidence");
+        assert!(
+            directive_id.is_some(),
+            "steer() should return ESCALATE directive for low risk + high confidence"
+        );
 
         let pending = hive.get_pending_directives();
         assert_eq!(pending.len(), 1);
@@ -564,7 +611,10 @@ mod tests {
         let directive_id = seer.steer(&mut hive, 0.5);
 
         // Medium risk returns None since below retreat threshold but not escalate criteria
-        assert!(directive_id.is_none(), "Medium risk should not trigger RETREAT or ESCALATE");
+        assert!(
+            directive_id.is_none(),
+            "Medium risk should not trigger RETREAT or ESCALATE"
+        );
 
         // But action should be recorded as Scramble
         let actions = seer.last_n_actions(10);
@@ -640,20 +690,26 @@ mod tests {
 
         // Set some predictions and get recommendations
         seer.set_prediction(DetectionPrediction {
-            probability: 0.1, confidence: 0.8,
-            estimated_soc_response_secs: 900, most_likely_vector: "network".into(),
+            probability: 0.1,
+            confidence: 0.8,
+            estimated_soc_response_secs: 900,
+            most_likely_vector: "network".into(),
         });
         seer.recommend_action(); // Proceed
 
         seer.set_prediction(DetectionPrediction {
-            probability: 0.5, confidence: 0.7,
-            estimated_soc_response_secs: 600, most_likely_vector: "endpoint".into(),
+            probability: 0.5,
+            confidence: 0.7,
+            estimated_soc_response_secs: 600,
+            most_likely_vector: "endpoint".into(),
         });
         seer.recommend_action(); // Scramble
 
         seer.set_prediction(DetectionPrediction {
-            probability: 0.9, confidence: 0.95,
-            estimated_soc_response_secs: 120, most_likely_vector: "endpoint".into(),
+            probability: 0.9,
+            confidence: 0.95,
+            estimated_soc_response_secs: 120,
+            most_likely_vector: "endpoint".into(),
         });
         seer.recommend_action(); // Retreat
 
@@ -663,7 +719,7 @@ mod tests {
         // last_n_actions returns in reverse order (most recent first)
         let last3 = seer.last_n_actions(3);
         assert_eq!(last3.len(), 3);
-        assert!(matches!(last3[0], SeerAction::Retreat));  // most recent
+        assert!(matches!(last3[0], SeerAction::Retreat)); // most recent
         assert!(matches!(last3[1], SeerAction::Scramble));
         assert!(matches!(last3[2], SeerAction::Proceed));
 

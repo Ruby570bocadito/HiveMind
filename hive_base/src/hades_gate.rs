@@ -18,7 +18,8 @@ pub mod windows {
         let ntdll_base = get_loaded_ntdll_base()?;
         let exports = parse_loaded_pe_exports(ntdll_base)?;
 
-        let (_, func_rva) = exports.iter()
+        let (_, func_rva) = exports
+            .iter()
             .find(|(name, _)| name.eq_ignore_ascii_case(function_name))?;
 
         let func_addr = ntdll_base + *func_rva as usize;
@@ -28,7 +29,8 @@ pub mod windows {
         // mov r10, rcx; mov eax, [SSN]; test byte [0x7FFE0308], 1; jne ...
         // The SSN is at offset 4 (little-endian u32)
         if stub_bytes[0] == 0x4C && stub_bytes[1] == 0x8B && stub_bytes[2] == 0xD1 {
-            let ssn = u32::from_le_bytes([stub_bytes[4], stub_bytes[5], stub_bytes[6], stub_bytes[7]]);
+            let ssn =
+                u32::from_le_bytes([stub_bytes[4], stub_bytes[5], stub_bytes[6], stub_bytes[7]]);
             return Some(ssn);
         }
 
@@ -38,9 +40,13 @@ pub mod windows {
             if stub_bytes[i] == 0xB8 && i + 4 < stub_bytes.len() {
                 // mov eax, XXXX found
                 let ssn = u32::from_le_bytes([
-                    stub_bytes[i+1], stub_bytes[i+2], stub_bytes[i+3], stub_bytes[i+4]
+                    stub_bytes[i + 1],
+                    stub_bytes[i + 2],
+                    stub_bytes[i + 3],
+                    stub_bytes[i + 4],
                 ]);
-                if ssn < 0x1000 { // syscall numbers are < 4096
+                if ssn < 0x1000 {
+                    // syscall numbers are < 4096
                     return Some(ssn);
                 }
             }
@@ -69,15 +75,20 @@ pub mod windows {
         // Walk the linked list
         let mut entry = unsafe { *in_load_order };
         loop {
-            if entry == 0 || entry == in_load_order as usize { break; }
+            if entry == 0 || entry == in_load_order as usize {
+                break;
+            }
             let dll_base = unsafe { *(entry as *const usize).add(5) }; // LDR_DATA_TABLE_ENTRY.DllBase
             let dll_name_offset = unsafe { *(entry as *const usize).add(10) }; // BaseDllName.Buffer
             let dll_name_len = unsafe { *((entry as *const usize).add(9) as *const u16) }; // BaseDllName.Length
 
             if dll_name_offset != 0 && dll_name_len > 0 {
-                let name = String::from_utf16_lossy(
-                    unsafe { std::slice::from_raw_parts(dll_name_offset as *const u16, dll_name_len as usize / 2) }
-                );
+                let name = String::from_utf16_lossy(unsafe {
+                    std::slice::from_raw_parts(
+                        dll_name_offset as *const u16,
+                        dll_name_len as usize / 2,
+                    )
+                });
                 if name.to_lowercase().contains("ntdll") {
                     return Some(dll_base);
                 }
@@ -98,7 +109,9 @@ pub mod windows {
             *((base + pe_offset + 0x88) as *const u32) // IMAGE_DATA_DIRECTORY[0] = Export
         };
 
-        if export_rva == 0 { return None; }
+        if export_rva == 0 {
+            return None;
+        }
 
         let export_dir = base + export_rva as usize;
         let num_names = unsafe { *(export_dir as *const u32).add(6) } as usize;
@@ -122,7 +135,9 @@ pub mod windows {
         let mut s = Vec::new();
         for i in 0..256 {
             let b = unsafe { *ptr.add(i) };
-            if b == 0 { break; }
+            if b == 0 {
+                break;
+            }
             s.push(b);
         }
         String::from_utf8_lossy(&s).to_string()

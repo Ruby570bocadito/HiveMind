@@ -3,8 +3,8 @@
 // Prefers memfd_create on Linux (anonymous, no filesystem footprint),
 // falls back to shm_open with a randomized name.
 
-use std::io;
 use crate::shared_arena;
+use std::io;
 
 #[cfg(target_os = "linux")]
 mod platform {
@@ -59,9 +59,7 @@ mod platform {
                 (fd, owned, name.to_string())
             } else {
                 let cname = CString::new("colmena_arena").unwrap();
-                let fd = unsafe {
-                    libc::memfd_create(cname.as_ptr(), libc::MFD_CLOEXEC)
-                };
+                let fd = unsafe { libc::memfd_create(cname.as_ptr(), libc::MFD_CLOEXEC) };
                 if fd == -1 {
                     return Err(io::Error::last_os_error());
                 }
@@ -151,7 +149,10 @@ mod platform {
                 .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
             let ptr = unsafe { alloc::alloc_zeroed(layout) };
             if ptr.is_null() {
-                return Err(io::Error::new(io::ErrorKind::OutOfMemory, "arena alloc failed"));
+                return Err(io::Error::new(
+                    io::ErrorKind::OutOfMemory,
+                    "arena alloc failed",
+                ));
             }
             Ok(Self {
                 ptr,
@@ -173,9 +174,11 @@ mod platform {
     impl Drop for SharedArenaMapping {
         fn drop(&mut self) {
             use std::alloc::{self, Layout};
-            let layout = Layout::from_size_align(self.size, 4096)
-                .expect("arena layout: valid size+align");
-            unsafe { alloc::dealloc(self.ptr, layout); }
+            let layout =
+                Layout::from_size_align(self.size, 4096).expect("arena layout: valid size+align");
+            unsafe {
+                alloc::dealloc(self.ptr, layout);
+            }
         }
     }
 }
@@ -197,7 +200,9 @@ pub fn connect_to_arena() -> io::Result<SharedArenaMapping> {
 
     // Try anonymous memfd first (parent-child scenario)
     if cfg!(target_os = "linux") {
-        if let Ok(mapping) = SharedArenaMapping::create_or_open(None) { return Ok(mapping) }
+        if let Ok(mapping) = SharedArenaMapping::create_or_open(None) {
+            return Ok(mapping);
+        }
     }
 
     // Generate a random name for cross-process discovery

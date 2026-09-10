@@ -10,9 +10,9 @@
 
 #![allow(clippy::not_unsafe_ptr_arg_deref)]
 
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::mem;
 use std::ptr;
+use std::sync::atomic::{AtomicU64, AtomicU8, Ordering};
 
 // ── constants ────────────────────────────────────────────────────────────────
 
@@ -165,19 +165,28 @@ pub fn agent_slot_ptr(ptr: *const u8, idx: usize) -> *const AgentSlot {
 
 pub fn find_or_claim_agent_slot(ptr: *mut u8, agent_id: [u8; 16]) -> Option<usize> {
     unsafe {
+        // Pass 1: already registered with this exact id?
         for i in 0..MAX_AGENTS {
             let slot = agent_slot_ptr(ptr, i);
             if ((*slot).flags & 1) != 0 && (*slot).agent_id == agent_id {
                 return Some(i);
             }
         }
+        // Pass 2: claim a free slot with a compare-and-swap on the flag byte.
+        // The previous check-then-write had a TOCTOU race: several agents
+        // booting together could all observe the same free slot and claim it,
+        // overwriting each other's identity (last writer wins, the rest of
+        // the agents became invisible to the colony).
         for i in 0..MAX_AGENTS {
             let slot = agent_slot_mut(ptr, i);
-            if (*slot).flags & 1 == 0 {
+            let flags = (&raw mut (*slot).flags).cast::<AtomicU8>();
+            if (*flags)
+                .compare_exchange(0, 1, Ordering::AcqRel, Ordering::Acquire)
+                .is_ok()
+            {
                 (*slot).agent_id = agent_id;
                 (*slot).last_heartbeat = AtomicU64::new(0);
                 (*slot).role = 0;
-                (*slot).flags = 1;
                 return Some(i);
             }
         }
@@ -279,7 +288,7 @@ pub const TELEMETRY_BUFFER_SIZE: usize = 4 * 1024 * 1024;
 /// Offset from arena start where telemetry region begins
 pub fn telemetry_region_offset() -> usize {
     let sz = arena_layout_size();
-    (sz + 63) & !63  // align to 64 bytes
+    (sz + 63) & !63 // align to 64 bytes
 }
 
 /// Total telemetry region size (header + data buffer)
@@ -342,7 +351,11 @@ mod tests {
 
     #[test]
     fn test_header_size_alignment() {
-        assert_eq!(mem::size_of::<ArenaHeader>() % 64, 0, "Header must be cache-line aligned");
+        assert_eq!(
+            mem::size_of::<ArenaHeader>() % 64,
+            0,
+            "Header must be cache-line aligned"
+        );
     }
 
     #[test]

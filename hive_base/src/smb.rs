@@ -29,7 +29,11 @@ impl SmbAttack {
             attack: "SMB Check".into(),
             target: host.into(),
             success: open,
-            output: if open { "SMB port 445 open".into() } else { "SMB port 445 closed".into() },
+            output: if open {
+                "SMB port 445 open".into()
+            } else {
+                "SMB port 445 closed".into()
+            },
         }
     }
 
@@ -43,10 +47,12 @@ impl SmbAttack {
         match Command::new("sh").arg("-c").arg(&cmd).output() {
             Ok(out) => {
                 let stdout = String::from_utf8_lossy(&out.stdout);
-                let _shares: Vec<&str> = stdout.lines()
+                let _shares: Vec<&str> = stdout
+                    .lines()
                     .filter(|l| l.starts_with('\t') && !l.contains("Disk"))
                     .collect();
-                let success = !stdout.contains("NT_STATUS") && !stdout.contains("session setup failed");
+                let success =
+                    !stdout.contains("NT_STATUS") && !stdout.contains("session setup failed");
                 SmbResult {
                     attack: "SMB Enum Shares".into(),
                     target: host.into(),
@@ -108,10 +114,7 @@ impl SmbAttack {
 
     /// Named pipe connectivity check
     pub fn check_named_pipe(host: &str, pipe_name: &str) -> SmbResult {
-        let cmd = format!(
-            "impacket-rpcdump -p '{}' '{}' 2>/dev/null",
-            pipe_name, host
-        );
+        let cmd = format!("impacket-rpcdump -p '{}' '{}' 2>/dev/null", pipe_name, host);
 
         match Command::new("sh").arg("-c").arg(&cmd).output() {
             Ok(out) => {
@@ -121,7 +124,11 @@ impl SmbAttack {
                     attack: format!("Named Pipe: {}", pipe_name),
                     target: host.into(),
                     success,
-                    output: if success { "Pipe accessible".into() } else { stdout.trim().to_string() },
+                    output: if success {
+                        "Pipe accessible".into()
+                    } else {
+                        stdout.trim().to_string()
+                    },
                 }
             }
             Err(e) => SmbResult {
@@ -139,7 +146,8 @@ impl SmbAttack {
                 let stdout = String::from_utf8_lossy(&out.stdout);
                 let stderr = String::from_utf8_lossy(&out.stderr);
                 let combined = format!("{}{}", stdout, stderr);
-                let success = !combined.contains("ERROR") && !combined.contains("error")
+                let success = !combined.contains("ERROR")
+                    && !combined.contains("error")
                     && out.status.success();
                 SmbResult {
                     attack: attack_name.into(),

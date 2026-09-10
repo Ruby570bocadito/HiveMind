@@ -1,5 +1,5 @@
-use chacha20::ChaCha20;
 use chacha20::cipher::{KeyIvInit, StreamCipher};
+use chacha20::ChaCha20;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
@@ -36,7 +36,9 @@ pub fn derive_whisper_key(node_id: &Uuid, peer_id: &Uuid) -> [u8; 32] {
 
 pub fn encrypt_message(msg: &WhisperMessage, key: &[u8; 32]) -> Result<Vec<u8>, String> {
     let data = rmp_serde::to_vec(msg).map_err(|e| e.to_string())?;
-    let nonce: [u8; 12] = msg.msg_id.as_bytes()[..12].try_into().map_err(|_| "bad nonce")?;
+    let nonce: [u8; 12] = msg.msg_id.as_bytes()[..12]
+        .try_into()
+        .map_err(|_| "bad nonce")?;
     let mut cipher = ChaCha20::new(key.into(), (&nonce).into());
     let mut encrypted = data.clone();
     cipher.apply_keystream(&mut encrypted);
@@ -164,15 +166,24 @@ impl WhisperNet {
         Ok(())
     }
 
-    async fn handle_connection(core: Arc<StdMutex<WhisperCore>>, mut stream: TcpStream) -> Result<(), String> {
+    async fn handle_connection(
+        core: Arc<StdMutex<WhisperCore>>,
+        mut stream: TcpStream,
+    ) -> Result<(), String> {
         let mut len_buf = [0u8; 4];
-        stream.read_exact(&mut len_buf).await.map_err(|e| e.to_string())?;
+        stream
+            .read_exact(&mut len_buf)
+            .await
+            .map_err(|e| e.to_string())?;
         let frame_len = u32::from_be_bytes(len_buf) as usize;
         if frame_len > 1024 * 1024 {
             return Err("frame too large".into());
         }
         let mut frame = vec![0u8; frame_len];
-        stream.read_exact(&mut frame).await.map_err(|e| e.to_string())?;
+        stream
+            .read_exact(&mut frame)
+            .await
+            .map_err(|e| e.to_string())?;
 
         let msg: WhisperWirePacket = rmp_serde::from_slice(&frame).map_err(|e| e.to_string())?;
         if &msg.magic != WHISPER_PROTO_MAGIC {
@@ -196,8 +207,13 @@ impl WhisperNet {
 
     /// Connect to a peer and register them.
     pub async fn connect_to_peer(&self, peer: MeshPeer) -> Result<(), String> {
-        let addr: SocketAddr = peer.endpoint.parse().map_err(|e| format!("bad endpoint: {}", e))?;
-        let stream = TcpStream::connect(addr).await.map_err(|e| format!("connect: {}", e))?;
+        let addr: SocketAddr = peer
+            .endpoint
+            .parse()
+            .map_err(|e| format!("bad endpoint: {}", e))?;
+        let stream = TcpStream::connect(addr)
+            .await
+            .map_err(|e| format!("connect: {}", e))?;
         let mut core = self.core.lock().unwrap();
         if core.peers.iter().any(|p| p.peer_id == peer.peer_id) {
             return Err("peer already registered".into());
@@ -233,7 +249,9 @@ impl WhisperNet {
             let wire_data = if let Some(ref k) = key {
                 encrypt_message(&relayed, k)?
             } else {
-                let nonce = relayed.msg_id.as_bytes()[..12].try_into().unwrap_or([0u8; 12]);
+                let nonce = relayed.msg_id.as_bytes()[..12]
+                    .try_into()
+                    .unwrap_or([0u8; 12]);
                 let data = rmp_serde::to_vec(&relayed).map_err(|e| e.to_string())?;
                 let packet = WhisperWirePacket {
                     magic: *WHISPER_PROTO_MAGIC,
@@ -251,7 +269,10 @@ impl WhisperNet {
 
             match TcpStream::connect(&peer.endpoint).await {
                 Ok(mut stream) => {
-                    stream.write_all(&wire_data).await.map_err(|e| format!("send: {}", e))?;
+                    stream
+                        .write_all(&wire_data)
+                        .await
+                        .map_err(|e| format!("send: {}", e))?;
                     debug!("WhisperNet: sent {} to {}", relayed.msg_id, peer.endpoint);
                 }
                 Err(e) => warn!("WhisperNet: failed to {}: {}", peer.endpoint, e),
@@ -265,16 +286,18 @@ impl WhisperNet {
     /// Receive messages since seq.
     pub async fn receive_messages(&self, after_seq: u64) -> Vec<WhisperMessage> {
         let msgs = self.core.lock().unwrap().messages.clone();
-        msgs
-            .iter()
-            .filter(|m| m.seq > after_seq)
-            .cloned()
-            .collect()
+        msgs.iter().filter(|m| m.seq > after_seq).cloned().collect()
     }
 
     /// Create a new message (sync).
     pub fn create_message(&self, sender_id: Uuid, payload: Vec<u8>, ttl: u8) -> WhisperMessage {
-        let seq = self.core.lock().unwrap().seq_counter.fetch_add(1, Ordering::Relaxed) + 1;
+        let seq = self
+            .core
+            .lock()
+            .unwrap()
+            .seq_counter
+            .fetch_add(1, Ordering::Relaxed)
+            + 1;
         WhisperMessage {
             msg_id: Uuid::new_v4(),
             sender_id,
@@ -555,7 +578,7 @@ mod tests {
         net_a.start_listener().await.unwrap();
         net_b.start_listener().await.unwrap();
 
-        let port_a = net_a.config().listen_port;
+        let _port_a = net_a.config().listen_port;
         let port_b = net_b.config().listen_port;
 
         // Connect A to B

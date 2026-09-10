@@ -21,10 +21,18 @@ impl AntiAnalysis {
             is_vm: check_vm(),
             suspicious_timing: check_timing(),
         };
-        if result.is_debugged { warn!("Anti-analysis: debugger detected"); }
-        if result.is_sandbox { warn!("Anti-analysis: sandbox detected"); }
-        if result.is_vm { warn!("Anti-analysis: VM detected"); }
-        if result.suspicious_timing { warn!("Anti-analysis: suspicious timing"); }
+        if result.is_debugged {
+            warn!("Anti-analysis: debugger detected");
+        }
+        if result.is_sandbox {
+            warn!("Anti-analysis: sandbox detected");
+        }
+        if result.is_vm {
+            warn!("Anti-analysis: VM detected");
+        }
+        if result.suspicious_timing {
+            warn!("Anti-analysis: suspicious timing");
+        }
         result
     }
 }
@@ -34,9 +42,14 @@ fn check_debugger() -> bool {
     if let Ok(status) = std::fs::read_to_string("/proc/self/status") {
         for line in status.lines() {
             if line.starts_with("TracerPid:") {
-                let pid: i32 = line.split_whitespace()
-                    .nth(1).and_then(|s| s.parse().ok()).unwrap_or(0);
-                if pid != 0 { return true; }
+                let pid: i32 = line
+                    .split_whitespace()
+                    .nth(1)
+                    .and_then(|s| s.parse().ok())
+                    .unwrap_or(0);
+                if pid != 0 {
+                    return true;
+                }
             }
         }
     }
@@ -52,7 +65,9 @@ fn check_debugger() -> bool {
             );
             ret
         };
-        if ret != 0 { return true; }
+        if ret != 0 {
+            return true;
+        }
     }
     false
 }
@@ -64,7 +79,9 @@ fn check_debugger() -> bool {
         let peb: *const u8;
         std::arch::asm!("mov {0}, gs:[0x60]", out(reg) peb);
         let being_debugged = *((peb as usize + 2) as *const u8);
-        if being_debugged != 0 { return true; }
+        if being_debugged != 0 {
+            return true;
+        }
     }
     false
 }
@@ -73,25 +90,41 @@ fn check_debugger() -> bool {
 fn check_sandbox() -> bool {
     let mut indicators = 0u8;
     if let Ok(uptime) = std::fs::read_to_string("/proc/uptime") {
-        let seconds: f64 = uptime.split_whitespace()
-            .next().and_then(|s| s.parse().ok()).unwrap_or(99999.0);
-        if seconds < 600.0 { indicators += 1; }
+        let seconds: f64 = uptime
+            .split_whitespace()
+            .next()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(99999.0);
+        if seconds < 600.0 {
+            indicators += 1;
+        }
     }
     if let Ok(user) = std::env::var("USER") {
         let lowers = user.to_lowercase();
-        if lowers.contains("sandbox") || lowers.contains("malware")
-            || lowers.contains("virus") || lowers.contains("test") || lowers == "user" {
+        if lowers.contains("sandbox")
+            || lowers.contains("malware")
+            || lowers.contains("virus")
+            || lowers.contains("test")
+            || lowers == "user"
+        {
             indicators += 1;
         }
     }
     let cores = num_cpus();
-    if cores < 2 { indicators += 1; }
+    if cores < 2 {
+        indicators += 1;
+    }
     if let Ok(meminfo) = std::fs::read_to_string("/proc/meminfo") {
         for line in meminfo.lines() {
             if line.starts_with("MemTotal:") {
-                let kb: u64 = line.split_whitespace()
-                    .nth(1).and_then(|s| s.parse().ok()).unwrap_or(99999999);
-                if kb < 2048000 { indicators += 1; }
+                let kb: u64 = line
+                    .split_whitespace()
+                    .nth(1)
+                    .and_then(|s| s.parse().ok())
+                    .unwrap_or(99999999);
+                if kb < 2048000 {
+                    indicators += 1;
+                }
                 break;
             }
         }
@@ -104,18 +137,28 @@ fn check_sandbox() -> bool {
     let mut indicators = 0u8;
     if let Ok(user) = std::env::var("USERNAME") {
         let lowers = user.to_lowercase();
-        if lowers.contains("sandbox") || lowers.contains("malware")
-            || lowers.contains("virus") || lowers.contains("test")
-            || lowers == "user" || lowers == "admin" || lowers == "wdagutilityaccount" {
+        if lowers.contains("sandbox")
+            || lowers.contains("malware")
+            || lowers.contains("virus")
+            || lowers.contains("test")
+            || lowers == "user"
+            || lowers == "admin"
+            || lowers == "wdagutilityaccount"
+        {
             indicators += 1;
         }
     }
     let cores = num_cpus();
-    if cores < 2 { indicators += 1; }
+    if cores < 2 {
+        indicators += 1;
+    }
     if let Ok(comp) = std::env::var("COMPUTERNAME") {
         let lowers = comp.to_lowercase();
-        if lowers.contains("sandbox") || lowers.contains(" malware")
-            || lowers.contains("virus") || lowers.contains("test") {
+        if lowers.contains("sandbox")
+            || lowers.contains(" malware")
+            || lowers.contains("virus")
+            || lowers.contains("test")
+        {
             indicators += 1;
         }
     }
@@ -126,17 +169,38 @@ fn check_sandbox() -> bool {
 fn check_vm() -> bool {
     if let Ok(product) = std::fs::read_to_string("/sys/class/dmi/id/product_name") {
         let lowers = product.to_lowercase();
-        for vm_marker in &["virtualbox", "vmware", "qemu", "kvm", "xen", "hyper-v", "parallels"] {
-            if lowers.contains(vm_marker) { return true; }
+        for vm_marker in &[
+            "virtualbox",
+            "vmware",
+            "qemu",
+            "kvm",
+            "xen",
+            "hyper-v",
+            "parallels",
+        ] {
+            if lowers.contains(vm_marker) {
+                return true;
+            }
         }
     }
     if let Ok(cpuinfo) = std::fs::read_to_string("/proc/cpuinfo") {
-        if cpuinfo.contains("hypervisor") { return true; }
+        if cpuinfo.contains("hypervisor") {
+            return true;
+        }
     }
     if let Ok(modules) = std::fs::read_to_string("/proc/modules") {
-        for vm_mod in &["vboxguest", "vboxsf", "vmw_balloon", "vmwgfx",
-                         "virtio", "xen_blkfront", "hv_vmbus"] {
-            if modules.contains(vm_mod) { return true; }
+        for vm_mod in &[
+            "vboxguest",
+            "vboxsf",
+            "vmw_balloon",
+            "vmwgfx",
+            "virtio",
+            "xen_blkfront",
+            "hv_vmbus",
+        ] {
+            if modules.contains(vm_mod) {
+                return true;
+            }
         }
     }
     false
@@ -167,7 +231,9 @@ fn check_timing() -> bool {
 }
 
 fn num_cpus() -> usize {
-    std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1)
+    std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(1)
 }
 
 #[cfg(test)]

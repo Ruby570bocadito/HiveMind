@@ -24,8 +24,8 @@ pub struct ConsensusEngine {
     reputation: HashMap<Uuid, f32>,
     threshold: f32,
     default_reputation: f32,
-    decay_rate: f32,        // points per hour toward 1.0
-    last_decay: u64,        // timestamp of last decay application
+    decay_rate: f32, // points per hour toward 1.0
+    last_decay: u64, // timestamp of last decay application
 }
 
 impl ConsensusEngine {
@@ -36,10 +36,7 @@ impl ConsensusEngine {
             threshold,
             default_reputation: 1.0,
             decay_rate: 0.2, // decay 0.2 per hour toward 1.0
-            last_decay: std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_secs(),
+            last_decay: crate::utils::timestamp_now(),
         }
     }
 
@@ -58,19 +55,45 @@ impl ConsensusEngine {
         serde_json::from_slice(&data).ok()
     }
 
-    pub fn register_proposal(&mut self, proposal_id: Uuid, action: String, argument: String, proposer: Uuid, timestamp: u64) {
-        self.proposals.insert(proposal_id, VoteRecord {
-            proposal_id, action, argument,
-            votes: HashMap::new(), proposer, timestamp,
-        });
+    pub fn register_proposal(
+        &mut self,
+        proposal_id: Uuid,
+        action: String,
+        argument: String,
+        proposer: Uuid,
+        timestamp: u64,
+    ) {
+        self.proposals.insert(
+            proposal_id,
+            VoteRecord {
+                proposal_id,
+                action,
+                argument,
+                votes: HashMap::new(),
+                proposer,
+                timestamp,
+            },
+        );
     }
 
-    pub fn cast_vote(&mut self, proposal_id: Uuid, voter_id: Uuid, decision: Decision, base_weight: f32) {
+    pub fn cast_vote(
+        &mut self,
+        proposal_id: Uuid,
+        voter_id: Uuid,
+        decision: Decision,
+        base_weight: f32,
+    ) {
         // Weight by reputation
-        let rep = self.reputation.get(&voter_id).copied().unwrap_or(self.default_reputation);
+        let rep = self
+            .reputation
+            .get(&voter_id)
+            .copied()
+            .unwrap_or(self.default_reputation);
         let weighted = base_weight * rep;
         if let Some(record) = self.proposals.get_mut(&proposal_id) {
-            record.votes.insert(voter_id, (decision, weighted.max(0.01)));
+            record
+                .votes
+                .insert(voter_id, (decision, weighted.max(0.01)));
         }
     }
 
@@ -86,18 +109,21 @@ impl ConsensusEngine {
                 support_weight += weight;
             }
         }
-        if total_weight == 0.0 { return None; }
+        if total_weight == 0.0 {
+            return None;
+        }
         let ratio = support_weight / total_weight;
         Some((ratio >= self.threshold, ratio, total_weight))
     }
 
     pub fn get_pending_proposals(&self, timeout_secs: u64) -> Vec<Uuid> {
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_secs();
-        self.proposals.iter()
-            .filter(|(_, r)| now - r.timestamp < timeout_secs && self.check_consensus(&r.proposal_id).is_none())
+        let now = crate::utils::timestamp_now();
+        self.proposals
+            .iter()
+            .filter(|(_, r)| {
+                now.saturating_sub(r.timestamp) < timeout_secs
+                    && self.check_consensus(&r.proposal_id).is_none()
+            })
             .map(|(id, _)| *id)
             .collect()
     }
@@ -105,8 +131,17 @@ impl ConsensusEngine {
     /// Adjust reputation based on accuracy.
     /// success = true: agent was right, reward +reward_delta.
     /// success = false: agent was wrong, penalize -penalty_delta.
-    pub fn adjust_reputation(&mut self, agent_id: Uuid, success: bool, reward_delta: f32, penalty_delta: f32) {
-        let rep = self.reputation.entry(agent_id).or_insert(self.default_reputation);
+    pub fn adjust_reputation(
+        &mut self,
+        agent_id: Uuid,
+        success: bool,
+        reward_delta: f32,
+        penalty_delta: f32,
+    ) {
+        let rep = self
+            .reputation
+            .entry(agent_id)
+            .or_insert(self.default_reputation);
         if success {
             *rep = (*rep + reward_delta).min(5.0);
         } else {
@@ -118,10 +153,7 @@ impl ConsensusEngine {
     /// Reputation slowly drifts toward 1.0 (the default).
     /// This allows agents to rehabilitate after bad predictions.
     pub fn apply_decay(&mut self) {
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_secs();
+        let now = crate::utils::timestamp_now();
         let elapsed_hours = (now.saturating_sub(self.last_decay)) as f32 / 3600.0;
 
         if elapsed_hours > 0.0 {
@@ -138,7 +170,10 @@ impl ConsensusEngine {
     }
 
     pub fn get_reputation(&self, agent_id: &Uuid) -> f32 {
-        self.reputation.get(agent_id).copied().unwrap_or(self.default_reputation)
+        self.reputation
+            .get(agent_id)
+            .copied()
+            .unwrap_or(self.default_reputation)
     }
 
     /// Process an incoming LdC message for consensus tracking.
@@ -146,10 +181,24 @@ impl ConsensusEngine {
         self.apply_decay();
 
         match &msg.payload {
-            Payload::Proposal { action, argument, proposal_id } => {
-                self.register_proposal(*proposal_id, action.clone(), argument.clone(), msg.agent_id, msg.timestamp);
+            Payload::Proposal {
+                action,
+                argument,
+                proposal_id,
+            } => {
+                self.register_proposal(
+                    *proposal_id,
+                    action.clone(),
+                    argument.clone(),
+                    msg.agent_id,
+                    msg.timestamp,
+                );
             }
-            Payload::Vote { proposal_id, decision, weight } => {
+            Payload::Vote {
+                proposal_id,
+                decision,
+                weight,
+            } => {
                 self.cast_vote(*proposal_id, msg.agent_id, decision.clone(), *weight);
             }
             _ => {}
@@ -175,7 +224,13 @@ mod tests {
         engine.adjust_reputation(agent_a, true, 1.0, 0.0);
         assert!(engine.get_reputation(&agent_a) > 1.0);
 
-        engine.register_proposal(proposal_id, "test_action".into(), "test_arg".into(), agent_a, 1000);
+        engine.register_proposal(
+            proposal_id,
+            "test_action".into(),
+            "test_arg".into(),
+            agent_a,
+            1000,
+        );
         engine.cast_vote(proposal_id, agent_a, Decision::Support, 1.0);
         engine.cast_vote(proposal_id, agent_b, Decision::Reject, 1.0);
 
@@ -183,7 +238,10 @@ mod tests {
         let (reached, ratio, total) = engine.check_consensus(&proposal_id).unwrap();
         assert!(reached, "Weighted vote should reach threshold");
         assert!(ratio > 0.5, "A's weighted vote should dominate");
-        assert!(total > 2.0, "Total weight should exceed sum of base weights");
+        assert!(
+            total > 2.0,
+            "Total weight should exceed sum of base weights"
+        );
     }
 
     #[test]
@@ -218,7 +276,10 @@ mod tests {
         engine.cast_vote(proposal_id, agent, Decision::Support, 1.0);
 
         let (_, _, total) = engine.check_consensus(&proposal_id).unwrap();
-        assert!(total < 1.0, "Low-reputation vote should have minimal weight");
+        assert!(
+            total < 1.0,
+            "Low-reputation vote should have minimal weight"
+        );
     }
 
     #[test]

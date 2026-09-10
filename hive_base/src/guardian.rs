@@ -2,38 +2,48 @@
 // The swarm checks targets BEFORE attacking to avoid triggering alerts.
 // Detects: fake credentials, bait files, known honeypot services, tripwires.
 
-use std::path::Path;
 use std::fs;
+use std::path::Path;
 use tracing::{info, warn};
 
 // ── Honeyfile Detection ─────────────────────────────────────────────────────
 
 /// Known bait filenames that defenders place as tripwires
 const BAIT_FILENAMES: &[&str] = &[
-    "passwords.txt", "credentials.docx", "credit_cards.xlsx",
-    "admin_passwords.csv", "confidential.pdf", "secrets.zip",
-    "salary.xlsx", "customers.sql", "backup.sql",
-    "id_rsa_honeypot", "honeykey.pem", "trap.txt",
-    "DO_NOT_OPEN.txt", "TOP_SECRET.pdf", "classified.zip",
+    "passwords.txt",
+    "credentials.docx",
+    "credit_cards.xlsx",
+    "admin_passwords.csv",
+    "confidential.pdf",
+    "secrets.zip",
+    "salary.xlsx",
+    "customers.sql",
+    "backup.sql",
+    "id_rsa_honeypot",
+    "honeykey.pem",
+    "trap.txt",
+    "DO_NOT_OPEN.txt",
+    "TOP_SECRET.pdf",
+    "classified.zip",
 ];
 
 /// Known bait directories
 const BAIT_DIRECTORIES: &[&str] = &[
-    "/opt/honeypot", "/home/honey", "/var/honeypots",
-    "/home/cowrie", "/opt/dionaea",
+    "/opt/honeypot",
+    "/home/honey",
+    "/var/honeypots",
+    "/home/cowrie",
+    "/opt/dionaea",
 ];
 
 /// Suspicious file patterns (files with exactly 0 bytes, or exactly 1024, etc.)
 fn is_suspicious_size(size: u64) -> bool {
-    size == 0 || size == 1024 || size == 2048 || size == 4096
-        || size == 42 || size == 1337
+    size == 0 || size == 1024 || size == 2048 || size == 4096 || size == 42 || size == 1337
 }
 
 /// Detect if a file is likely a honeyfile.
 pub fn detect_honeyfile(path: &Path) -> Option<String> {
-    let filename = path.file_name()
-        .and_then(|n| n.to_str())
-        .unwrap_or("");
+    let filename = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
 
     let filename_lower = filename.to_lowercase();
 
@@ -71,7 +81,8 @@ pub fn detect_honeyfile(path: &Path) -> Option<String> {
         }
 
         // World-readable + writable credentials = trap
-        #[cfg(unix)] {
+        #[cfg(unix)]
+        {
             use std::os::unix::fs::PermissionsExt;
             let mode = meta.permissions().mode();
             if mode & 0o777 == 0o777 {
@@ -90,7 +101,9 @@ pub fn scan_for_honeyfiles(dir: &Path) -> Vec<(String, String)> {
     if let Ok(entries) = fs::read_dir(dir) {
         for entry in entries.filter_map(|e| e.ok()) {
             let path = entry.path();
-            if !path.is_file() { continue; }
+            if !path.is_file() {
+                continue;
+            }
 
             if let Some(reason) = detect_honeyfile(&path) {
                 warn!("HONEYFILE: {} — {}", path.display(), reason);
@@ -106,13 +119,20 @@ pub fn scan_for_honeyfiles(dir: &Path) -> Vec<(String, String)> {
 
 /// Known honeypot service ports
 const HONEYPOT_PORTS: &[(u16, &str)] = &[
-    (2222, "Cowrie SSH"), (2223, "Cowrie SSH alt"),
-    (23, "Telnet (Dionaea)"), (2323, "Telnet alt"),
-    (21, "FTP honeypot"), (2121, "FTP alt"),
-    (8080, "Web honeypot"), (8443, "HTTPS honeypot"),
-    (3389, "RDP honeypot"), (3306, "MySQL honeypot"),
-    (6379, "Redis honeypot"), (11211, "Memcached honeypot"),
-    (9200, "Elasticsearch honeypot"), (27017, "MongoDB honeypot"),
+    (2222, "Cowrie SSH"),
+    (2223, "Cowrie SSH alt"),
+    (23, "Telnet (Dionaea)"),
+    (2323, "Telnet alt"),
+    (21, "FTP honeypot"),
+    (2121, "FTP alt"),
+    (8080, "Web honeypot"),
+    (8443, "HTTPS honeypot"),
+    (3389, "RDP honeypot"),
+    (3306, "MySQL honeypot"),
+    (6379, "Redis honeypot"),
+    (11211, "Memcached honeypot"),
+    (9200, "Elasticsearch honeypot"),
+    (27017, "MongoDB honeypot"),
     (5432, "PostgreSQL honeypot"),
 ];
 
@@ -120,13 +140,18 @@ const HONEYPOT_PORTS: &[(u16, &str)] = &[
 pub fn detect_honeypot_service(host: &str, port: u16) -> Option<&'static str> {
     for &(hp, desc) in HONEYPOT_PORTS {
         if port == hp {
-            info!("HONEYPOT: {}:{} matches known honeypot service '{}'", host, port, desc);
+            info!(
+                "HONEYPOT: {}:{} matches known honeypot service '{}'",
+                host, port, desc
+            );
 
             // Double-check: try to connect and look for honeypot banners
             if let Some(banner) = probe_banner(host, port) {
                 let banner_lower = banner.to_lowercase();
-                for keyword in &["cowrie", "dionaea", "honeypot", "honeynet", "trap",
-                                  "decoy", "glastopf", "conpot", "amun"] {
+                for keyword in &[
+                    "cowrie", "dionaea", "honeypot", "honeynet", "trap", "decoy", "glastopf",
+                    "conpot", "amun",
+                ] {
                     if banner_lower.contains(keyword) {
                         return Some(desc);
                     }
@@ -139,15 +164,12 @@ pub fn detect_honeypot_service(host: &str, port: u16) -> Option<&'static str> {
 
 /// Probe a TCP service for banner information.
 fn probe_banner(host: &str, port: u16) -> Option<String> {
-    use std::net::TcpStream;
     use std::io::{Read, Write};
+    use std::net::TcpStream;
     use std::time::Duration;
 
     let addr = format!("{}:{}", host, port);
-    match TcpStream::connect_timeout(
-        &addr.parse().ok()?,
-        Duration::from_secs(2),
-    ) {
+    match TcpStream::connect_timeout(&addr.parse().ok()?, Duration::from_secs(2)) {
         Ok(mut stream) => {
             // Send newline to trigger banner
             let _ = stream.write_all(b"\r\n");
@@ -211,7 +233,9 @@ pub struct HoneyCheck {
 
 impl HoneyCheck {
     pub fn is_clean(&self) -> bool {
-        self.honeyfiles.is_empty() && self.honeypot_ports.is_empty() && self.canary_tokens.is_empty()
+        self.honeyfiles.is_empty()
+            && self.honeypot_ports.is_empty()
+            && self.canary_tokens.is_empty()
     }
 
     pub fn has_critical(&self) -> bool {
@@ -268,8 +292,11 @@ mod tests {
         std::fs::write(&path, b"hello").unwrap();
         let result = detect_honeyfile(&path);
         if let Some(reason) = result {
-            assert!(reason.contains("RECENTLY_MODIFIED"),
-                "unexpected detection reason: {}", reason);
+            assert!(
+                reason.contains("RECENTLY_MODIFIED"),
+                "unexpected detection reason: {}",
+                reason
+            );
         }
         let _ = std::fs::remove_dir_all(&dir);
     }

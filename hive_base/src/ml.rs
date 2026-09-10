@@ -31,7 +31,9 @@ impl RandomForest {
     /// Each tree: n_nodes(u32) children_left[n_nodes](i32) children_right[n_nodes](i32)
     ///            feature[n_nodes](i32) threshold[n_nodes](f32) value[n_nodes*n_classes](f32)
     pub fn from_binary(data: &[u8]) -> Option<Self> {
-        if data.len() < 12 { return None; }
+        if data.len() < 12 {
+            return None;
+        }
 
         let n_estimators = u32::from_le_bytes([data[0], data[1], data[2], data[3]]);
         let n_classes = u32::from_le_bytes([data[4], data[5], data[6], data[7]]);
@@ -41,9 +43,14 @@ impl RandomForest {
         let mut trees = Vec::with_capacity(n_estimators as usize);
 
         for _ in 0..n_estimators {
-            if offset + 4 > data.len() { return None; }
+            if offset + 4 > data.len() {
+                return None;
+            }
             let n_nodes = u32::from_le_bytes([
-                data[offset], data[offset+1], data[offset+2], data[offset+3]
+                data[offset],
+                data[offset + 1],
+                data[offset + 2],
+                data[offset + 3],
             ]) as usize;
             offset += 4;
 
@@ -52,31 +59,56 @@ impl RandomForest {
             let sz_f32 = nn * 4;
             let sz_val = nn * n_classes as usize * 4;
 
-            if offset + sz_i32 * 3 + sz_f32 + sz_val > data.len() { return None; }
+            if offset + sz_i32 * 3 + sz_f32 + sz_val > data.len() {
+                return None;
+            }
 
-            let children_left = read_i32_slice(&data[offset..], nn); offset += sz_i32;
-            let children_right = read_i32_slice(&data[offset..], nn); offset += sz_i32;
-            let feature = read_i32_slice(&data[offset..], nn); offset += sz_i32;
-            let threshold = read_f32_slice(&data[offset..], nn); offset += sz_f32;
-            let value = read_f32_slice(&data[offset..], nn * n_classes as usize); offset += sz_val;
+            let children_left = read_i32_slice(&data[offset..], nn);
+            offset += sz_i32;
+            let children_right = read_i32_slice(&data[offset..], nn);
+            offset += sz_i32;
+            let feature = read_i32_slice(&data[offset..], nn);
+            offset += sz_i32;
+            let threshold = read_f32_slice(&data[offset..], nn);
+            offset += sz_f32;
+            let value = read_f32_slice(&data[offset..], nn * n_classes as usize);
+            offset += sz_val;
 
             trees.push(DecisionTree {
                 n_nodes: nn as u32,
-                children_left, children_right, feature, threshold, value,
+                children_left,
+                children_right,
+                feature,
+                threshold,
+                value,
             });
         }
 
-        info!("RF loaded: {} trees, {} classes, {} features ({} KB)",
-            n_estimators, n_classes, n_features, data.len() / 1024);
+        info!(
+            "RF loaded: {} trees, {} classes, {} features ({} KB)",
+            n_estimators,
+            n_classes,
+            n_features,
+            data.len() / 1024
+        );
 
-        Some(Self { n_estimators, n_classes, n_features, trees })
+        Some(Self {
+            n_estimators,
+            n_classes,
+            n_features,
+            trees,
+        })
     }
 
     /// Predict class for a single sample.
     /// Returns the predicted class index (0-based).
     pub fn predict(&self, features: &[f32]) -> Option<u32> {
         if features.len() != self.n_features as usize {
-            warn!("RF: feature count mismatch: got {}, expected {}", features.len(), self.n_features);
+            warn!(
+                "RF: feature count mismatch: got {}, expected {}",
+                features.len(),
+                self.n_features
+            );
             return None;
         }
 
@@ -101,7 +133,8 @@ impl RandomForest {
         }
 
         // Majority vote
-        votes.iter()
+        votes
+            .iter()
             .enumerate()
             .max_by_key(|(_, &v)| v)
             .map(|(i, _)| i as u32)
@@ -109,24 +142,33 @@ impl RandomForest {
 
     /// Predict class with confidence score.
     pub fn predict_proba(&self, features: &[f32]) -> Option<(u32, f32)> {
-        if features.len() != self.n_features as usize { return None; }
+        if features.len() != self.n_features as usize {
+            return None;
+        }
 
         let mut proba_sum = vec![0.0f32; self.n_classes as usize];
         for tree in &self.trees {
             let leaf = tree.predict_leaf(features);
             let val_offset = leaf * self.n_classes as usize;
             if val_offset + self.n_classes as usize <= tree.value.len() {
-                for (c, sum) in proba_sum.iter_mut().enumerate().take(self.n_classes as usize) {
+                for (c, sum) in proba_sum
+                    .iter_mut()
+                    .enumerate()
+                    .take(self.n_classes as usize)
+                {
                     *sum += tree.value[val_offset + c];
                 }
             }
         }
 
         let total: f32 = proba_sum.iter().sum();
-        if total == 0.0 { return Some((0, 0.0)); }
+        if total == 0.0 {
+            return Some((0, 0.0));
+        }
 
         proba_sum.iter_mut().for_each(|v| *v /= total);
-        proba_sum.iter()
+        proba_sum
+            .iter()
             .enumerate()
             .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap())
             .map(|(i, v)| (i as u32, *v))
@@ -161,7 +203,12 @@ fn read_i32_slice(data: &[u8], count: usize) -> Vec<i32> {
     let mut v = Vec::with_capacity(count);
     for i in 0..count {
         let off = i * 4;
-        v.push(i32::from_le_bytes([data[off], data[off+1], data[off+2], data[off+3]]));
+        v.push(i32::from_le_bytes([
+            data[off],
+            data[off + 1],
+            data[off + 2],
+            data[off + 3],
+        ]));
     }
     v
 }
@@ -170,7 +217,12 @@ fn read_f32_slice(data: &[u8], count: usize) -> Vec<f32> {
     let mut v = Vec::with_capacity(count);
     for i in 0..count {
         let off = i * 4;
-        v.push(f32::from_le_bytes([data[off], data[off+1], data[off+2], data[off+3]]));
+        v.push(f32::from_le_bytes([
+            data[off],
+            data[off + 1],
+            data[off + 2],
+            data[off + 3],
+        ]));
     }
     v
 }
@@ -181,7 +233,7 @@ mod tests {
 
     #[test]
     fn test_read_i32() {
-        let data = [1u8,0,0,0, 255,255,255,255];
+        let data = [1u8, 0, 0, 0, 255, 255, 255, 255];
         let v = read_i32_slice(&data, 2);
         assert_eq!(v, vec![1, -1]);
     }
@@ -189,7 +241,7 @@ mod tests {
     #[test]
     fn test_rf_from_empty() {
         assert!(RandomForest::from_binary(&[]).is_none());
-        assert!(RandomForest::from_binary(&[0;4]).is_none());
+        assert!(RandomForest::from_binary(&[0; 4]).is_none());
     }
 
     #[test]
@@ -199,9 +251,9 @@ mod tests {
         data.extend_from_slice(&1u32.to_le_bytes()); // n_estimators
         data.extend_from_slice(&2u32.to_le_bytes()); // n_classes
         data.extend_from_slice(&3u32.to_le_bytes()); // n_features
-        // 1 tree with 1 node (leaf)
+                                                     // 1 tree with 1 node (leaf)
         data.extend_from_slice(&1u32.to_le_bytes()); // n_nodes
-        // children_left[1], children_right[1], feature[1], threshold[1], value[2]
+                                                     // children_left[1], children_right[1], feature[1], threshold[1], value[2]
         data.extend_from_slice(&(-1i32).to_le_bytes());
         data.extend_from_slice(&(-1i32).to_le_bytes());
         data.extend_from_slice(&0i32.to_le_bytes());

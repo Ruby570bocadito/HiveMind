@@ -70,7 +70,7 @@ pub mod linux {
             let addr = find_module_base(module_name)?;
             // Point to a harmless-looking offset in the module
             Some(Self {
-                saved_rbp: 0, // end of chain
+                saved_rbp: 0,               // end of chain
                 return_addr: addr + 0x1000, // safe offset
             })
         }
@@ -104,7 +104,13 @@ pub mod linux {
     /// The syscall number and arguments must be valid for the current platform.
     #[allow(clippy::too_many_arguments)]
     pub unsafe fn spoofed_syscall6(
-        nr: i64, a1: i64, a2: i64, a3: i64, a4: i64, a5: i64, a6: i64,
+        nr: i64,
+        a1: i64,
+        a2: i64,
+        a3: i64,
+        a4: i64,
+        a5: i64,
+        a6: i64,
         frames: &[SyntheticFrame],
     ) -> i64 {
         let ret: i64;
@@ -143,11 +149,9 @@ pub mod linux {
         // If the stack trace doesn't show expected libc frames,
         // something might be wrong (or we're already spoofing)
         let libc_base = find_module_base("libc");
-        let has_libc = frames.iter().any(|&addr| {
-            libc_base.is_some_and(|base| {
-                addr >= base && addr < base + 0x200000
-            })
-        });
+        let has_libc = frames
+            .iter()
+            .any(|&addr| libc_base.is_some_and(|base| addr >= base && addr < base + 0x200000));
 
         !has_libc // If no libc frame, stack might be spoofed
     }
@@ -182,9 +186,13 @@ pub mod windows {
             std::arch::asm!("mov {}, rbp", out(reg) rbp, options(nostack, nomem));
             let mut current = rbp;
             for _ in 0..max {
-                if current == 0 { break; }
+                if current == 0 {
+                    break;
+                }
                 let ret_addr = *(current as *const usize).add(1);
-                if ret_addr == 0 { break; }
+                if ret_addr == 0 {
+                    break;
+                }
                 frames.push(ret_addr);
                 current = *(current as *const usize);
             }
@@ -209,7 +217,8 @@ pub mod windows {
                 let buf_ptr = *(entry as *const usize).add(10);
                 let len = *((entry as *const usize).add(9) as *const u16);
                 if buf_ptr != 0 && len > 0 {
-                    let name_bytes = std::slice::from_raw_parts(buf_ptr as *const u16, len as usize / 2);
+                    let name_bytes =
+                        std::slice::from_raw_parts(buf_ptr as *const u16, len as usize / 2);
                     let dll_name = String::from_utf16_lossy(name_bytes);
                     if dll_name.to_lowercase().contains(&name.to_lowercase()) {
                         return Some(dll_base);
@@ -234,11 +243,8 @@ pub mod windows {
         let kernel32 = find_module_base("kernel32.dll").unwrap_or(0x7ff000100000);
         let kernelbase = find_module_base("kernelbase.dll").unwrap_or(0x7ff000200000);
 
-        let sources: [(usize, u64); 3] = [
-            (ntdll,     0x20000),
-            (kernel32,  0x15000),
-            (kernelbase, 0x18000),
-        ];
+        let sources: [(usize, u64); 3] =
+            [(ntdll, 0x20000), (kernel32, 0x15000), (kernelbase, 0x18000)];
 
         let frame_size = 16; // [ret_addr(8)][saved_rbp(8)]
         let total_size = num_frames * frame_size + 8;
