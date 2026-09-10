@@ -6,8 +6,8 @@ use tokio::time;
 use tracing::{info, warn};
 use uuid::Uuid;
 
-use hive_base::phoenix::Phoenix;
 use hive_base::phoenix::AgentBlueprint;
+use hive_base::phoenix::Phoenix;
 
 use hive_base::seer::Seer;
 use hive_base::seer::{SeerAction, TelemetrySample};
@@ -57,21 +57,21 @@ impl OvermindAgent {
 
         info!("Queen connected to shared-memory arena");
 
-        let whispernet = hive_base::whispernet::WhisperNet::new(
-            hive_base::whispernet::WhisperConfig {
+        let whispernet =
+            hive_base::whispernet::WhisperNet::new(hive_base::whispernet::WhisperConfig {
                 node_id: identity.id(),
                 listen_port: 0,
                 max_peers: 16,
                 max_hops: 5,
                 heartbeat_interval_secs: 60,
                 encryption_enabled: true,
-            }
-        );
+            });
 
         let seer = Seer::new();
 
         let agent = Self {
-            comms, identity,
+            comms,
+            identity,
             consensus: ConsensusEngine::new(0.66),
             ollama_url: "http://localhost:11434".to_string(),
             model: "tinyllama".to_string(),
@@ -107,15 +107,26 @@ impl OvermindAgent {
             stream: false,
         };
 
-        match client.post(format!("{}/api/generate", self.ollama_url)).json(&request).send().await {
+        match client
+            .post(format!("{}/api/generate", self.ollama_url))
+            .json(&request)
+            .send()
+            .await
+        {
             Ok(resp) => match resp.json::<OllamaResponse>().await {
                 Ok(r) => {
                     info!("LLM: {}", r.response);
                     serde_json::from_str(&r.response).ok()
                 }
-                Err(e) => { warn!("Parse error: {}", e); None }
+                Err(e) => {
+                    warn!("Parse error: {}", e);
+                    None
+                }
             },
-            Err(e) => { warn!("Ollama unavailable at {}: {}", self.ollama_url, e); None }
+            Err(e) => {
+                warn!("Ollama unavailable at {}: {}", self.ollama_url, e);
+                None
+            }
         }
     }
 
@@ -132,8 +143,16 @@ impl OvermindAgent {
 
         for msg in messages {
             self.consensus.process_message(&msg);
+            if msg.is_kill_switch() {
+                warn!("Kill switch received - agent self-destructing now");
+                std::process::exit(0);
+            }
             match &msg.payload {
-                Payload::Query { dilemma, context, query_id } => {
+                Payload::Query {
+                    dilemma,
+                    context,
+                    query_id,
+                } => {
                     info!("Query from {}: {}", msg.agent_role, dilemma);
                     let prompt = self.build_prompt(dilemma, context);
 
@@ -157,16 +176,27 @@ impl OvermindAgent {
                     };
                     self.publish_msg(resp_msg).await;
                 }
-                Payload::Belief { asset, value: _value, confidence: _confidence }
-                    if asset.starts_with("hivemind:") => {
-                        info!("HiveMind: received proposal belief: {}", asset);
-                    }
-                Payload::Proposal { action, argument, proposal_id } => {
+                Payload::Belief {
+                    asset,
+                    value: _value,
+                    confidence: _confidence,
+                } if asset.starts_with("hivemind:") => {
+                    info!("HiveMind: received proposal belief: {}", asset);
+                }
+                Payload::Proposal {
+                    action,
+                    argument,
+                    proposal_id,
+                } => {
                     let mut params = HashMap::new();
                     params.insert("action".into(), action.clone());
                     params.insert("argument".into(), argument.clone());
-                    self.hivemind.propose_from_operator(self.identity.id(), action.clone(), params);
-                    info!("HiveMind: registered proposal {} from {}", proposal_id, msg.agent_role);
+                    self.hivemind
+                        .propose_from_operator(self.identity.id(), action.clone(), params);
+                    info!(
+                        "HiveMind: registered proposal {} from {}",
+                        proposal_id, msg.agent_role
+                    );
                 }
                 Payload::Request { service, payload } if service == "exec" => {
                     if let Ok(cmd_data) = serde_json::from_slice::<serde_json::Value>(payload) {
@@ -175,11 +205,13 @@ impl OvermindAgent {
                         info!("EXEC: executing cmd_id={}: {}", cmd_id, cmd);
                         let result = hive_base::remote_shell::execute_command(&cmd);
                         let result_msg = Message::belief(
-                            self.identity.id(), Role::Queen,
+                            self.identity.id(),
+                            Role::Queen,
                             format!("exec:result:{}", cmd_id),
                             hive_base::Value::String(format!(
                                 "exit={} duration={}ms stdout={} stderr={}",
-                                result.exit_code, result.duration_ms,
+                                result.exit_code,
+                                result.duration_ms,
                                 result.stdout.trim().chars().take(500).collect::<String>(),
                                 result.stderr.trim().chars().take(200).collect::<String>(),
                             )),
@@ -190,14 +222,19 @@ impl OvermindAgent {
                 }
                 Payload::Request { service, payload } if service == "shell" => {
                     if let Ok(cmd_data) = serde_json::from_slice::<serde_json::Value>(payload) {
-                        let ws_url = cmd_data["url"].as_str().unwrap_or("ws://127.0.0.1:9000/shell");
+                        let ws_url = cmd_data["url"]
+                            .as_str()
+                            .unwrap_or("ws://127.0.0.1:9000/shell");
                         let cmd_id = cmd_data["cmd_id"].as_str().unwrap_or("unknown");
                         info!("SHELL: starting interactive shell -> {}", ws_url);
                         let shell = hive_base::remote_shell::WsShell::start(ws_url);
                         let prev = self.interactive_shell.replace(shell);
-                        if let Some(mut old) = prev { old.stop(); }
+                        if let Some(mut old) = prev {
+                            old.stop();
+                        }
                         let result_msg = Message::belief(
-                            self.identity.id(), Role::Queen,
+                            self.identity.id(),
+                            Role::Queen,
                             format!("shell:result:{}", cmd_id),
                             hive_base::Value::String("started".into()),
                             1.0,
@@ -218,15 +255,29 @@ impl OvermindAgent {
         if self.hivemind.enabled {
             let mut rep_map = HashMap::new();
             rep_map.insert(self.identity.id(), 1.0);
-            let pending_ids: Vec<Uuid> = self.hivemind.get_pending_directives().iter()
-                .map(|d| d.directive_id).collect();
+            let pending_ids: Vec<Uuid> = self
+                .hivemind
+                .get_pending_directives()
+                .iter()
+                .map(|d| d.directive_id)
+                .collect();
             for did in pending_ids {
                 self.hivemind.tally_votes(did, &rep_map);
             }
             for executed_id in self.hivemind.execute_approved() {
                 info!("HiveMind: directive {} approved and executed", executed_id);
-                let directive = self.hivemind.directives.iter()
-                    .find(|d| d.directive_id == executed_id).unwrap();
+                let Some(directive) = self
+                    .hivemind
+                    .directives
+                    .iter()
+                    .find(|d| d.directive_id == executed_id)
+                else {
+                    warn!(
+                        "HiveMind: directive {} no longer present, skipping",
+                        executed_id
+                    );
+                    continue;
+                };
                 let msg = self.hivemind.to_belief(directive, self.identity.id());
                 self.publish_msg(msg).await;
 
@@ -260,13 +311,17 @@ impl OvermindAgent {
             generations: 2,
         };
 
-        info!("Queen: starting darwinian tournament gen {}", self.last_tournament_gen);
+        info!(
+            "Queen: starting darwinian tournament gen {}",
+            self.last_tournament_gen
+        );
         let result = self.tournament.run_tournament(&config);
 
         if result.winner_id != Uuid::nil() {
             info!("Queen: tournament winner {}", result.winner_id);
             let msg = Message::belief(
-                self.identity.id(), Role::Queen,
+                self.identity.id(),
+                Role::Queen,
                 "tournament_winner".into(),
                 hive_base::Value::String(format!("{}", result.winner_id)),
                 1.0,
@@ -344,7 +399,7 @@ impl OvermindAgent {
                     let genome = Phoenix::generate_genome(vec![blueprint]);
                     let mut fragments = Phoenix::fragment_genome(&genome, 4);
                     for frag in &mut fragments {
-                        if let Ok(msg) = Phoenix::hide(frag, &std::path::Path::new("/tmp/.hive_genome")) {
+                        if let Ok(msg) = Phoenix::hide(frag, std::path::Path::new("/tmp/.hive_genome")) {
                             info!("Phoenix: {}", msg);
                         }
                     }
@@ -393,8 +448,11 @@ impl OvermindAgent {
                                 rep_map.insert(self.identity.id(), 1.0);
                                 self.hivemind.tally_votes(directive_id, &rep_map);
                                 for executed_id in self.hivemind.execute_approved() {
-                                    let directive = self.hivemind.directives.iter()
-                                        .find(|d| d.directive_id == executed_id).unwrap();
+                                    let Some(directive) = self.hivemind.directives.iter()
+                                        .find(|d| d.directive_id == executed_id) else {
+                                        warn!("Seer: directive {} no longer present, skipping", executed_id);
+                                        continue;
+                                    };
                                     let msg = self.hivemind.to_belief(directive, self.identity.id());
                                     self.publish_msg(msg).await;
                                     info!("Seer: scramble directive {} executed", executed_id);

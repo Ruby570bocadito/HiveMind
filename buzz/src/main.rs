@@ -6,7 +6,7 @@ use tracing::info;
 fn main() {
     tracing_subscriber::fmt()
         .with_target(false)
-        .with_env_filter("swarm_run=info")
+        .with_env_filter("info")
         .init();
 
     let cfg = hive_base::config::HiveConfig::load();

