@@ -1,6 +1,6 @@
 # MITRE ATT&CK Coverage
 
-36 techniques across 10 tactics. Full catalog in `agent_base/src/attack.rs`.
+33 techniques across 10 tactics. Catalog lives in `hive_base/src/attack.rs` and its helper modules.
 
 ## Defense Evasion (TA0005) — 10 techniques
 
@@ -13,7 +13,7 @@
 | T1497.003 | Time Based Evasion | `utils::safe_init` |
 | T1027.002 | Software Packing | `crypto::decrypt_model` |
 | T1027.005 | Indicator Removal | `shared_arena` |
-| T1070.004 | File Deletion | `dropper` |
+| T1070.004 | File Deletion | `anti_forensics`, `chrononaut` |
 | T1564.004 | Hidden File System (Memory) | `fileless` |
 | T1055 | Process Injection (Polymorphic) | `weaver` |
 
@@ -41,15 +41,15 @@
 |----|-----------|-------------|
 | T1021.004 | Remote Services: SSH | `lateral::exec_ssh` |
 | T1570 | Lateral Tool Transfer (SCP) | `lateral::deploy_agent_ssh` |
-| T1021.006 | Remote Services: WinRM (via SSH) | `lateral::exec_winrm` |
-| T1047 | Remote Services: WMI (via SSH) | `lateral::exec_wmi` |
+| T1021.006 | Remote Services: WinRM (via SSH) | `lateral` (planned helper) |
+| T1047 | Remote Services: WMI (via SSH) | `lateral` (planned helper) |
 
 ## Command & Control (TA0011) — 4 techniques
 
 | ID | Technique | Swarm Module |
 |----|-----------|-------------|
 | T1573.002 | Encrypted Channel | `crypto` + `identity` |
-| T1090.004 | Proxy: CDN Fronting | `exfil::http_beacon` |
+| T1090.004 | Proxy: CDN Fronting | `exfil`, `opsec::TrafficMimic` |
 | T1572 | Protocol Tunneling (DNS) | `exfil::dns_exfiltrate` |
 | T1571 | Non-Standard Port | `shared_arena` |
 
@@ -58,14 +58,14 @@
 | ID | Technique | Swarm Module |
 |----|-----------|-------------|
 | T1048.003 | Exfiltration Over DNS | `exfil::dns_exfiltrate` |
-| T1048.002 | Exfiltration Over HTTP | `exfil::http_beacon` |
+| T1048.002 | Exfiltration Over HTTP | `exfil::http_exfiltrate` |
 | T1029 | Scheduled Transfer | `exfil::ExfilScheduler` |
 
 ## Execution (TA0002) — 2 techniques
 
 | ID | Technique | Swarm Module |
 |----|-----------|-------------|
-| T1204.002 | User Execution (Dropper) | `dropper` |
+| T1204.002 | User Execution (Dropper) | `stinger` (dropper crate) |
 | T1106 | Native API (Syscalls) | `syscalls` |
 
 ## Persistence (TA0003) — 2 techniques

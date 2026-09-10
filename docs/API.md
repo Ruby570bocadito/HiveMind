@@ -1,170 +1,119 @@
-# C2 & Dashboard API
+# C2 Server API
 
-## C2 Server (port 8443)
+The Rust C2 server (`c2/`, package `c2-server`) listens on **http://localhost:8444**
+by default (override with `--port`). All endpoints return JSON unless stated
+otherwise. There is no TLS in front of it by default — terminate TLS with a
+reverse proxy if you expose it beyond localhost.
 
-### POST /collect — Receive exfiltrated files
+> Note: `tests/c2_server.py` is a standalone Python *lab* C2 used by test
+> scripts. Its extra endpoint (`/jndi`) is not part of this API.
 
-Headers:
-- `X-File-Name`: original filename
-- `X-Agent-ID`: agent UUID
-- `X-Agent-Role`: scout|shaper|hoarder|weaver|overmind|worm
-- `Content-Type`: application/octet-stream
+## Endpoints
 
-Body: raw file bytes
+### GET /health
 
-Response:
-```json
-{"status": "received", "sha256": "abc123...", "size": 12345}
-```
-
-### POST /beacon — Agent heartbeat/status
-
-Headers:
-- `X-Agent-ID`: agent UUID
-- `X-Agent-Role`: agent role
-
-Body: JSON with agent status
-```json
-{"status": "alive", "edr_detected": false}
-```
-
-Response:
-```json
-{"status": "ack", "beacon_count": 42}
-```
-
-### POST /jndi — Log4Shell callback
-
-Headers:
-- `X-Victim-Host`: victim hostname
-
-Response:
-```json
-{"status": "logged", "callback": "received"}
-```
-
-### GET /health — Health check
+Liveness + counters.
 
 ```json
 {
   "status": "ok",
-  "exfil_count": 5,
-  "beacon_count": 42,
-  "uptime": 3600
+  "exfil_count": 12,
+  "beacon_count": 340,
+  "sessions": 1
 }
 ```
 
-### GET / — Dashboard UI
+### GET /
 
-HTML dashboard with exfiltration log and beacon history.
+Operator dashboard (HTML).
 
-### GET /logs — Exfiltration & beacon log
+### GET /logs
+
+Last 50 activity entries (beacons + exfils), newest first.
+
+### POST /collect — exfil ingest
+
+Headers:
+
+| Header | Meaning |
+|--------|---------|
+| `X-Agent-ID` | agent UUID |
+| `X-Agent-Role` | `worker`, `drone`, `honeybee`, `weaver`, `queen`, `swarm` |
+| `Content-Type` | `application/octet-stream` |
+
+Query: `?filename=report.log` (optional, defaults to `data.bin`).
+
+Body: raw file bytes.
+
+Response:
 
 ```json
-{
-  "exfiltrations": [...],
-  "beacons": [...]
-}
+{"status": "received", "sha256": "abc123…", "size": 12345}
 ```
 
----
+### POST /beacon — agent heartbeat/status
 
-## Dashboard (port 8080)
+Headers: `X-Agent-ID`, `X-Agent-Role`.
 
-### GET / — HTML Dashboard
-
-Cyberpunk-themed real-time status. Auto-refresh every 3 seconds.
-
-Shows:
-- ASCII art logo
-- Status bar (LIVE / AWAITING / DORMANT)
-- 4 metrics: active agents, shared mem files, memfd count, total memory
-- Agent table with PID, role, memory, status
-- Role-specific icons and colors
-- Uptime counter
-
-### GET /api/state — JSON State
+Body: JSON beacon (unknown fields are preserved under `extra`):
 
 ```json
-{
-  "timestamp": "21:04:36",
-  "uptime": 3600,
-  "agents": [
-    {"pid": 12345, "role": "scout", "mem": 24}
-  ],
-  "shm_files": ["swarm_abc123"],
-  "memfds": 5
-}
+{"status": "alive", "edr_detected": false}
 ```
 
----
+**Shell results:** a beacon whose `extra` contains `session` and `output`
+is streamed to the attached operator WebSocket (see `/shell/:session_id`).
 
-## Swarm LdC Internal Protocol
-
-All inter-agent messages use the LdC (Language de la Colmena) protocol, serialized with MessagePack.
-
-### Message Types
-
-| Type | Fields | Purpose |
-|------|--------|---------|
-| Belief | asset, value, confidence | Scout publishes facts about the environment |
-| Desire | action, priority | Agent expresses intent |
-| Proposal | action, argument, proposal_id | Shaper proposes lateral movement |
-| Vote | proposal_id, decision, weight | Agent votes on proposal |
-| Request | service, payload | Agent requests service (scan, obfuscate, regenerate) |
-| Query | dilemma, context, query_id | Overmind asked for strategic advice |
-| Response | query_id, answer, confidence | Overmind replies |
-| Heartbeat | — | Keep-alive signal |
-| StatusEvent | event_type, subject_id, detail | Dead agent, kill switch, worm terminate |
-
-### Message Format
-
-All messages are signed with Ed25519:
-
-```rust
-struct Message {
-    agent_id: Uuid,
-    agent_role: Role,
-    timestamp: u64,
-    payload: Payload,
-}
-```
-
-The arena stores the raw signed bytes plus the Ed25519 signature and verifying key.
-
----
-
-## C2 Bridge Protocol
-
-The Overmind can translate LdC messages to external C2 formats:
-
-### Sliver gRPC
-
-Beliefs become Sliver session notes with fields:
-```json
-{
-  "type": "swarm_belief",
-  "agent_id": "...",
-  "asset": "edr_present",
-  "value": "Bool(true)",
-  "confidence": 0.95
-}
-```
-
-### Cobalt Strike Beacon
-
-Beliefs become beacon callbacks (type 0x21):
-```
-[0x21][agent_id:4][timestamp:8][asset_name\0][value_str\0][confidence_pct]
-```
-
-### HTTP Bridge
-
-External C2 can inject commands via POST:
+Response:
 
 ```json
-{"task_id": "...", "command": "scan"}
-{"task_id": "...", "command": "encrypt"}
-{"task_id": "...", "command": "kill"}
-{"task_id": "...", "command": "inject_belief", "arguments": ["target_host", "192.168.1.50"]}
+{"status": "ack", "beacon_count": 340}
 ```
+
+### GET /task/:agent_id — task pickup
+
+Returns up to 10 pending tasks for the agent and marks them claimed.
+
+```json
+{"tasks": [{"id": "sh-…-1", "command": "shell_exec", "payload": {"cmd": "id", "session": "…"}}]}
+```
+
+### POST /task/:agent_id — push a task
+
+Body: `{"id": "t1", "command": "scan", "payload": {}}` → `201 CREATED`.
+
+### GET /shell/:session_id — operator shell (WebSocket)
+
+Upgrade to WebSocket. Protocol:
+
+1. First text frame: `{"agent_id": "…"}`.
+2. Each following text frame is a shell command for that agent. The server
+   queues it via the task system and acknowledges (`[queued …]`).
+3. Agent replies come back as beacon frames (`session` + `output`) and are
+   streamed to the attached session. Pings every 30 s.
+
+The relay map is shared at application level, so multiple operator sessions
+can attach to different agents concurrently.
+
+### GET /admin/sessions
+
+List of shell sessions (id, agent, timestamps).
+
+### GET /admin/agents
+
+Summary of agents seen in beacons.
+
+## Dashboard (`tests/dashboard.py`, port 8080)
+
+Read-only process/health view served with Python's stdlib `http.server`
+(it is **not** a Flask app):
+
+- `GET /` — HTML dashboard
+- `GET /api/state` — JSON snapshot of observed processes
+
+## Internal agent protocol (context)
+
+Agents exchange LdC messages over the shared-memory arena, not over HTTP.
+The HTTP API above is the operator/ingest boundary. Message types are
+defined in `hive_base/src/ldc.rs` (`Payload` enum) and documented in
+[AGENTS.md](AGENTS.md).

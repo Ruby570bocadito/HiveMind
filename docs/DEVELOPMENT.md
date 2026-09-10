@@ -1,118 +1,90 @@
 # Development Guide
 
-## Building
+How to build, test and work on Hive Colony.
+
+## Prerequisites
+
+- Rust stable (1.82+) — `https://rustup.rs`
+- Linux x86_64 for the agent binaries (the syscall layer is x86_64-gated;
+  Windows paths exist but are not CI-tested)
+- Optional: Docker + docker compose for the lab environments
+- Optional: Python 3.10+ with `requirements.txt` for the ML training scripts
+
+## Build
 
 ```bash
-source build_env.sh
-cargo build --workspace       # Debug
-cargo build --release --workspace  # Release
+cargo build --workspace          # all 11 crates, debug profile
+./hive.sh release                # agents in release profile (stinger embeds these)
+cargo check --workspace --all-targets
 ```
 
-## Testing
+`stinger` embeds the agent binaries via `include_bytes!`. On a clean clone
+the build script detects that they are missing and compiles with empty
+embeds (runtime warnings instead of a hard error). To produce a functional
+stinger:
 
 ```bash
-./colmena.sh test
-# 35 tests: 21 unit + 4 sandbox + 10 integration
+./hive.sh release
+cargo build --release -p stinger
 ```
 
-### Test Categories
-
-| Suite | Tests | Description |
-|-------|-------|-------------|
-| `agent_base` (lib) | 21 | Consensus, crypto, attack mapping, config, honey, obfuscation |
-| `edr_sandbox` | 4 | TCP ports, bus address, ONNX signatures, crypto roundtrip |
-| `integration_test` | 10 | Arena, consensus threshold, reputation weight, config, exfil, memfd, ATT&CK |
-
-## Project Structure
-
-```
-agent_base/src/
-├── comms.rs          # SwarmChamber (shared memory API)
-├── ldc.rs            # LdC protocol types
-├── consensus.rs      # Reputation-weighted voting
-├── identity.rs       # Ed25519 signing
-├── shared_arena.rs   # Lock-free ring buffer
-├── arena_mgr.rs      # memfd_create / shm_open
-├── crypto.rs         # XOR + ChaCha20
-├── fileless.rs       # MemfdBinary execution
-├── syscalls.rs       # Direct syscalls (Linux + Win Hell's Gate)
-├── anti_analysis.rs  # Debug/VM/sandbox detection
-├── lateral.rs        # SSH movement, cred harvesting
-├── exfil.rs          # DNS/HTTP C2 exfiltration
-├── attack.rs         # MITRE ATT&CK mapping
-├── stack_spoof.rs    # Call stack spoofing
-├── c2_bridge.rs      # Sliver/CS/HTTP protocol translation
-├── exploits.rs       # EternalBlue, BlueKeep, Log4Shell
-├── config.rs         # TOML configuration
-├── obfstr.rs         # Compile-time string obfuscation
-├── brain.rs          # Safe target protection
-├── honey.rs          # Honeypot/honeyfile detection
-├── ml.rs             # ONNX Runtime wrapper
-├── utils.rs          # Logging, timestamps, delays
-└── lib.rs            # Module registry
-```
-
-## Adding a New Agent
-
-1. Create `agents/<name>/Cargo.toml` with `agent_base` dependency
-2. Create `agents/<name>/src/main.rs` following the pattern:
-   ```rust
-   let identity = AgentIdentity::new();
-   let comms = SwarmChamber::connect(&identity, Role::Xxx).await?;
-   // Agent loop with heartbeat + task timers
-   ```
-3. Add to workspace: `Cargo.toml` members
-4. Add to `swarm_run/src/main.rs` spawn list
-5. Add to `ldc.rs` Role enum if new role type
-
-## Adding a New Module to agent_base
-
-1. Create `agent_base/src/<module>.rs`
-2. Add `pub mod <module>;` to `agent_base/src/lib.rs`
-3. Add any new dependencies to `agent_base/Cargo.toml`
-4. Re-export public API in `lib.rs` if needed
-
-## Agent Pattern
-
-Every agent follows this structure:
-
-```rust
-struct MyAgent {
-    comms: SwarmChamber,
-    identity: AgentIdentity,
-    consensus: ConsensusEngine,
-    heartbeat_interval: Duration,
-    task_interval: Duration,
-}
-
-impl MyAgent {
-    async fn run(&mut self) {
-        self.send_heartbeat().await;
-        let mut heartbeat = interval(self.heartbeat_interval);
-        let mut task = interval(self.task_interval);
-        loop {
-            select! {
-                _ = heartbeat.tick() => self.send_heartbeat().await,
-                _ = task.tick() => self.do_work().await,
-                _ = sleep(Duration::from_millis(200)) => self.process_incoming().await,
-            }
-        }
-    }
-}
-```
-
-## Logging
-
-Agents use `tracing` with environment variable filtering:
+## Test
 
 ```bash
-RUST_LOG=scout=debug,shaper=info cargo run -p scout
+cargo test -p hive_base -- --test-threads=2   # unit + integration (360+ tests)
+cargo test -p hive_base --test seq_zero_regression
 ```
 
-## Safety Rules
+Test layout:
 
-- Never commit compiled binaries
-- Never hardcode real credentials or C2 URLs
-- Always test with `safe_mode: true` in exploits
-- Always configure `[brain] safe_ips` before colony mode
-- Run `cargo test --workspace` before committing
+| Location | Covers |
+|----------|--------|
+| `hive_base/src/**` `#[cfg(test)]` | unit tests per module (319) |
+| `hive_base/tests/integration_test.rs` | no-TCP-port invariant, consensus, crypto roundtrips |
+| `hive_base/tests/phase_a_integration.rs` | HTL + chaos + IPC contract pipeline scenarios |
+| `hive_base/tests/seq_zero_regression.rs` | arena read-path regressions, kill switch |
+| `hive_base/fuzz/` | cargo-fuzz targets for IPC validation and ring ops |
+| `tests/*.sh`, `tests/*.py` | lab-level end-to-end scripts (not run in CI) |
+
+## Lints & formatting
+
+CI enforces both — keep them clean locally:
+
+```bash
+cargo fmt --all -- --check
+cargo clippy --workspace --all-targets -- -D warnings
+```
+
+## Project layout
+
+```
+hive_base/        Shared library: arena IPC, LdC protocol, consensus,
+                  telemetry, config, and the tactics modules
+agents/           Six binaries: queen, worker, drone, honeybee, weaver, swarm
+c2/               Rust C2 server (axum + SQLite), port 8444
+beekeeper/        Operator TUI (ratatui + Lua scripting)
+stinger/          Dropper that fileless-executes the embedded agents
+buzz/             Dev harness that boots a local colony and tears it down
+training/         Python: dataset generation + RF/DQN/PPO training scripts
+tests/            End-to-end lab scripts and a Python reference C2
+docker/, deploy/  Compose labs and the Helm chart
+hive.toml         Single configuration file loaded by every agent
+```
+
+## Adding an agent message type
+
+1. Add the payload variant in `hive_base/src/ldc.rs` (`Payload` enum).
+2. Extend the validator in `hive_base/src/ipc_contract.rs`.
+3. Handle it in the relevant agents' `process_incoming`.
+4. Add a roundtrip test (`ldc.rs` unit tests) and, if it affects the read
+   path, a regression test under `hive_base/tests/`.
+
+## Conventions
+
+- No new `unwrap()`/`expect()` in non-test code of `hive_base` core modules
+  (`comms`, `shared_arena`, `telemetry`, `ldc`) — propagate or log.
+- Timestamps: always use `hive_base::utils::timestamp_now()`; never
+  `SystemTime::now().duration_since(UNIX_EPOCH).unwrap()`.
+- Locks held across `.await` must be `tokio::sync::Mutex`, never `std`.
+- Every new shared-memory ABI field needs a `check-cfg`/test note in
+  `shared_arena.rs` docs.

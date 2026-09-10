@@ -114,7 +114,7 @@
 │                                          └──────────────┘     │
 │  Lee: /proc, /sys, cgroups, hostname, user                     │
 │  Detecta: CrowdStrike, Defender, SentinelOne, CarbonBlack...   │
-│  Clasifica: ONNX Random Forest (o heurísticas)                 │
+│  Clasifica: Random Forest embebido (o heurísticas)             │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
@@ -126,10 +126,10 @@
 | Capacidad | Detalle |
 |-----------|---------|
 | System profiling | OS, arquitectura, hostname, usuario, procesos |
-| EDR detection | 30+ firmas (CrowdStrike, Defender, SentinelOne, etc.) |
+| EDR detection | 8 firmas en Linux / 34 en Windows (CrowdStrike, Defender, SentinelOne, etc.) |
 | Backup detection | Veeam, Backup Exec, CommVault, NetBackup |
 | Network enum | Interfaces, IPs, MACs, gateway |
-| ML classification | ONNX Random Forest (fallback a heurísticas) |
+| ML classification | Random Forest embebido (formato binario propio, fallback a heurísticas) |
 
 ### EDRs detectados
 
@@ -184,7 +184,7 @@ edr_processes = ["csfalcon", "csagent", "msmpeng", "sentinelone",
 |---------|----|-------------|
 | Process Discovery | T1057 | Lista procesos |
 | System Info Discovery | T1082 | OS, hostname, arch |
-| Security Software Discovery | T1518.001 | 30+ firmas EDR |
+| Security Software Discovery | T1518.001 | 8 firmas EDR (Linux) / 34 (Windows) |
 | Network Service Discovery | T1046 | Interfaces de red |
 | System Location Discovery | T1614.001 | Geo-localización |
 
@@ -442,7 +442,7 @@ Técnica 4: JUNK CODE
 | Capacidad | Detalle |
 |-----------|---------|
 | Autónomo | Propaga sin esperar consenso HiveMind |
-| MARL target selection | Prioriza hosts de alto valor y bajo EDR |
+| Target scoring (Q-values heurísticos sobre el clasificador scout; RL real es trabajo pendiente, ver ROADMAP) | Prioriza hosts de alto valor y bajo EDR |
 | SSH key auth | Prueba todas las claves cosechadas |
 | SCP deploy | Copia binario y ejecuta remoto |
 | Auto-limitante | 10 hops, 2/min, 1h de vida |
@@ -540,6 +540,6 @@ safe_ips = ["192.168.1.100", "192.168.1.1"]
 | C2 | HTTP(S), DNS Tunnel, ICMP Tunnel, Dead Drop |
 | Failover | Priority → Race → RoundRobin |
 | Consenso | HiveMind (voting, 66% threshold) |
-| ML | ONNX Random Forest + DQN (MARL) |
+| ML | Random Forest embebido en runtime; DQN/PPO en training/ (export a runtime pendiente, ver ROADMAP) |
 | Evasión | 10 capas (IPC fileless, syscalls, anti-debug, ...) |
 | Target | Linux x86_64, Windows x86_64 (cross-compile) |

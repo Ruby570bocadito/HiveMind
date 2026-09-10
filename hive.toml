@@ -1,5 +1,7 @@
-# Swarm Configuration
-# Copy to swarm.toml or place in ~/.config/swarm/swarm.toml
+# Hive Colony Configuration
+# Loaded automatically by every agent (see hive_base::config::HiveConfig::load).
+# Override per environment: copy this file and edit, or set env vars
+# (see docs/OPERATOR_GUIDE.md for the full variable reference).
 
 [arena]
 name_prefix = "swarm_"
@@ -30,7 +32,9 @@ edr_processes = ["csfalcon", "csagent", "msmpeng", "sentinelone", "carbonblack",
 backup_processes = ["veeam", "backup_exec", "commvault", "netbackup", "backup_agent", "vss"]
 
 [c2]
-url = "https://localhost:8443/collect"
+# Default C2 endpoint. The bundled Rust C2 server (c2/) is plain HTTP on 8444
+# unless you terminate TLS in front of it (reverse proxy, etc.).
+url = "http://localhost:8444/collect"
 api_key = ""
 dns_domain = "swarm.c2.local"
 dns_resolver = "8.8.8.8"
@@ -41,11 +45,13 @@ http_user_agents = [
 cdn_hosts = ["cdn.jsdelivr.net", "cdnjs.cloudflare.com"]
 
 [exploits]
-enabled = true
-operator_approved = true
-target_whitelist = ["192.168.10.10", "192.168.10.11"]
+# SAFE DEFAULTS for a public repository: offensive modules are inert.
+# Only enable these in a lab you own, after reviewing docs/DEPLOYMENT.md.
+enabled = false
+operator_approved = false
+target_whitelist = []
 max_attempts = 3
-safe_mode = false
+safe_mode = true
 forbidden_segments = ["10.0.0.0/8", "172.16.0.0/12"]
 
 [limits]

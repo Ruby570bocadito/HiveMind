@@ -32,9 +32,8 @@ fi
 # 2. Configurar authorized_keys en los targets
 info "Paso 2: Preparando authorized_keys..."
 PUBKEY=$(cat /tmp/hive_lab_keys/id_ed25519.pub)
-# Inyectar public key en el Dockerfile temporalmente
-sed "s|lab-test-key|${PUBKEY}|g" "${LAB_DIR}/Dockerfile.ssh-target" > /tmp/hive_lab_keys/Dockerfile.ssh-target.patched
-ok "Public key inyectada en Dockerfile"
+# La public key se inyecta en build time via --build-arg (LAB_PUBKEY)
+ok "Public key lista para inyectar via --build-arg"
 
 # 3. Construir imágenes
 info "Paso 3: Construyendo imágenes Docker..."
@@ -50,7 +49,9 @@ fi
 # Build SSH target images
 for target in target-web target-db target-backup; do
     info "  Construyendo ${target}..."
-    docker build -t "hive-${target}:latest" -f /tmp/hive_lab_keys/Dockerfile.ssh-target.patched .
+    docker build -t "hive-${target}:latest" \
+        --build-arg LAB_PUBKEY="${PUBKEY}" \
+        -f "${LAB_DIR}/Dockerfile.ssh-target" .
     ok "Imagen hive-${target} construida"
 done
 

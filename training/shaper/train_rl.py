@@ -18,7 +18,7 @@ def main():
         print("Run: pip install torch numpy")
         sys.exit(1)
 
-    model_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "agents", "zangano", "models")
+    model_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "agents", "drone", "models")
     os.makedirs(model_dir, exist_ok=True)
 
     env = NetworkEnvironment(num_hosts=10, edr_coverage=0.3)

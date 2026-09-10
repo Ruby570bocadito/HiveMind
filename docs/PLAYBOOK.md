@@ -15,16 +15,16 @@
 │  Stigmergy  Phoenix  WhisperNet           Tournament│
 ├─────────────────────────────────────────────────────┤
 │                    C2 SERVER (8443)                  │
-│              DASHBOARD WEB (8080/8081)               │
+│              DASHBOARD WEB (8080)               │
 └─────────────────────────────────────────────────────┘
 ```
 
 ## Instalación
 
 ```bash
-git clone https://github.com/Ruby570bocadito/hive-colony
-cd hive-colony
-source build_env.sh
+git clone https://github.com/Ruby570bocadito/HiveMind
+cd HiveMind
+./hive.sh build
 cargo build --release --workspace
 ```
 
@@ -145,7 +145,7 @@ safe_mode = true
 heartbeat_interval_secs = 10
 ```
 
-## MITRE ATT&CK Coverage (54 técnicas)
+## MITRE ATT&CK Coverage (33 técnicas)
 
 | Táctica | Técnicas |
 |---------|----------|
@@ -202,12 +202,12 @@ docker compose up -d
 #   weaver      :—    — Ofuscación
 #   victim      :—    — Datos simulados
 #   monitor     :—    — EDR detection monitor
-#   dashboard   :8081 — Web UI
+#   dashboard   :8080 — Web UI
 
 # Ver resultados:
 docker compose logs monitor
-open http://localhost:8081
+open http://localhost:8080
 ```
 
 ---
-*Hive Colony v3.0 — 135 tests, 54 técnicas MITRE, 0 warnings, cross-compile Windows/Linux*
+*Hive Colony v3.0 — 360 tests, 33 técnicas MITRE, clippy limpio, CI en GitHub Actions*
