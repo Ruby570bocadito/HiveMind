@@ -5,7 +5,7 @@ set -euo pipefail
 
 HIVE_BIN="target/release"
 ARENA_NAME="hive_verify_$(date +%s)"
-C2_PORT=${C2_PORT:-8445}
+C2_PORT=${C2_PORT:-8444}
 C2_URL="http://127.0.0.1:${C2_PORT}"
 LOOT_DIR="/tmp/hive_verify_loot_$$"
 DB_PATH="/tmp/hive_verify_$$.db"
