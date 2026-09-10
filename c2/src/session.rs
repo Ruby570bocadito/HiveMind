@@ -13,8 +13,8 @@ impl ShellSession {
     pub fn new(session_id: &str, agent_id: &str) -> Self {
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_secs() as i64;
+            .map(|d| d.as_secs() as i64)
+            .unwrap_or(0);
         Self {
             session_id: session_id.to_string(),
             agent_id: agent_id.to_string(),
@@ -27,8 +27,8 @@ impl ShellSession {
     pub fn touch(&mut self) {
         self.last_activity = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_secs() as i64;
+            .map(|d| d.as_secs() as i64)
+            .unwrap_or(self.last_activity);
     }
 }
 

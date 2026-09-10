@@ -19,16 +19,20 @@ impl LuaEngine {
             info.set("agents", 0).unwrap();
             globals.set("colony", info).unwrap();
 
-            let sleep_fn = ctx.create_function(|_, secs: f64| {
-                std::thread::sleep(std::time::Duration::from_secs_f64(secs));
-                Ok(())
-            }).unwrap();
+            let sleep_fn = ctx
+                .create_function(|_, secs: f64| {
+                    std::thread::sleep(std::time::Duration::from_secs_f64(secs));
+                    Ok(())
+                })
+                .unwrap();
             globals.set("sleep", sleep_fn).unwrap();
 
-            let print_fn = ctx.create_function(|_, msg: String| {
-                println!("[lua] {}", msg);
-                Ok(())
-            }).unwrap();
+            let print_fn = ctx
+                .create_function(|_, msg: String| {
+                    println!("[lua] {}", msg);
+                    Ok(())
+                })
+                .unwrap();
             globals.set("print", print_fn).unwrap();
             Ok::<_, rlua::Error>(())
         }) {
@@ -51,7 +55,9 @@ impl LuaEngine {
     pub fn update_colony(&mut self, agents: usize) {
         let _ = self.lua.context(|ctx| {
             let globals = ctx.globals();
-            let colony: rlua::Table = globals.get("colony").unwrap_or_else(|_| ctx.create_table().unwrap());
+            let colony: rlua::Table = globals
+                .get("colony")
+                .unwrap_or_else(|_| ctx.create_table().unwrap());
             colony.set("agents", agents as i64).unwrap();
             globals.set("colony", colony).unwrap();
             Ok::<_, rlua::Error>(())

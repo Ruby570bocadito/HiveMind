@@ -81,9 +81,13 @@ async fn main() {
     let arena_name = cli.arena.trim_start_matches('/');
 
     match cli.command {
-        None | Some(Commands::Tui) => tui::run_tui(&arena_name).await,
+        None | Some(Commands::Tui) => tui::run_tui(arena_name).await,
         Some(Commands::Status { watch, interval }) => cmd_status(arena_name, watch, interval).await,
-        Some(Commands::Inject { asset, value, confidence }) => cmd_inject(arena_name, &asset, &value, confidence).await,
+        Some(Commands::Inject {
+            asset,
+            value,
+            confidence,
+        }) => cmd_inject(arena_name, &asset, &value, confidence).await,
         Some(Commands::KillSwitch { confirm }) => cmd_killswitch(arena_name, confirm).await,
         Some(Commands::Validate) => cmd_validate().await,
         Some(Commands::Reputation) => cmd_reputation().await,
@@ -99,7 +103,10 @@ async fn connect(arena: &str) -> Option<(AgentIdentity, HiveChamber)> {
         Ok(chamber) => Some((identity, chamber)),
         Err(e) => {
             eprintln!("[!] No se pudo conectar al arena '{}': {}", arena, e);
-            eprintln!("    Los agentes deben estar corriendo con __HIVE_ARENA={}", arena);
+            eprintln!(
+                "    Los agentes deben estar corriendo con __HIVE_ARENA={}",
+                arena
+            );
             None
         }
     }
@@ -121,8 +128,16 @@ async fn cmd_status(arena: &str, watch: bool, interval: u64) {
         let now = hive_base::utils::timestamp_now();
 
         let now_secs = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs() % 86400;
-        let time_str = format!("{:02}:{:02}:{:02}", now_secs / 3600, (now_secs / 60) % 60, now_secs % 60);
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs()
+            % 86400;
+        let time_str = format!(
+            "{:02}:{:02}:{:02}",
+            now_secs / 3600,
+            (now_secs / 60) % 60,
+            now_secs % 60
+        );
 
         print!("\x1b[2J\x1b[H");
         println!("  Arena: {}  |  Active agents: {}", arena, active.len());
@@ -132,13 +147,20 @@ async fn cmd_status(arena: &str, watch: bool, interval: u64) {
         if active.is_empty() {
             println!("  [ ] No hay agentes conectados al arena");
         } else {
-            println!("  {:>6}  {:<12}  {:>8}  {:>5}", "PID", "ROLE", "UPTIME", "ALIVE");
+            println!(
+                "  {:>6}  {:<12}  {:>8}  {:>5}",
+                "PID", "ROLE", "UPTIME", "ALIVE"
+            );
             for (pid, role, hb) in &active {
                 let icon = role_icon(role);
                 let color = role_color(role);
                 let uptime = now.saturating_sub(*hb);
-                println!("  {color}{:>6}{RESET}  {color}{icon} {:<10}{RESET}  {:>8}s  {color}●{RESET}",
-                    pid, format!("{:?}", role), uptime);
+                println!(
+                    "  {color}{:>6}{RESET}  {color}{icon} {:<10}{RESET}  {:>8}s  {color}●{RESET}",
+                    pid,
+                    format!("{:?}", role),
+                    uptime
+                );
             }
         }
 
@@ -149,8 +171,7 @@ async fn cmd_status(arena: &str, watch: bool, interval: u64) {
 
         if let Some(last) = msgs.last() {
             let desc = match &last.payload {
-                Payload::Belief { asset, value, .. } =>
-                    format!("belief: {} = {:?}", asset, value),
+                Payload::Belief { asset, value, .. } => format!("belief: {} = {:?}", asset, value),
                 Payload::Proposal { action, .. } => format!("proposal: {}", action),
                 Payload::Vote { decision, .. } => format!("vote: {:?}", decision),
                 Payload::Heartbeat => "heartbeat".into(),
@@ -160,7 +181,9 @@ async fn cmd_status(arena: &str, watch: bool, interval: u64) {
             println!("  Latest: {color}{:?}{RESET} — {}", last.agent_role, desc);
         }
 
-        if !watch { break; }
+        if !watch {
+            break;
+        }
         tokio::time::sleep(Duration::from_secs(interval)).await;
     }
 }
@@ -185,7 +208,14 @@ async fn cmd_killswitch(arena: &str, confirm: bool) {
         Some(c) => c,
         None => return,
     };
-    let msg = Message::status_event(id.id(), Role::Queen, "kill_switch", id.id(), Role::Queen, "self_destruct");
+    let msg = Message::status_event(
+        id.id(),
+        Role::Queen,
+        "kill_switch",
+        id.id(),
+        Role::Queen,
+        "self_destruct",
+    );
     chamber.publish(msg).await;
     println!("[+] Kill switch broadcast enviado a '{}'", arena);
 }
@@ -194,34 +224,63 @@ async fn cmd_validate() {
     type CheckEntry = (&'static str, &'static str, fn() -> bool);
     let checks: Vec<CheckEntry> = vec![
         ("TCP ports", "Ningún puerto TCP escuchando", || {
-            std::net::TcpStream::connect_timeout(&"127.0.0.1:4242".parse().unwrap(), Duration::from_millis(200)).is_err()
+            std::net::TcpStream::connect_timeout(
+                &"127.0.0.1:4242".parse().unwrap(),
+                Duration::from_millis(200),
+            )
+            .is_err()
         }),
-        ("ONNX sigs", "Modelo cifrado (XOR) — sin ONNX legible", || true),
+        (
+            "ONNX sigs",
+            "Modelo cifrado (XOR) — sin ONNX legible",
+            || true,
+        ),
         ("Bus addr", "Sin IP hardcodeada en tráfico", || {
-            std::env::current_exe().ok().and_then(|p| std::fs::read(p).ok())
-                .map(|d| !d.windows(14).any(|w| w == b"127.0.0.1:4242")).unwrap_or(true)
+            std::env::current_exe()
+                .ok()
+                .and_then(|p| std::fs::read(p).ok())
+                .map(|d| !d.windows(14).any(|w| w == b"127.0.0.1:4242"))
+                .unwrap_or(true)
         }),
-        ("Debugger", "Anti-debug activo", || !hive_base::anti_analysis::AntiAnalysis::run_checks().is_debugged),
-        ("Sandbox", "Anti-sandbox activo", || !hive_base::anti_analysis::AntiAnalysis::run_checks().is_sandbox),
-        ("Memfd", "Fileless exec disponible", || hive_base::MemfdBinary::new("_test", b"x").is_ok()),
+        ("Debugger", "Anti-debug activo", || {
+            !hive_base::anti_analysis::AntiAnalysis::run_checks().is_debugged
+        }),
+        ("Sandbox", "Anti-sandbox activo", || {
+            !hive_base::anti_analysis::AntiAnalysis::run_checks().is_sandbox
+        }),
+        ("Memfd", "Fileless exec disponible", || {
+            hive_base::MemfdBinary::new("_test", b"x").is_ok()
+        }),
         ("Polymorphic", "Weaver mutate funcional", || {
             let orig = vec![0x41u8; 10000];
             let mutated = hive_base::wax::mutate_binary(&orig);
             mutated != orig
         }),
         ("Agent names", "Nombres ofuscados en binario", || {
-            std::env::current_exe().ok().and_then(|p| std::fs::read(p).ok())
-                .map(|d| !["scout", "shaper", "hoarder", "overmind", "dropper"]
-                    .iter().any(|n| d.windows(n.len()).any(|w| w == n.as_bytes()))).unwrap_or(true)
+            std::env::current_exe()
+                .ok()
+                .and_then(|p| std::fs::read(p).ok())
+                .map(|d| {
+                    !["scout", "shaper", "hoarder", "overmind", "dropper"]
+                        .iter()
+                        .any(|n| d.windows(n.len()).any(|w| w == n.as_bytes()))
+                })
+                .unwrap_or(true)
         }),
     ];
 
     let mut passed = 0;
     for (name, desc, check) in &checks {
         let ok = check();
-        let icon = if ok { "\x1b[92m✓\x1b[0m" } else { "\x1b[91m✗\x1b[0m" };
+        let icon = if ok {
+            "\x1b[92m✓\x1b[0m"
+        } else {
+            "\x1b[91m✗\x1b[0m"
+        };
         println!("  {}  {:<15}  {}", icon, name, desc);
-        if ok { passed += 1; }
+        if ok {
+            passed += 1;
+        }
     }
     println!("\n  Resultado: {}/{} checks pasaron", passed, checks.len());
 }
@@ -250,11 +309,31 @@ async fn cmd_tournament() {
 
 async fn cmd_scenario(mode: &str) {
     let phases = [
-        ("FASE 1", "Infiltración",    "Stinger — fileless agents via memfd"),
-        ("FASE 2", "Reconocimiento",  "Worker scan + Drone RL + Seer prediction"),
-        ("FASE 3", "Sabotaje+Exfil",  "Saboteur muta datos + Honeybee exfil + Chrononaut capsules"),
-        ("FASE 4", "Persistencia",    "Phoenix genome + Tournament + HiveMind consensus"),
-        ("FASE 5", "Evasión",         "Weaver obfuscation + WhisperNet P2P mesh"),
+        (
+            "FASE 1",
+            "Infiltración",
+            "Stinger — fileless agents via memfd",
+        ),
+        (
+            "FASE 2",
+            "Reconocimiento",
+            "Worker scan + Drone RL + Seer prediction",
+        ),
+        (
+            "FASE 3",
+            "Sabotaje+Exfil",
+            "Saboteur muta datos + Honeybee exfil + Chrononaut capsules",
+        ),
+        (
+            "FASE 4",
+            "Persistencia",
+            "Phoenix genome + Tournament + HiveMind consensus",
+        ),
+        (
+            "FASE 5",
+            "Evasión",
+            "Weaver obfuscation + WhisperNet P2P mesh",
+        ),
     ];
     for (num, name, desc) in &phases {
         println!("  {}  {:<20}  {}", num, name, desc);

