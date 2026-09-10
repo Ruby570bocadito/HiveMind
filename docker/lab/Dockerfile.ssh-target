@@ -26,9 +26,13 @@ RUN sed -i 's/.*PermitRootLogin.*/PermitRootLogin yes/' /etc/ssh/sshd_config && 
     echo "LogLevel DEBUG" >> /etc/ssh/sshd_config
 
 # SSH authorized_keys
-RUN mkdir -p /root/.ssh && chmod 700 /root/.ssh
-COPY docker/lab/authorized_keys /root/.ssh/authorized_keys
-RUN chmod 600 /root/.ssh/authorized_keys
+# scripts/lab_setup.sh injects a throwaway lab keypair via --build-arg:
+#   docker build --build-arg LAB_PUBKEY="$(cat /tmp/hive_lab_keys/id_ed25519.pub)" ...
+# No key material is ever committed to the repository.
+ARG LAB_PUBKEY="lab-key-placeholder generate one with scripts/lab_setup.sh"
+RUN mkdir -p /root/.ssh && chmod 700 /root/.ssh && \
+    echo "${LAB_PUBKEY}" > /root/.ssh/authorized_keys && \
+    chmod 600 /root/.ssh/authorized_keys
 
 # Mock sensitive data
 RUN mkdir -p /root/Documents /root/.aws /tmp/financial_data /var/backups /opt/services && \

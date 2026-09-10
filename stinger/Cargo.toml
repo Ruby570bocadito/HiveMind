@@ -11,3 +11,8 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 rand = "0.8"
 tracing-subscriber = "0.3"
+
+# `have_bins` / `have_bins_win` are emitted by build.rs when the agent
+# binaries are present under target/.
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(have_bins)', 'cfg(have_bins_win)'] }

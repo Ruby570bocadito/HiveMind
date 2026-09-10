@@ -12,3 +12,7 @@ session.txt
 loot/
 loot_e2e/
 payloads2/
+
+# C2 runtime artifacts
+*.db
+.env

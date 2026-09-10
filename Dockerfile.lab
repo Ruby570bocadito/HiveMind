@@ -18,7 +18,7 @@ ENV OPENSSL_LIB_DIR=/usr/lib/x86_64-linux-gnu
 ENV OPENSSL_INCLUDE_DIR=/usr/include
 
 # Build all agents in release mode (strip debug info)
-RUN cargo build --release --workspace 2>&1 | tail -5
+RUN cargo build --release --workspace
 
 # ── Stage 2: Operator runtime ───────────────────────────────────────────
 FROM debian:bookworm-slim AS runtime
@@ -43,10 +43,8 @@ COPY --from=builder /opt/hive/target/release/buzz /opt/hive/bin/buzz
 # Copy test scripts and config
 COPY --from=builder /opt/hive/tests/ /opt/hive/tests/
 COPY --from=builder /opt/hive/hive.toml /opt/hive/hive.toml
-COPY --from=builder /opt/hive/build_env.sh /opt/hive/build_env.sh
 
 # Set up operator safe IPs
-ENV HIVE_BRAIN_SAFE_IPS=192.168.10.2
 
 # ── Stage 3: Victim runtime ─────────────────────────────────────────────
 FROM debian:bookworm-slim AS victim
