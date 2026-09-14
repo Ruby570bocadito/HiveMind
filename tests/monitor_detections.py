@@ -33,7 +33,7 @@ DETECTION_RULES = {
     },
     "hive_processes": {
         "severity": "MEDIUM",
-        "description": "Procesos Hive en ejecución (worker/drone/honeybee/queen/weaver)",
+        "description": "Procesos Hive en ejecución (worker/drone/honeybee/queen)",
         "check": check_hive_processes,
     },
     "saboteur_data_mutation": {
@@ -88,7 +88,7 @@ def check_port(port):
 def check_hive_processes():
     try:
         r = subprocess.run(["ps", "aux"], capture_output=True, text=True, timeout=5)
-        agents = ['worker', 'drone', 'honeybee', 'queen', 'weaver', 'stinger', 'beekeeper']
+        agents = ['worker', 'drone', 'honeybee', 'queen', 'stinger', 'beekeeper']
         return sum(1 for line in r.stdout.split('\n') if any(a in line.lower() for a in agents))
     except: return 0
 

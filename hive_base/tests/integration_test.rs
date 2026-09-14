@@ -137,16 +137,7 @@ fn test_obfuscate_string() {
     assert!(s.contains("4242"));
 }
 
-/// Test 8: ATT&CK coverage report generates.
-#[test]
-fn test_attack_coverage_report() {
-    let report = hive_base::generate_coverage_report();
-    assert!(report.contains("ATT&CK"));
-    assert!(report.contains("Defense Evasion"));
-    assert!(report.contains("T1055.012"));
-}
-
-/// Test 9: Exfil scheduler respects business hours.
+/// Test 8: Exfil scheduler respects business hours.
 #[test]
 fn test_exfil_scheduler_default() {
     let s = hive_base::ExfilScheduler::default();

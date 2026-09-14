@@ -60,7 +60,7 @@ cargo clippy --workspace --all-targets -- -D warnings
 ```
 hive_base/        Shared library: arena IPC, LdC protocol, consensus,
                   telemetry, config, and the tactics modules
-agents/           Six binaries: queen, worker, drone, honeybee, weaver, swarm
+agents/           Five binaries: queen, worker, drone, honeybee, swarm
 c2/               Rust C2 server (axum + SQLite), port 8444
 beekeeper/        Operator TUI (ratatui + Lua scripting)
 stinger/          Dropper that fileless-executes the embedded agents

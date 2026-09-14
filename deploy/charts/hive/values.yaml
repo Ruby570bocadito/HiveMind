@@ -39,14 +39,7 @@ agents:
     replicas: 1
     resources:
       limits: { cpu: 500m, memory: 256Mi }
-      requests: { cpu: 100m, memory: 64Mi }
-  weaver:
-    enabled: true
-    replicas: 1
-    resources:
-      limits: { cpu: 500m, memory: 256Mi }
-      requests: { cpu: 100m, memory: 64Mi }
-  swarm:
+      requests: { cpu: 100m, memory: 64Mi }  swarm:
     enabled: true
     replicas: 1
     resources:

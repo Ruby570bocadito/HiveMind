@@ -67,19 +67,6 @@ services:
       - hive_arena:/dev/shm
     command: /hive/bin/drone
 
-  weaver:
-    build: .
-    container_name: hive-weaver
-    depends_on: [queen]
-    environment:
-      - __HIVE_ARENA=hive_arena
-      - HIVE_LAB_MODE=1
-      - HIVE_C2_URL=http://c2-server:8444/collect
-      - RUST_LOG=info
-    volumes:
-      - hive_arena:/dev/shm
-    command: /hive/bin/weaver
-
   swarm:
     build: .
     container_name: hive-swarm

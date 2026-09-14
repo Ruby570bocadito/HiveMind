@@ -151,8 +151,8 @@ fi
 log_section "5. PROCESS INSPECTION"
 
 # Check for running swarm agents
-if pgrep -f "worker|drone|honeybee|weaver|queen" > /dev/null 2>&1; then
-    AGENT_COUNT=$(pgrep -fc "worker|drone|honeybee|weaver|queen" || echo 0)
+if pgrep -f "worker|drone|honeybee|queen" > /dev/null 2>&1; then
+    AGENT_COUNT=$(pgrep -fc "worker|drone|honeybee|queen" || echo 0)
     log_info "$AGENT_COUNT swarm agent(s) running"
     add_result "agents_running" "info" "$AGENT_COUNT agents"
 else
@@ -162,7 +162,7 @@ fi
 
 # Check for memfd in agent processes
 if pgrep -f "worker|drone" > /dev/null 2>&1; then
-    for pid in $(pgrep -f "worker|drone|honeybee|weaver|queen"); do
+    for pid in $(pgrep -f "worker|drone|honeybee|queen"); do
         MEMFD_COUNT=$(ls -la /proc/$pid/fd 2>/dev/null | grep -c "memfd:" || echo 0)
         if [[ $MEMFD_COUNT -gt 0 ]]; then
             log_pass "PID $pid: $MEMFD_COUNT memfd(s) - fileless confirmed"

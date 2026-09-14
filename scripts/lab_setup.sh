@@ -57,7 +57,7 @@ done
 
 # 4. Verificar binarios compilados
 info "Paso 4: Verificando binarios..."
-for bin in c2-server queen worker drone honeybee weaver swarm; do
+for bin in c2-server queen worker drone honeybee swarm; do
     if [ ! -f "${HIVE_BIN}/${bin}" ]; then
         fail "Binario faltante: ${HIVE_BIN}/${bin}"
         info "Ejecutá: cargo build --release --workspace --exclude stinger"

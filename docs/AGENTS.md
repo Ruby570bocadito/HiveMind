@@ -10,10 +10,10 @@
 ║  └────┬────┘                                                    ║
 ║       │                                                         ║
 ║       ▼                                                         ║
-║  ┌─────────┐  ┌─────────┐  ┌─────────┐  ┌─────────┐           ║
-║  │ WORKER  │  │  DRONE  │  │HONEYBEE │  │ WEAVER │           ║
-║  │ Scout   │  │ Shaper  │  │ Hoarder │  │  Morph  │           ║
-║  └─────────┘  └─────────┘  └─────────┘  └─────────┘           ║
+║  ┌─────────┐  ┌─────────┐  ┌─────────┐                        ║
+║  │ WORKER  │  │  DRONE  │  │HONEYBEE │                        ║
+║  │ Scout   │  │ Shaper  │  │ Hoarder │                        ║
+║  └─────────┘  └─────────┘  └─────────┘                        ║
 ║       │                                                         ║
 ║       ▼                                                         ║
 ║  ┌─────────┐                                                    ║
@@ -32,7 +32,6 @@
 | [Worker](#worker--scout) | ◈ | Scout — reconocimiento + EDR detection | `agents/worker/` |
 | [Drone](#drone--shaper) | ◆ | Shaper — decisiones + movimiento lateral | `agents/drone/` |
 | [Honeybee](#honeybee--hoarder) | ◉ | Hoarder — ejecución final **solo simulación** (destructivo deshabilitado) | `agents/honeybee/` |
-| [Weaver](#weaver--morph) | ✦ | Morph — ofuscación polimórfica | `agents/weaver/` |
 | [Swarm](#swarm--worm) | ⬡ | Worm — auto-propagación autónoma | `agents/swarm/` |
 
 ---
@@ -75,8 +74,7 @@
 │  Worker   │◀──────────────────▶│  Queen   │
 │  Drone    │                    │          │
 │  Honeybee │                    │  C2 🡕   │
-│  Weaver   │                    │  HTTP    │
-│  Swarm    │                    │  DNS     │
+│  Swarm    │                    │  HTTP    │
 └──────────┘                    │  ICMP    │
                                   │  Dead    │
                                   └──────────┘
@@ -207,7 +205,7 @@ edr_processes = ["csfalcon", "csagent", "msmpeng", "sentinelone",
 │    • Heuristic  → EDR? esperar. Backup? atacar backup.         │
 │    • MARL       → 62-dim state → Q-network                    │
 │                                                                 │
-│  Si un Worker muere, Drone lo regenera via Weaver              │
+│  Si un Worker muere, Drone lo regenera (spawn directo)         │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
@@ -221,9 +219,8 @@ edr_processes = ["csfalcon", "csagent", "msmpeng", "sentinelone",
 | Toma decisiones | Basado en creencias de Worker |
 | Network discovery | nmap / ARP scan de subredes |
 | Movimiento lateral | SSH con claves cosechadas |
-| Regeneración | Cuando un Worker muere, Weaver muta y spawn |
+| Regeneración | Cuando un Worker muere, Drone hace spawn directo |
 | Persistencia | Instala claves SSH autorizadas |
-| Ofuscación | Solicita variantes polimórficas a Weaver |
 
 ### Decision Logic
 
@@ -347,75 +344,6 @@ implementa):
 | Data Destruction | T1485 | 3-pass wipe (eliminado) |
 | Exfiltration Over HTTP | T1048.002 | POST a C2 (eliminado) |
 | Data from Local System | T1005 | Documentos, .ssh, .aws (eliminado) |
-
----
-
-## Weaver ✦ — Morph
-
-```
-┌─────────────────────────────────────────────────────────────────┐
-│  WEAVER                                                         │
-│                                                                 │
-│  ┌──────────────┐    ┌──────────────┐    ┌──────────────┐     │
-│  │ 4 técnicas   │───▶│ Cache de     │───▶│ Responde a   │     │
-│  │ de mutación  │    │ 50 variantes │    │ obfuscate    │     │
-│  └──────────────┘    └──────────────┘    └───┬──────────┘     │
-│                                              │                  │
-│  Técnicas:                                    ▼                  │
-│  1. XOR mutation ──── key aleatoria          Drone solicita    │
-│  2. NOP insertion ─── 1-8 bytes             variante para     │
-│  3. Section shuffle ─ chunks swap           regenerar Worker  │
-│  4. Junk code ─────── dead code blocks                         │
-│                                                                 │
-│  También genera: PowerShell, cmd, WMI stagers                 │
-└─────────────────────────────────────────────────────────────────┘
-```
-
-**Archivo:** `agents/weaver/src/main.rs`
-**Rol:** Binary obfuscation, payload mutation
-
-### Las 4 técnicas de mutación
-
-```
-Técnica 1: XOR MUTATION
-┌────────────────────┐     ┌────────────────────┐
-│ ELF header (skip)  │     │ ELF header (skip)  │
-│ .text              │────▶│ .text XOR 0xA3     │
-│ .data              │     │ .data XOR 0xA3     │
-│ ...                │     │ ...                │
-└────────────────────┘     └────────────────────┘
-
-Técnica 2: NOP INSERTION
-┌────────────────────┐     ┌──────────────────────────┐
-│ mov eax, 1         │     │ mov eax, 1               │
-│ add eax, 2         │────▶│ nop; nop; nop; nop       │
-│ ret                │     │ add eax, 2               │
-│                    │     │ nop; nop                  │
-│                    │     │ ret                       │
-└────────────────────┘     └──────────────────────────┘
-
-Técnica 3: SECTION SHUFFLE
-┌──────┬──────┬──────┐     ┌──────┬──────┬──────┐
-│ .text│.data │.rdata│────▶│.rdata│.text │.data │
-└──────┴──────┴──────┘     └──────┴──────┴──────┘
-  (chunks de 64-256 bytes intercambiados)
-
-Técnica 4: JUNK CODE
-┌────────────────────┐     ┌────────────────────────────────────┐
-│ mov eax, 1         │     │ mov eax, 1                         │
-│ add eax, 2         │────▶│ push rbp; mov rbp, rsp; pop rbp   │
-│ ret                │     │ add eax, 2                         │
-│                    │     │ xor rbx, rbx; inc rbx; dec rbx    │
-│                    │     │ ret                                │
-└────────────────────┘     └────────────────────────────────────┘
-```
-
-### MITRE ATT&CK
-
-| Técnica | ID | Descripción |
-|---------|----|-------------|
-| Software Packing | T1027.002 | Mutación binaria |
-| Process Injection | T1055 | Nuevos procesos mutados |
 
 ---
 

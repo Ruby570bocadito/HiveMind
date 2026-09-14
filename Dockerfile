@@ -11,7 +11,6 @@ COPY . .
 
 # Build everything the runtime image needs (agents + c2 + tui)
 RUN cargo build --release -p c2-server \
-    -p queen -p worker -p drone -p honeybee -p weaver -p swarm \
     -p beekeeper
 
 # ── Runtime stage ─────────────────────────────────────────────────────────
@@ -31,7 +30,6 @@ COPY --from=builder /opt/hive/target/release/queen      /hive/bin/
 COPY --from=builder /opt/hive/target/release/worker     /hive/bin/
 COPY --from=builder /opt/hive/target/release/drone      /hive/bin/
 COPY --from=builder /opt/hive/target/release/honeybee   /hive/bin/
-COPY --from=builder /opt/hive/target/release/weaver     /hive/bin/
 COPY --from=builder /opt/hive/target/release/swarm      /hive/bin/
 COPY --from=builder /opt/hive/target/release/beekeeper  /hive/bin/
 

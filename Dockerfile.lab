@@ -33,7 +33,6 @@ WORKDIR /opt/hive
 COPY --from=builder /opt/hive/target/release/worker /opt/hive/bin/worker
 COPY --from=builder /opt/hive/target/release/drone /opt/hive/bin/drone
 COPY --from=builder /opt/hive/target/release/honeybee /opt/hive/bin/honeybee
-COPY --from=builder /opt/hive/target/release/weaver /opt/hive/bin/weaver
 COPY --from=builder /opt/hive/target/release/queen /opt/hive/bin/queen
 COPY --from=builder /opt/hive/target/release/swarm /opt/hive/bin/swarm
 COPY --from=builder /opt/hive/target/release/stinger /opt/hive/bin/stinger
@@ -68,7 +67,6 @@ RUN mkdir -p /var/run/sshd && \
 COPY --from=builder /opt/hive/target/release/worker /opt/hive/bin/worker
 COPY --from=builder /opt/hive/target/release/drone /opt/hive/bin/drone
 COPY --from=builder /opt/hive/target/release/honeybee /opt/hive/bin/honeybee
-COPY --from=builder /opt/hive/target/release/weaver /opt/hive/bin/weaver
 COPY --from=builder /opt/hive/target/release/queen /opt/hive/bin/queen
 COPY --from=builder /opt/hive/target/release/swarm /opt/hive/bin/swarm
 COPY --from=builder /opt/hive/target/release/stinger /opt/hive/bin/stinger

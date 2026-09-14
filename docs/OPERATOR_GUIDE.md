@@ -258,7 +258,7 @@ Los agentes soportan `--hide` o `--silent` para suprimir toda salida a terminal:
 ### Ver procesos
 
 ```bash
-ps aux | grep -E 'queen|worker|drone|honeybee|weaver|swarm'
+ps aux | grep -E 'queen|worker|drone|honeybee|swarm'
 
 # o
 pgrep -a queen
@@ -292,7 +292,7 @@ pgrep -a worker
 cargo build --release --target x86_64-pc-windows-gnu -p queen
 
 # 3. Compilar todos los agentes
-for p in queen worker drone honeybee weaver swarm c2-server; do
+for p in queen worker drone honeybee swarm c2-server; do
     cargo build --release --target x86_64-pc-windows-gnu -p "$p"
 done
 
@@ -348,7 +348,7 @@ curl -X POST http://localhost:8444/beacon \
 # Botón "Kill Switch" en http://localhost:8080
 
 # O manualmente
-pkill -9 queen worker drone honeybee weaver swarm c2-server
+pkill -9 queen worker drone honeybee swarm c2-server
 rm -rf /tmp/.hive /tmp/.h /dev/shm/hive_arena
 ```
 

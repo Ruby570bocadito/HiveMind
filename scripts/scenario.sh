@@ -51,7 +51,7 @@ phase_sleep() {
 
 phase_prepare() {
     info "=== FASE 0: Preparación del entorno ==="
-    for bin in worker drone honeybee weaver queen stinger beekeeper; do
+    for bin in worker drone honeybee queen stinger beekeeper; do
         if [[ ! -f "$HIVE_BIN/$bin" ]]; then
             err "Binario no encontrado: $HIVE_BIN/$bin"
             info "Ejecuta: source build_env.sh && cargo build --release --workspace"
@@ -120,7 +120,6 @@ phase_persistence() {
 phase_evasion() {
     info "=== FASE 5: Evasión + Reporte ==="
     export __HIVE_ARENA="$ARENA"
-    "$HIVE_BIN/weaver" &
     phase_sleep 3
 
     cat > "$LOOT_DIR/reporte_campana.md" << REOF
@@ -139,7 +138,7 @@ phase_evasion() {
 | 3. Exfiltración | Honeybee + Chrononaut | ✅ |
 | 4. Persistencia | Phoenix | ✅ |
 | 4. Evolución | Tournament + HiveMind | ✅ |
-| 5. Evasión | Weaver + WhisperNet | ✅ |
+| 5. Evasión | WhisperNet | ✅ |
 
 ## Técnicas MITRE ATT&CK
 $(grep -oP 'id: "\K[^"]+' hive_base/src/attack.rs | head -30 | sed 's/^/- /')
@@ -150,7 +149,7 @@ REOF
 
 cleanup() {
     info "=== CLEANUP ==="
-    for proc in stinger worker drone honeybee weaver queen beekeeper; do
+    for proc in stinger worker drone honeybee queen beekeeper; do
         pkill -f "$HIVE_BIN/$proc" 2>/dev/null || true
     done
     pkill -f "c2_server.py" 2>/dev/null || true

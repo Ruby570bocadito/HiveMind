@@ -18,8 +18,6 @@ mod embedded {
     pub const DRONE: &[u8] = include_bytes!("../../target/x86_64-pc-windows-gnu/release/drone.exe");
     pub const HONEYBEE: &[u8] =
         include_bytes!("../../target/x86_64-pc-windows-gnu/release/honeybee.exe");
-    pub const WEAVER: &[u8] =
-        include_bytes!("../../target/x86_64-pc-windows-gnu/release/weaver.exe");
     pub const QUEEN: &[u8] = include_bytes!("../../target/x86_64-pc-windows-gnu/release/queen.exe");
 }
 #[cfg(all(target_os = "windows", not(have_bins_win)))]
@@ -27,7 +25,6 @@ mod embedded {
     pub const WORKER: &[u8] = &[];
     pub const DRONE: &[u8] = &[];
     pub const HONEYBEE: &[u8] = &[];
-    pub const WEAVER: &[u8] = &[];
     pub const QUEEN: &[u8] = &[];
 }
 #[cfg(all(not(target_os = "windows"), have_bins))]
@@ -35,7 +32,6 @@ mod bins {
     pub const WORKER: &[u8] = include_bytes!("../../target/release/worker");
     pub const DRONE: &[u8] = include_bytes!("../../target/release/drone");
     pub const HONEYBEE: &[u8] = include_bytes!("../../target/release/honeybee");
-    pub const WEAVER: &[u8] = include_bytes!("../../target/release/weaver");
     pub const QUEEN: &[u8] = include_bytes!("../../target/release/queen");
 }
 #[cfg(all(not(target_os = "windows"), not(have_bins)))]
@@ -43,7 +39,6 @@ mod bins {
     pub const WORKER: &[u8] = &[];
     pub const DRONE: &[u8] = &[];
     pub const HONEYBEE: &[u8] = &[];
-    pub const WEAVER: &[u8] = &[];
     pub const QUEEN: &[u8] = &[];
 }
 
@@ -62,7 +57,6 @@ fn main() {
         thread::sleep(Duration::from_secs(2));
         fileless_spawn("drone", bins::DRONE, &arena_name);
         fileless_spawn("honeybee", bins::HONEYBEE, &arena_name);
-        fileless_spawn("weaver", bins::WEAVER, &arena_name);
         fileless_spawn("queen", bins::QUEEN, &arena_name);
     }
 
@@ -93,7 +87,6 @@ fn main() {
         thread::sleep(Duration::from_secs(2));
         let _sh = launch("drone", embedded::DRONE);
         let _h = launch("honeybee", embedded::HONEYBEE);
-        let _w = launch("weaver", embedded::WEAVER);
         let _o = launch("queen", embedded::QUEEN);
     }
 
@@ -133,7 +126,7 @@ fn fileless_spawn(name: &str, data: &[u8], arena_name: &str) {
     if data.is_empty() {
         warn!(
             "Skipping fileless spawn of {}: binary not embedded. \
-             Build the agents first with: cargo build --release -p worker -p drone -p honeybee -p weaver -p queen",
+             Build the agents first with: cargo build --release -p worker -p drone -p honeybee -p queen",
             name
         );
         return;

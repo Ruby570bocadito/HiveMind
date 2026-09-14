@@ -26,7 +26,7 @@ while [[ $# -gt 0 ]]; do case "$1" in
 esac; done
 
 C2_BIN="target/${CARGO_TARGET}/c2-server"
-AGENTS=(queen worker drone honeybee weaver swarm)
+AGENTS=(queen worker drone honeybee swarm)
 
 cleanup() {
     echo

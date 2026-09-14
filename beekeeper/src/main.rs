@@ -261,11 +261,6 @@ async fn cmd_validate() {
         ("Memfd", "Fileless exec disponible", || {
             hive_base::MemfdBinary::new("_test", b"x").is_ok()
         }),
-        ("Polymorphic", "Weaver mutate funcional", || {
-            let orig = vec![0x41u8; 10000];
-            let mutated = hive_base::wax::mutate_binary(&orig);
-            mutated != orig
-        }),
         ("Agent names", "Nombres ofuscados en binario", || {
             std::env::current_exe()
                 .ok()
@@ -415,7 +410,7 @@ async fn cmd_scenario(mode: &str) {
         (
             "FASE 5",
             "Evasión",
-            "Weaver obfuscation + WhisperNet P2P mesh",
+            "WhisperNet P2P mesh",
         ),
     ];
     for (num, name, desc) in &phases {

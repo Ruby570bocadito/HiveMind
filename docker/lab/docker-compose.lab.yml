@@ -170,26 +170,6 @@ services:
       - ../../target/release:/hive/bin
     command: /hive/bin/honeybee
 
-  # ── Weaver (polimorfismo) ──
-  weaver:
-    build:
-      context: ../..
-      dockerfile: Dockerfile
-    container_name: hive-weaver
-    hostname: hive-weaver
-    depends_on: [queen, arena]
-    networks: [hive-net]
-    environment:
-      - __HIVE_ARENA=hive_arena
-      - HIVE_LAB_MODE=1
-      - HIVE_C2_URL=http://c2-server:8444/collect
-      - WEAVER_OUTPUT_DIR=/tmp/hive_variants
-      - RUST_LOG=info
-    volumes:
-      - hive_arena:/dev/shm
-      - ../../target/release:/hive/bin
-    command: /hive/bin/weaver
-
   # ── Ollama (LLM estratégico) ──
   ollama:
     image: ollama/ollama:latest

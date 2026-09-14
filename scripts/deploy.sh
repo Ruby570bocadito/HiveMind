@@ -92,8 +92,8 @@ else
     EXT=""
 fi
 
-AGENTS=(queen worker drone honeybee weaver swarm)
-ALL_BINS=(queen worker drone honeybee weaver swarm c2-server)
+AGENTS=(queen worker drone honeybee swarm)
+ALL_BINS=(queen worker drone honeybee swarm c2-server)
 
 # ================================================================
 # FUNCTIONS

@@ -11,7 +11,6 @@ El código usa la metáfora biológica de "colmena" (Hive) por ser más rica en 
 | **Scout** | **Worker** | Abeja obrera exploradora | Percepción: escanea sistema, detecta EDR/backup, publica beliefs |
 | **Shaper** | **Drone** | Zángano (macho reproductor) | Decisiones: movimiento lateral, persistencia, regeneración de agentes |
 | **Hoarder** | **Honeybee** | Abeja recolectora de néctar | Ejecutor: cifrado, exfiltración, destrucción cuando hay consenso |
-| **Weaver** | **Weaver** | Abeja tejedora de cera | Camuflaje: mutación polimórfica, generación de variantes |
 | **Overmind** | **Queen** | Abeja reina | Oráculo: responde dilemas estratégicos vía LLM |
 | **Worm** | **Swarm** | Enjambre autónomo | Propagación autónoma entre hosts |
 

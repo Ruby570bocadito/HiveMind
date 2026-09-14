@@ -98,7 +98,7 @@ class EDRValidator:
         findings = []
 
         # Check for agent binaries on disk
-        agent_names = ['worker', 'drone', 'honeybee', 'weaver', 'queen', 'colmena_bus']
+        agent_names = ['worker', 'drone', 'honeybee', 'queen', 'colmena_bus']
         for agent in agent_names:
             # Check /tmp
             results = subprocess.run(
@@ -145,7 +145,7 @@ class EDRValidator:
         try:
             ps = subprocess.run(['ps', 'aux', '--no-headers'], capture_output=True, text=True, timeout=5)
             for line in ps.stdout.split('\n'):
-                for agent in ['worker', 'drone', 'honeybee', 'weaver']:
+                for agent in ['worker', 'drone', 'honeybee']:
                     if agent in line.lower() and 'grep' not in line.lower():
                         findings.append(f"AGENT_PROCESS:{agent}")
 
@@ -154,7 +154,7 @@ class EDRValidator:
                 try:
                     stat = (pid_dir / 'stat').read_text()
                     comm = (pid_dir / 'comm').read_text().strip()
-                    if any(a in comm for a in ['worker', 'drone', 'weaver', 'honeybee']):
+                    if any(a in comm for a in ['worker', 'drone', 'honeybee']):
                         # Check if executed from memfd (/proc/self/fd/N)
                         exe = os.readlink(str(pid_dir / 'exe')) if (pid_dir / 'exe').is_symlink() else ''
                         if '/proc/' in exe and '/fd/' in exe:
@@ -268,7 +268,7 @@ class EDRValidator:
         for pid_dir in Path('/proc').glob('[0-9]*'):
             try:
                 comm = (pid_dir / 'comm').read_text().strip()
-                if any(a in comm for a in ['worker', 'drone', 'weaver', 'honeybee']):
+                if any(a in comm for a in ['worker', 'drone', 'honeybee']):
                     ps_count += 1
             except Exception:
                 pass

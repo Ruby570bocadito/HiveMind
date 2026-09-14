@@ -68,7 +68,7 @@ echo ""
 
 # 1. Verificar bins compilados
 info "Paso 0: Verificando binarios compilados..."
-for bin in c2-server queen worker drone honeybee weaver swarm; do
+for bin in c2-server queen worker drone honeybee swarm; do
     if [ ! -f "$HIVE_BIN/$bin" ]; then
         fail "Binario faltante: $HIVE_BIN/$bin"
         info "Ejecutá: cargo build --release -p $bin"
@@ -186,7 +186,7 @@ export HIVE_TELEMETRY_DIR="/tmp/hive_verify_telemetry"
 
 mkdir -p "$HIVE_TELEMETRY_DIR"
 declare -A AGENT_PIDS
-AGENT_LIST=(queen worker drone honeybee weaver swarm)
+AGENT_LIST=(queen worker drone honeybee swarm)
 
 for agent in "${AGENT_LIST[@]}"; do
     setsid "$HIVE_BIN/$agent" < /dev/null > "/tmp/hive_verify_${agent}.log" 2>&1 &
@@ -237,10 +237,6 @@ info "Paso 5d: Verificando Honeybee..."
 wait_for_log "/tmp/hive_verify_honeybee.log" "HoarderAgent" 15 "Honeybee: HoarderAgent inicializado" || true
 wait_for_log "/tmp/hive_verify_honeybee.log" "discover" 30 "Honeybee: descubrimiento de archivos" || true
 
-# 5e. Weaver: mutations, polymorphism
-info "Paso 5e: Verificando Weaver..."
-wait_for_log "/tmp/hive_verify_weaver.log" "WeaverAgent" 15 "Weaver: WeaverAgent inicializado" || true
-wait_for_log "/tmp/hive_verify_weaver.log" "mutation" 30 "Weaver: generación de mutaciones" || true
 
 # 5f. Swarm: discovery, worm limits
 info "Paso 5f: Verificando Swarm..."
@@ -314,7 +310,7 @@ echo ""
 echo "╔══════════════════════════════════════════════════╗"
 echo "║   LOGS POR AGENTE (últimas 3 líneas)            ║"
 echo "╚══════════════════════════════════════════════════╝"
-for agent in c2-server queen worker drone honeybee weaver swarm; do
+for agent in c2-server queen worker drone honeybee swarm; do
     logfile="/tmp/hive_verify_${agent}.log"
     if [ -f "$logfile" ]; then
         last_line=$(tail -1 "$logfile" 2>/dev/null | tr -d '\n' | head -c 120)

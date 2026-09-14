@@ -20,8 +20,6 @@ environments, and run under an LLM strategic director.
 | [`API.md`](API.md) | C2 HTTP API reference (Rust server) | current |
 | [`DEVELOPMENT.md`](DEVELOPMENT.md) | Build, test, project layout, contribution notes | current |
 | [`DEPLOYMENT.md`](DEPLOYMENT.md) | Lab deployment walkthrough (authorized labs only) | current |
-| [`EVASION.md`](EVASION.md) | Overview of the defense-evasion modules from a blue-team perspective | current |
-| [`MITRE_MAPPING.md`](MITRE_MAPPING.md) | Techniques implemented per module | current |
 | [`PLAYBOOK.md`](PLAYBOOK.md) | Demo scenario walkthrough | current |
 
 ## Quick start (verified)

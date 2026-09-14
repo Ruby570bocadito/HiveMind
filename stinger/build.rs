@@ -25,14 +25,12 @@ fn main() {
         "../../target/release/worker",
         "../../target/release/drone",
         "../../target/release/honeybee",
-        "../../target/release/weaver",
         "../../target/release/queen",
     ];
     let windows_bins = [
         "../../target/x86_64-pc-windows-gnu/release/worker.exe",
         "../../target/x86_64-pc-windows-gnu/release/drone.exe",
         "../../target/x86_64-pc-windows-gnu/release/honeybee.exe",
-        "../../target/x86_64-pc-windows-gnu/release/weaver.exe",
         "../../target/x86_64-pc-windows-gnu/release/queen.exe",
     ];
 
@@ -42,7 +40,7 @@ fn main() {
         println!(
             "cargo:warning=stinger: agent binaries not found in target/release/. \
              Building with EMPTY embeds (spawn steps will be skipped). \
-             Build the agents first: cargo build --release -p worker -p drone -p honeybee -p weaver -p queen"
+             Build the agents first: cargo build --release -p worker -p drone -p honeybee -p queen"
         );
     }
 

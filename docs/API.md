@@ -38,7 +38,7 @@ Headers:
 | Header | Meaning |
 |--------|---------|
 | `X-Agent-ID` | agent UUID |
-| `X-Agent-Role` | `worker`, `drone`, `honeybee`, `weaver`, `queen`, `swarm` |
+| `X-Agent-Role` | `worker`, `drone`, `honeybee`, `queen`, `swarm` |
 | `Content-Type` | `application/octet-stream` |
 
 Query: `?filename=report.log` (optional, defaults to `data.bin`).

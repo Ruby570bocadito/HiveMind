@@ -51,7 +51,7 @@ spec:
         persistentVolumeClaim:
           claimName: {{ include "hive-colony.fullname" . }}-arena
 ---
-{{- range $agent := list "queen" "worker" "drone" "honeybee" "weaver" "swarm" }}
+{{- range $agent := list "queen" "worker" "drone" "honeybee" "swarm" }}
 {{- if index $.Values.agents $agent "enabled" }}
 apiVersion: apps/v1
 kind: Deployment

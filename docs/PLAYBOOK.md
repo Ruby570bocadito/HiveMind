@@ -9,7 +9,7 @@
 ├─────────────────────────────────────────────────────┤
 │                 SHARED MEMORY ARENA                  │
 │  ┌──────┐  ┌──────┐  ┌────────┐  ┌──────┐  ┌─────┐ │
-│  │Worker│  │Drone │  │Honeybee│  │Weaver│  │Queen│ │
+│  │Worker│  │Drone │  │Honeybee│  │Queen│ │
 │  └──────┘  └──────┘  └────────┘  └──────┘  └─────┘ │
 │  Saboteur    Seer     Chrononaut   Wax    HiveMind  │
 │  Stigmergy  Phoenix  WhisperNet           Tournament│
@@ -42,7 +42,6 @@ export __HIVE_ARENA=hive_lab
 ./target/release/worker &
 ./target/release/drone &
 ./target/release/honeybee &
-./target/release/weaver &
 ./target/release/queen &
 
 # 4. Monitorear
@@ -59,7 +58,6 @@ export __HIVE_ARENA=hive_lab
 | **Worker** | Saboteur, Seer, Stigmergy | Escaneo, mutación de datos, telemetría |
 | **Drone** | Seer, Phoenix, Stigmergy | Decisiones RL, regeneración, predicción |
 | **Honeybee** | WhisperNet | Acciones encrypt/exfil/destroy **solo simuladas** (deshabilitadas 2026-09-14), relay P2P |
-| **Weaver** | Wax | Ofuscación polimórfica de payloads |
 | **Queen** | Tournament, HiveMind, WhisperNet | Torneos darwinianos, consenso, broadcast P2P |
 
 ## Playbooks
@@ -90,7 +88,6 @@ cat /tmp/ledger.csv  # Datos alterados
 #   ✓ Debugger      — Anti-debug activo
 #   ✓ Sandbox       — Anti-sandbox activo
 #   ✓ Memfd         — Fileless exec disponible
-#   ✓ Polymorphic   — Weaver mutate funcional
 #   ✓ Agent names   — Nombres ofuscados
 ```
 
@@ -201,7 +198,6 @@ docker compose up -d
 #   worker      :—    — Escáner + Saboteur
 #   drone       :—    — Decisiones + Phoenix
 #   honeybee    :—    — Acciones simuladas (encrypt/exfil disabled)
-#   weaver      :—    — Ofuscación
 #   victim      :—    — Datos simulados
 #   monitor     :—    — EDR detection monitor
 #   dashboard   :8080 — Web UI

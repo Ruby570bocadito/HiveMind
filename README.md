@@ -98,7 +98,6 @@ cargo run -p beekeeper
 | **Worker** | Scout | System profiling, EDR/backup process detection (8 signatures on Linux, 34 on Windows), embedded Random-Forest classifier with heuristic fallback |
 | **Drone** | Shaper | Belief-driven decisions, host discovery, SSH propagation to lab targets, dead-agent regeneration |
 | **Honeybee** | Hoarder | Simulation-only action executor (encrypt/exfil/destroy are hard-disabled by design), remote shell, privesc module |
-| **Weaver** | Morph | Binary mutation engine: XOR, NOP insertion, section shuffle, junk code |
 | **Swarm** | Worm | Self-limiting spread: max hops, rate cap, TTL self-destruct, kill-switch aware |
 
 Every agent:
@@ -117,7 +116,7 @@ Every agent:
 | CI | GitHub Actions: `cargo fmt --check`, `cargo clippy -D warnings`, full workspace build, release artifacts |
 | Fuzzing | `cargo-fuzz` targets: IPC contract validation, ring-buffer ops |
 | Benches | criterion: HTL throughput, IPC validation |
-| Lints | zero clippy warnings across all 11 crates |
+| Lints | zero clippy warnings across all 10 crates |
 | Config | single `hive.toml`, loaded by every agent, loud failures on parse errors |
 
 Repository layout:
@@ -125,7 +124,7 @@ Repository layout:
 ```
 hive_base/    shared library: arena IPC, LdC protocol, consensus, telemetry,
               config, tactics modules (67 modules)
-agents/       queen · worker · drone · honeybee · weaver · swarm
+agents/       queen · worker · drone · honeybee · swarm
 c2/           Rust C2 server (axum + SQLite, :8444)
 beekeeper/    operator TUI (ratatui + Lua scripting)
 stinger/      dropper: fileless agent execution via memfd
@@ -144,7 +143,6 @@ deploy/       Helm chart · docker compose labs
 | [docs/OPERATOR_GUIDE.md](docs/OPERATOR_GUIDE.md) | environment variables, TUI, subcommands |
 | [docs/API.md](docs/API.md) | C2 HTTP/WS API (routes verified against code) |
 | [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) | build, test, conventions |
-| [docs/MITRE_MAPPING.md](docs/MITRE_MAPPING.md) | technique → module mapping |
 | [docs/NAMING.md](docs/NAMING.md) | old ↔ current name mapping (Scout→Worker, …) |
 | [ROADMAP.md](ROADMAP.md) | known gaps and planned work |
 
