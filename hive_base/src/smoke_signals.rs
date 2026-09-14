@@ -106,12 +106,14 @@ impl SmokeChannel {
             return Ok(Vec::new());
         }
 
-        // Production mode: send via HTTPS with reqwest
+        // Production mode: send via HTTPS with reqwest.
+        // SECURITY: certificate verification is only disabled in lab mode
+        // (HIVE_LAB_MODE env var) — never in production.
         let url = format!("https://{}{}", self.host(), self.path());
         let client = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(15))
             .user_agent(self.user_agent())
-            .danger_accept_invalid_certs(true)
+            .danger_accept_invalid_certs(std::env::var("HIVE_LAB_MODE").is_ok())
             .build()
             .map_err(|e| format!("Failed to build HTTP client: {}", e))?;
 

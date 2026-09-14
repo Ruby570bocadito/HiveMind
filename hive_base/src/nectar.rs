@@ -97,7 +97,9 @@ pub async fn execute_storm(chunks: Vec<NectarChunk>, storm: NectarStorm) -> (usi
 
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(storm.timeout_secs))
-        .danger_accept_invalid_certs(true)
+        // SECURITY: certificate verification is only disabled in lab mode
+        // (HIVE_LAB_MODE env var) — never in production.
+        .danger_accept_invalid_certs(std::env::var("HIVE_LAB_MODE").is_ok())
         .build()
         .unwrap_or_else(|_| reqwest::Client::new());
 
