@@ -12,27 +12,48 @@ env:
 jobs:
   test:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      - run: cargo test -p hive_base -- --test-threads=2
-      - run: cargo build -p worker -p drone -p honeybee -p weaver
+      # default-members: stinger requires release binaries that a clean
+      # checkout does not have (its build.rs degrades gracefully, but we keep
+      # it out of the test matrix).
+      - name: Tests (unit + integration + c2, incl. ML roundtrip on the embedded model)
+        run: cargo test --no-fail-fast -- --test-threads=2
+      - name: Build agent binaries and C2 server
+        run: cargo build -p worker -p drone -p honeybee -p queen -p c2-server
 
   lint:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy
-      - run: cargo clippy -- -D warnings 2>&1 | head -50 || true
+      - uses: Swatinem/rust-cache@v2
+      # Non-blocking: warnings are surfaced for triage (roadmap item to gate on them).
+      - name: Clippy (surface warnings)
+        run: cargo clippy --all-targets 2>&1 | tail -50
+
+  training-pipeline:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Syntax-check ML pipeline scripts
+        run: python3 -m py_compile training/export_bin.py training/scout/train_classifier.py training/scout/generate_dataset.py
 
   release:
     runs-on: ubuntu-latest
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
-      - run: cargo build --release -p worker -p drone -p honeybee
-      - run: ls -lh target/release/worker target/release/drone target/release/honeybee
+      - run: cargo build --release -p worker -p drone -p honeybee -p queen
+      - run: ls -lh target/release/worker target/release/drone target/release/honeybee target/release/queen

@@ -507,3 +507,13 @@ safe_ips = ["192.168.1.100", "192.168.1.1"]
 > end-to-end: `training/export_bin.py` convierte el RF de sklearn al formato
 > `.bin` de `hive_base::ml` con validación de paridad contra sklearn;
 > `train_classifier.py` lo invoca automáticamente. Tests: 275 (226 unit).
+
+> **Nota ronda 8 (2026-09-15):** migración `rlua → mlua 0.10` (lua54 vendored)
+> en `beekeeper::scripting` con API pública intacta y 4 tests nuevos; test de
+> roundtrip del modelo ML embebido en `worker` (descifrar → parsear →
+> clasificar, sin Python) que destapó y corrigió un bug real: `from_binary`
+> asignaba memoria según cabeceras no confiables (~512 GB con entrada
+> corrupta). CI reparada: triggers malformados (`branches: aster]`), `weaver`
+> aún listado (eliminado en ronda 2) y jobs modernizados. Split de
+> `hive_base` por features: análisis en ROADMAP → diferido. Tests: 281
+> (232 unit).

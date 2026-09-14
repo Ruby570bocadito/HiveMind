@@ -354,3 +354,55 @@ async fn main() {
     info!("Initializing Hive Worker...");
     ScoutAgent::new().await.run().await;
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Roundtrip del modelo ML embebido (ronda 8): build.rs cifra el .bin en
+    /// tiempo de compilación; aquí se descifra, se parsea con el evaluador
+    /// puro-Rust de hive_base::ml y se comprueba que clasifica. Es el mismo
+    /// camino que sigue scout en producción, ejecutado en CI sin Python.
+    #[test]
+    fn embedded_scout_model_roundtrip() {
+        let bytes = load_scout_model();
+        assert!(
+            !bytes.is_empty(),
+            "el modelo embebido descifra a vacío (¿build.rs no encontró scout_classifier.bin?)"
+        );
+
+        let rf = hive_base::ml::RandomForest::from_binary(&bytes)
+            .expect("el modelo embebido debe parsear con from_binary");
+
+        // Muestra sintética determinista (14 features del dataset scout).
+        let feats = [0.5f32; 14];
+        let (class, conf) = rf
+            .predict_proba(&feats)
+            .expect("predict_proba debe clasificar la muestra sintética");
+        assert!(class < 3, "clase fuera de rango: {}", class);
+        assert!(
+            (0.0..=1.0).contains(&conf),
+            "confianza fuera de [0,1]: {}",
+            conf
+        );
+
+        // predict() (voto mayoritario) también debe devolver una clase válida.
+        let cls2 = rf.predict(&feats).expect("predict debe devolver clase");
+        assert!(cls2 < 3);
+
+        // Muestra "EDR-like" (valores altos, en el rango del dataset): debe
+        // clasificar sin error y con confianza > 0.
+        let edr_like = [
+            150.0, 30.0, 45.0, 80.0, 300.0, 1.0, 0.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0,
+        ];
+        let (c, p) = rf.predict_proba(&edr_like).expect("clasifica muestra EDR-like");
+        assert!(c < 3 && p > 0.0);
+    }
+
+    /// El modelo embebido debe rechazar bytes truncados sin paniquear.
+    #[test]
+    fn from_binary_rejects_garbage() {
+        assert!(hive_base::ml::RandomForest::from_binary(&[0u8; 4]).is_none());
+        assert!(hive_base::ml::RandomForest::from_binary(&[0xffu8; 64]).is_none());
+    }
+}

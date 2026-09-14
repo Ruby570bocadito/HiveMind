@@ -40,14 +40,33 @@ Prioritized list of known gaps and planned work. Items marked ✅ are done.
   `hive_base::ml::RandomForest::from_binary`; wired into `train_classifier.py`
   with a validation step that replicates the Rust evaluation in NumPy and
   checks parity against sklearn (byte-exact layout, leaf sentinels -1).
-- [ ] **Fix or delete the remaining dead paths**: `reactive_llm::reactive_cycle`
-  compiles a never-declared `variant.rs`, and `io_uring_ops` has an incorrect
-  ABI with no callers. Each one: implement honestly or delete.
+- [x] **Fix or delete the remaining dead paths** (ronda 7): `reactive_llm`
+  (LLM polymorphic obfuscator + binary mutator — real evasion code, no
+  callers) and `io_uring_ops` (RingReaper-style EDR-bypass I/O) were
+  **deleted**, along with the legacy `train_model.py`. See
+  `docs/CAPABILITIES.md`.
 - [ ] **Split `hive_base` with cargo features** (`core`, `telemetry`,
-  `windows`) — fewer unconditioned `pub mod`s after the ronda 6 purge.
-- [ ] **`mlua` migration** (`rlua` is archived and emits a future-incompat note).
+  `windows`) — DEFERRED (ronda 8 analysis): the 43 remaining modules are all
+  load-bearing for the colony/c2 binary set; gating transport (tokio/reqwest/
+  tungstenite) would force every agent crate to opt in, for little real gain
+  at this scale. Revisit if hive_base grows again or a no-std/embedded target
+  appears. Platform code stays target-gated (`winapi`, `libc`).
+- [x] **`mlua` migration** (ronda 8): `rlua 0.19` (archived upstream) replaced
+  by `mlua 0.10` (lua54, vendored) in `beekeeper`; `scripting::LuaEngine`
+  rewritten 1:1 (same public API, TUI untouched) + 4 unit tests. The
+  future-incompat warning is gone from `cargo check`.
 - [ ] **Concurrency test suite for the arena**: loom-based tests for the
   ring buffer (multi-writer / multi-reader), reader/writer cursor invariants.
+- [x] **ML roundtrip in CI** (ronda 8): `worker::tests::embedded_scout_model_roundtrip`
+  decrypts the embedded model, parses it with `hive_base::ml::RandomForest`
+  and classifies — no Python needed. Also exposed and fixed a real bug:
+  `from_binary` trusted untrusted headers and could attempt ~512 GB
+  allocations on corrupt input (now bounded and rejected).
+- [x] **CI repair** (ronda 8): `ci.yml` had a malformed trigger
+  (`branches: aster]`) and still built `weaver` (removed in ronda 2) — CI
+  could not have been running. Fixed triggers, modernized jobs (tests via
+  default-members, builds of the 4 agents + c2-server, clippy surfaced,
+  Python syntax check for the training pipeline, release builds include queen).
 
 ## P2 — polish
 

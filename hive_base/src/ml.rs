@@ -39,8 +39,21 @@ impl RandomForest {
         let n_classes = u32::from_le_bytes([data[4], data[5], data[6], data[7]]);
         let n_features = u32::from_le_bytes([data[8], data[9], data[10], data[11]]);
 
+        // Hardening (ronda 8): el header no es confiable — un modelo corrupto
+        // o malicioso no debe poder provocar asignaciones descontroladas.
+        // Un bosque vacío no es un modelo; los recuentos absurdos se
+        // rechazan; y la capacidad del Vec se limita por el tamaño real del
+        // buffer (cada árbol consume al menos 4 bytes verificados en el loop).
+        if n_estimators == 0 {
+            return None;
+        }
+        if n_classes == 0 || n_classes > 10_000 || n_features == 0 || n_features > 100_000 {
+            return None;
+        }
+        let tree_cap = (data.len() - 12) / 4;
+        let mut trees = Vec::with_capacity(tree_cap.min(n_estimators as usize));
+
         let mut offset = 12usize;
-        let mut trees = Vec::with_capacity(n_estimators as usize);
 
         for _ in 0..n_estimators {
             if offset + 4 > data.len() {

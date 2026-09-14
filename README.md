@@ -14,7 +14,7 @@
   <img src="https://img.shields.io/badge/rust-stable%201.82%2B-000000?style=flat-square&logo=rust" alt="Rust"/>
   <img src="https://img.shields.io/badge/version-3.0.0-6C63FF?style=flat-square" alt="Version"/>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-6C63FF?style=flat-square" alt="MIT License"/></a>
-  <img src="https://img.shields.io/badge/tests-275%20passing-73d0a0?style=flat-square" alt="Tests"/>
+  <img src="https://img.shields.io/badge/tests-281%20passing-73d0a0?style=flat-square" alt="Tests"/>
   <img src="https://img.shields.io/badge/platform-linux%20x86__64%20%7C%20windows%20(partial)-0d1117?style=flat-square&logo=linux" alt="Platform"/>
 </p>
 
@@ -46,8 +46,8 @@
 - **LLM optional, not required.** The Queen can consult a local Ollama model
   for strategy, and the whole colony degrades gracefully to heuristic mode
   when no model is present.
-- **Tested like a library, not a script.** 275 tests across five suites
-  (226 unit · 9 integration · 34 lab/e2e · 6 c2-server), two criterion benches,
+- **Tested like a library, not a script.** 281 tests across five suites
+  (232 unit · 9 integration · 34 lab/e2e · 6 c2-server), two criterion benches,
   and cargo-fuzz targets on the IPC and ring-buffer paths.
 
 ## Architecture
@@ -118,7 +118,7 @@ Every agent:
 
 | Area | Status |
 |------|--------|
-| Tests | **275 passing** — 226 unit + 43 integration (phase-A scenarios, arena regressions, lab/e2e) + 6 c2-server (auth, rate limiter) |
+| Tests | **281 passing** — 232 unit (incl. Lua console + embedded-ML roundtrip) + 43 integration (phase-A scenarios, arena regressions, lab/e2e) + 6 c2-server (auth, rate limiter) |
 | CI | GitHub Actions: `cargo fmt --check`, `cargo clippy -D warnings`, full workspace build, release artifacts |
 | Fuzzing | `cargo-fuzz` targets: IPC contract validation, ring-buffer ops |
 | Benches | criterion: HTL throughput, IPC validation |
