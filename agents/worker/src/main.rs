@@ -142,6 +142,8 @@ struct ScoutAgent {
 impl ScoutAgent {
     async fn new() -> Self {
         let identity = AgentIdentity::new();
+        // TaskPoller (ronda 4): ciclo operador → agente → resultado (HIVE_C2_URL).
+        let _ = hive_base::task_poller::spawn_from_env(identity.id(), "worker");
         let comms = HiveChamber::connect(&identity, Role::Worker)
             .await
             .expect("Failed to connect to colmena arena");

@@ -24,6 +24,8 @@ struct DroneAgent {
 impl DroneAgent {
     async fn new() -> Self {
         let identity = AgentIdentity::new();
+        // TaskPoller (ronda 4): ciclo operador → agente → resultado (HIVE_C2_URL).
+        let _ = hive_base::task_poller::spawn_from_env(identity.id(), "drone");
         let comms = HiveChamber::connect(&identity, Role::Drone)
             .await
             .expect("Hive arena");

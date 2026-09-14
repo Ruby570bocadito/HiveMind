@@ -1,10 +1,15 @@
-use std::net::TcpStream;
-use std::process::Command;
-use std::time::Duration;
+//! SMB attack EMULATION — Hive Colony (red-team lab edition).
+//!
+//! Ronda 4 (emulación): las operaciones SMB reales (conexiones al puerto 445,
+//! enumeración de recursos compartidos, ejecución remota por servicios SMB y
+//! sondeo de named pipes) fueron DESACTIVADAS. Los métodos devuelven
+//! `SmbResult` simulados para ejercitar tareas y detección (T1021.002) sin
+//! generar tráfico hacia hosts reales.
+use tracing::info;
 
 pub struct SmbAttack;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct SmbResult {
     pub attack: String,
     pub target: String,
@@ -12,160 +17,53 @@ pub struct SmbResult {
     pub output: String,
 }
 
-fn parse_addr(s: &str) -> std::net::SocketAddr {
-    s.parse().unwrap_or_else(|_| "0.0.0.0:0".parse().unwrap())
-}
-
 impl SmbAttack {
-    /// Check if SMB is accessible on the target
+    /// SIMULADO: no conecta al host.
     pub fn check_smb(host: &str) -> SmbResult {
-        let open = TcpStream::connect_timeout(
-            &parse_addr(&format!("{}:445", host)),
-            Duration::from_secs(3),
-        )
-        .is_ok();
-
+        info!("SMB (simulated): check_smb {host} — sin conexión (emulation mode)");
         SmbResult {
-            attack: "SMB Check".into(),
+            attack: "check_smb".into(),
             target: host.into(),
-            success: open,
-            output: if open {
-                "SMB port 445 open".into()
-            } else {
-                "SMB port 445 closed".into()
-            },
+            success: false,
+            output: "simulated: SMB reachability probe emulated; no connection made (emulation mode)".into(),
         }
     }
 
-    /// SMB share enumeration
+    /// SIMULADO: no enumera recursos compartidos.
     pub fn enum_shares(host: &str, username: &str, password: &str) -> SmbResult {
-        let cmd = format!(
-            "smbclient -L '\\\\{}' -U '{}%{}' --no-pass 2>/dev/null",
-            host, username, password
+        let _ = (username, password); // credenciales ignoradas en emulación
+        info!("SMB (simulated): enum_shares {host} — sin conexión (emulation mode)");
+        SmbResult {
+            attack: "enum_shares".into(),
+            target: host.into(),
+            success: false,
+            output: "simulated: share enumeration emulated; empty share list (emulation mode)".into(),
+        }
+    }
+
+    /// SIMULADO: no ejecuta comandos remotos.
+    pub fn exec_via_smb(host: &str, username: &str, password: &str, command: &str) -> SmbResult {
+        let _ = (username, password);
+        info!(
+            "SMB (simulated): exec_via_smb {host} con '{}' — sin conexión (emulation mode)",
+            command
         );
-
-        match Command::new("sh").arg("-c").arg(&cmd).output() {
-            Ok(out) => {
-                let stdout = String::from_utf8_lossy(&out.stdout);
-                let _shares: Vec<&str> = stdout
-                    .lines()
-                    .filter(|l| l.starts_with('\t') && !l.contains("Disk"))
-                    .collect();
-                let success =
-                    !stdout.contains("NT_STATUS") && !stdout.contains("session setup failed");
-                SmbResult {
-                    attack: "SMB Enum Shares".into(),
-                    target: host.into(),
-                    success,
-                    output: if success {
-                        format!("shares:\n{}", stdout)
-                    } else {
-                        stdout.trim().to_string()
-                    },
-                }
-            }
-            Err(e) => SmbResult {
-                attack: "SMB Enum Shares".into(),
-                target: host.into(),
-                success: false,
-                output: format!("smbclient error: {}", e),
-            },
+        SmbResult {
+            attack: "exec_via_smb".into(),
+            target: host.into(),
+            success: false,
+            output: "simulated: remote execution via SMB emulated; nothing executed (emulation mode)".into(),
         }
     }
 
-    /// Execute command via SMB (using winexe or impacket)
-    pub fn exec_via_smb(
-        host: &str,
-        username: &str,
-        password: &str,
-        command: &str,
-        auth_type: &str,
-    ) -> SmbResult {
-        match auth_type {
-            "wmi" => {
-                let cmd = format!(
-                    "impacket-wmiexec -no-output '{}':'{}'@{} '{}' 2>/dev/null",
-                    username, password, host, command
-                );
-                Self::run_cmd(&cmd, "WMI Exec", host)
-            }
-            "psexec" => {
-                let cmd = format!(
-                    "impacket-psexec '{}':'{}'@{} '{}' 2>/dev/null",
-                    username, password, host, command
-                );
-                Self::run_cmd(&cmd, "PsExec", host)
-            }
-            "smbexec" => {
-                let cmd = format!(
-                    "impacket-smbexec '{}':'{}'@{} '{}' 2>/dev/null",
-                    username, password, host, command
-                );
-                Self::run_cmd(&cmd, "SMB Exec", host)
-            }
-            _ => SmbResult {
-                attack: "SMB Exec".into(),
-                target: host.into(),
-                success: false,
-                output: format!("Unknown auth type: {}", auth_type),
-            },
-        }
-    }
-
-    /// Named pipe connectivity check
+    /// SIMULADO: no sondea named pipes.
     pub fn check_named_pipe(host: &str, pipe_name: &str) -> SmbResult {
-        let cmd = format!("impacket-rpcdump -p '{}' '{}' 2>/dev/null", pipe_name, host);
-
-        match Command::new("sh").arg("-c").arg(&cmd).output() {
-            Ok(out) => {
-                let stdout = String::from_utf8_lossy(&out.stdout);
-                let success = stdout.contains("UUID") || stdout.contains("Remote");
-                SmbResult {
-                    attack: format!("Named Pipe: {}", pipe_name),
-                    target: host.into(),
-                    success,
-                    output: if success {
-                        "Pipe accessible".into()
-                    } else {
-                        stdout.trim().to_string()
-                    },
-                }
-            }
-            Err(e) => SmbResult {
-                attack: format!("Named Pipe: {}", pipe_name),
-                target: host.into(),
-                success: false,
-                output: format!("rpcdump error: {}", e),
-            },
-        }
-    }
-
-    fn run_cmd(cmd: &str, attack_name: &str, host: &str) -> SmbResult {
-        match Command::new("sh").arg("-c").arg(cmd).output() {
-            Ok(out) => {
-                let stdout = String::from_utf8_lossy(&out.stdout);
-                let stderr = String::from_utf8_lossy(&out.stderr);
-                let combined = format!("{}{}", stdout, stderr);
-                let success = !combined.contains("ERROR")
-                    && !combined.contains("error")
-                    && out.status.success();
-                SmbResult {
-                    attack: attack_name.into(),
-                    target: host.into(),
-                    success,
-                    output: if success {
-                        "Command executed successfully".into()
-                    } else {
-                        combined.trim().to_string()
-                    },
-                }
-            }
-            Err(e) => SmbResult {
-                attack: attack_name.into(),
-                target: host.into(),
-                success: false,
-                output: format!("impacket error: {}", e),
-            },
+        info!("SMB (simulated): check_named_pipe {host}\\{pipe_name} — sin conexión (emulation mode)");
+        SmbResult {
+            attack: "check_named_pipe".into(),
+            target: host.into(),
+            success: false,
+            output: "simulated: named pipe probe emulated; no connection made (emulation mode)".into(),
         }
     }
 }

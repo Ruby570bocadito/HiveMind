@@ -82,6 +82,14 @@ Returns up to 10 pending tasks for the agent and marks them claimed.
 
 Body: `{"id": "t1", "command": "scan", "payload": {}}` → `201 CREATED`.
 
+**Task lifecycle (ronda 4):** agents run a TaskPoller (`hive_base::task_poller`)
+that picks up queued tasks and posts results to `/beacon`. For tasks queued by
+the operator shell (`command: "shell_exec"`, payload `{"cmd", "session"}`), the
+result beacon carries `session` + `output` and is streamed to the operator's
+WebSocket. Task commands follow the emulation policy
+([docs/EMULATION.md](EMULATION.md)): `shell_exec` executes with audit;
+`exfil` and destructive commands always return simulated results.
+
 ### GET /shell/:session_id — operator shell (WebSocket)
 
 Upgrade to WebSocket. Protocol:

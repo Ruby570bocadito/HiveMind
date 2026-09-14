@@ -297,7 +297,10 @@ max_concurrent_infections = 5
 > cápsulas Chrononaut asociadas) fueron eliminadas del binario el
 > 2026-09-14 a petición del propietario. Ese mismo día (ronda 3) el
 > módulo `chrononaut` completo y el módulo `propaganda` (phishing con
-> IA) se eliminaron de `hive_base`. Independiente de `safe_mode`:
+> IA) se eliminaron de `hive_base`. En la ronda 4 la política se extendió
+> a TODO el enjambre (matriz en `docs/EMULATION.md`): exfil, sabotaje,
+> persistencia, escalada, evasión y anti-forense son simulados con
+> telemetría etiquetada. Independiente de `safe_mode`:
 > las acciones se registran como simuladas y publican telemetría
 > honesta (`"simulated (destructive actions disabled)"`).
 

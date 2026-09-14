@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Hive Colony End-to-End Verification
-# Prueba TODO de verdad: agentes, arena, C2, exfil, propagación
+# Prueba TODO de verdad: agentes, arena, C2, ciclo de tareas (emulación ronda 4)
 set -euo pipefail
 
 HIVE_BIN="target/release"
@@ -251,47 +251,46 @@ wait_for_log "/tmp/hive_verify_queen.log" "worker" 30 "Queen detecta Worker en a
 wait_for_log "/tmp/hive_verify_queen.log" "drone" 30 "Queen detecta Drone en arena" || true
 wait_for_log "/tmp/hive_verify_queen.log" "honeybee" 30 "Queen detecta Honeybee en arena" || true
 
-# ===== TEST EXFILTRACIÓN REAL =====
-info "Paso 7: Verificando exfiltración real..."
+# ===== TEST CICLO DE TAREAS (EXFIL SIMULADA) =====
+info "Paso 7: Verificando ciclo de tareas del C2 (exfil simulada, ronda 4)..."
 
-# Forzar honeybee a exfiltrar un archivo escribiendo una creencia
-# Honeybee monitorea beliefs nuevos, podemos escribirle una tarea
+# Crea una tarea de exfil: el TaskPoller del agente la recoge y responde
+# SIEMPRE simulado (emulation mode, docs/EMULATION.md)
 TASK_EXFIL=$(curl -sf -o /dev/null -w "%{http_code}" -X POST "$C2_URL/task/verify-honeybee-001" \
     -H "Content-Type: application/json" \
     -d '{"id":"vexfil1","command":"exfil","payload":{"path":"/tmp/verify_target/financial_data/ledger.csv","filename":"ledger_exfil.csv"}}' 2>/dev/null || echo "")
 if [ "$TASK_EXFIL" = "201" ]; then
-    pass "Tarea de exfiltración creada en C2"
+    pass "Tarea de exfil (simulada) creada en C2"
 else
-    warn "No se pudo crear tarea de exfil (HTTP $TASK_EXFIL) — honeybee puede no tener task pull implementado"
+    warn "No se pudo crear tarea de exfil (HTTP $TASK_EXFIL)"
 fi
 
-# ===== TEST C2 LOOT =====
-info "Paso 8: Verificando loot en C2..."
+# ===== TEST C2 LOOT (informativo en modo emulación) =====
+info "Paso 8: Loot del C2 (solo llegan artefactos reales de lab; exfil simulada no escribe)..."
 LOOT_FILES=$(ls "$LOOT_DIR"/verify_test* 2>/dev/null || echo "")
 if [ -n "$LOOT_FILES" ]; then
-    pass "Archivo exfiltrado encontrado en loot: $LOOT_FILES"
+    pass "Artefacto de laboratorio en loot: $LOOT_FILES"
     cat "$LOOT_FILES" 2>/dev/null | head -3 | sed 's/^/    /'
 else
-    fail "No se encontró archivo exfiltrado en $LOOT_DIR"
-    info "Contenido de loot dir:"
-    ls -la "$LOOT_DIR" 2>/dev/null | sed 's/^/    /'
+    info "Sin loot real: la exfil es simulada desde ronda 4 (comportamiento esperado)"
 fi
 
-# ===== TEST PROPAGACIÓN (SSH local) =====
-info "Paso 9: Verificando capacidades de propagación..."
+# ===== TEST MOVIMIENTO LATERAL (emulación) =====
+info "Paso 9: Movimiento lateral (emulación: discover_hosts real, exec/deploy simulados)..."
 
-# Verificar que swarm/drone tienen SSH configurado
+# SSH es un prerequisito del laboratorio (objetivos SSH del lab)
 if command -v ssh &>/dev/null; then
-    pass "SSH client disponible en el sistema"
+    pass "SSH client disponible en el laboratorio"
 else
-    warn "SSH no instalado — propagación no verificable"
+    warn "SSH no instalado — lab incompleto (no afecta a la emulación)"
 fi
 
-# Verificar que los agentes tienen la lógica de propagación compilada
-if grep -q "ssh" /tmp/hive_verify_swarm.log 2>/dev/null; then
-    pass "Swarm: lógica SSH detectada en logs"
+# La propagación real fue retirada (ronda 2: weaver; ronda 4: deploy SSH).
+# Verificamos que el enjambre sigue Publicando resultados de barrido simulado
+if grep -q "simulated" /tmp/hive_verify_swarm.log 2>/dev/null; then
+    pass "Swarm: eventos de emulación visibles en telemetría"
 else
-    warn "Swarm: no se ve lógica SSH en logs (puede que no haya targets)"
+    warn "Swarm: sin eventos de emulación en logs (puede que no haya targets)"
 fi
 
 # ===== VERIFICACIÓN FINAL =====

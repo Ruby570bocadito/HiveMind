@@ -21,11 +21,13 @@
 ---
 
 > [!IMPORTANT]
-> **Research & education project.** Hive Colony is a distributed-systems
-> engineering portfolio built around a security narrative. It is designed for
-> **isolated lab environments that you own**. The shipped configuration runs
-> with `safe_mode = true` and the exploits module **disabled**. Do not use it
-> against systems you are not explicitly authorized to test.
+> **Red-team swarm for labs you own.** Hive Colony is a red-team agent swarm
+> designed for **isolated lab environments that you own**. Since ronda 4 the
+> project follows an **emulation policy** ([docs/EMULATION.md](docs/EMULATION.md)):
+> enumeration is read-only, destructive effects (exfil, sabotage, persistence,
+> escalation) are always simulated with labelled telemetry, and no weaponized
+> code ships in the repository. The shipped configuration runs with
+> `safe_mode = true`.
 
 ## Why this project is interesting
 
@@ -96,14 +98,17 @@ cargo run -p beekeeper
 |-------|------|----------------------|
 | **Queen** | Overmind | HiveMind directive consensus, reputation ledger, Ollama LLM bridge, failover decisions |
 | **Worker** | Scout | System profiling, EDR/backup process detection (8 signatures on Linux, 34 on Windows), embedded Random-Forest classifier with heuristic fallback |
-| **Drone** | Shaper | Belief-driven decisions, host discovery, SSH propagation to lab targets, dead-agent regeneration |
-| **Honeybee** | Hoarder | Simulation-only action executor (encrypt/exfil/destroy are hard-disabled by design), remote shell, privesc module |
-| **Swarm** | Worm | Self-limiting spread: max hops, rate cap, TTL self-destruct, kill-switch aware |
+| **Drone** | Shaper | Belief-driven decisions, lab host discovery, dead-agent genome regeneration (in-memory) |
+| **Honeybee** | Hoarder | Emulation-only action executor (encrypt/exfil/destroy are hard-disabled by design), remote shell, privesc enumeration |
+| **Swarm** | Worm | Self-limiting spread logic: max hops, rate cap, TTL self-destruct, kill-switch aware |
 
 Every agent:
 
 - checks the colony-wide **kill switch** (`beekeeper kill-switch --confirm`)
   before anything else in its message loop,
+- runs the **TaskPoller** (ronda 4): pulls `GET /task/:agent_id` from the C2
+  and streams results back via `POST /beacon`, closing the operator loop
+  (shell tasks execute with audit; destructive tasks always simulate),
 - respects `hive.toml` (`HiveConfig::load()`) and its `[exploits] safe_mode`
   default of **true**,
 - shuts down cleanly when the Queen dies (the "death dance").
@@ -142,6 +147,7 @@ deploy/       Helm chart · docker compose labs
 | [docs/AGENTS.md](docs/AGENTS.md) | per-agent reference, message payloads, env vars |
 | [docs/OPERATOR_GUIDE.md](docs/OPERATOR_GUIDE.md) | environment variables, TUI, subcommands |
 | [docs/API.md](docs/API.md) | C2 HTTP/WS API (routes verified against code) |
+| [docs/EMULATION.md](docs/EMULATION.md) | emulation policy: what is real vs simulated |
 | [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) | build, test, conventions |
 | [docs/NAMING.md](docs/NAMING.md) | old ↔ current name mapping (Scout→Worker, …) |
 | [ROADMAP.md](ROADMAP.md) | known gaps and planned work |
@@ -151,15 +157,16 @@ deploy/       Helm chart · docker compose labs
 Kept public on purpose — a portfolio should know what it isn't:
 
 - The Windows agent paths compile but have no CI coverage or tested artifacts.
-- The C2 operator shell queues commands for agents (`/task/:agent_id`);
-  the agent-side task poller is the next feature on the [roadmap](ROADMAP.md).
 - `training/` ML scripts are real (sklearn/torch), but the converter from
   their export format to the runtime `.bin` model is pending — the shipped
   model is a pre-trained fixture.
 - `rlua` is archived upstream; migration to `mlua` is tracked in the roadmap.
-- Destructive actions are **hard-disabled**: honeybee's encrypt/exfiltrate/destroy
-  paths only simulate (independent of `safe_mode`), and the overmind
-  ransom-decision training dataset was removed from `training/` (2026-09-14).
+- Destructive/offensive effects are **emulation-only** across the whole
+  codebase (ronda 4): exfil, sabotage, persistence, escalation, evasion and
+  anti-forensics simulate with labelled telemetry;
+  [docs/EMULATION.md](docs/EMULATION.md) is the authoritative matrix.
+  Destructive actions were first hard-disabled in honeybee (2026-09-14,
+  ronda 1) and the overmind ransom-decision training dataset was removed.
 
 ## Security & ethics
 

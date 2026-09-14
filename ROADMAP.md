@@ -18,23 +18,26 @@ Prioritized list of known gaps and planned work. Items marked ✅ are done.
 
 ## P1 — next
 
-- [ ] **Agent-side C2 task poller**: agents currently receive commands through
-  the shared arena; the C2 shell (`/shell/:session_id`) queues tasks at
-  `GET /task/:agent_id` and streams results back, but no agent polls the HTTP
-  task queue yet. This is the last missing link of the operator shell.
+- [x] **Agent-side C2 task poller** (ronda 4): `hive_base::task_poller` polls
+  `GET /task/:agent_id`, executes under the emulation policy and streams
+  results back via `POST /beacon`; wired into all five agents via
+  `HIVE_C2_URL` / `HIVE_C2_API_KEY` / `HIVE_POLL_SECS`.
+- [x] **C2 hardening** (ronda 3): `x-api-key` auth (constant-time compare),
+  rate limiter, CORS allow-list, documented TLS reverse-proxy setup.
+- [x] **Emulation policy** (ronda 4): weaponized code removed (exploit
+  payloads, PE obfuscator, stagers, deploy vectors, NtCreateSection
+  machinery); tactics modules simulate with labelled telemetry;
+  [docs/EMULATION.md](docs/EMULATION.md) is the reference matrix.
 - [ ] **ML model converter**: script that converts the `training/` exports
   (`.onnx` / `.joblib` / `.json`) into the runtime `.bin` format consumed by
   `hive_base::ml::RandomForest::from_binary`, plus a test on roundtrip parity.
 - [ ] **Remove module theater or make it real**: `seer` feedback loop returns
   zeros (acknowledged in code), `reactive_llm::reactive_cycle` compiles a
   never-declared `variant.rs`, `io_uring_ops` has an incorrect ABI and no
-  callers, `stack_spoof` has no consumers. Each one: implement honestly or
-  delete.
+  callers. Each one: implement honestly or delete. (`stack_spoof` was
+  resolved by the ronda 4 emulation policy.)
 - [ ] **Split `hive_base` with cargo features** (`core`, `tactics`, `chaos`,
-  `cloud`, `telemetry-file`, `windows`) — 67 unconditioned `pub mod`s is too
-  much surface for one crate.
-- [ ] **C2 hardening**: optional bearer token on `/task` and `/admin/*`,
-  replace `CorsLayer::permissive()`, document a TLS reverse-proxy setup.
+  `cloud`, `telemetry-file`, `windows`) — still ~60 unconditioned `pub mod`s.
 - [ ] **`mlua` migration** (`rlua` is archived and emits a future-incompat note).
 - [ ] **Concurrency test suite for the arena**: loom-based tests for the
   ring buffer (multi-writer / multi-reader), reader/writer cursor invariants.

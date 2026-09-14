@@ -53,6 +53,7 @@ pub mod stigmergy;
 pub mod swarming;
 pub mod syscalls;
 pub mod system_info;
+pub mod task_poller;
 pub mod telemetry;
 pub mod tournament;
 pub mod utils;

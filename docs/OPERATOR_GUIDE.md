@@ -67,29 +67,32 @@ pip install -r requirements.txt
 ## 2. Quick Start
 
 ```
-PASO 1                           PASO 2                           PASO 3
+PASO 1                          PASO 2                          PASO 3
 ╔═══════════════════╗    ╔═══════════════════════╗    ╔══════════════════════╗
 ║                   ║    ║                       ║    ║                      ║
-║  cargo build      ║    ║  ./scripts/deploy.sh  ║    ║  ./scripts/          ║
-║  --release        ║───▶║  all                  ║───▶║  launch_colony.sh   ║
-║  --workspace      ║    ║                       ║    ║                      ║
-║                   ║    ║  payloads/listos/     ║    ║  Colonia corriendo!  ║
+║  ./hive.sh build  ║───▶║  ./hive.sh colony     ║───▶║  ./hive.sh tui       ║
+║                   ║    ║                       ║    ║                      ║
+║  todo el enjambre ║    ║  C2 + 6 agentes       ║    ║  operador conectado  ║
 ╚═══════════════════╝    ╚═══════════════════════╝    ╚══════════════════════╝
 ```
 
 ```bash
 # Paso 1: Compilar todo
-cargo build --release --workspace
+./hive.sh build
 
-# Paso 2: Generar payloads (4 vectores)
-./scripts/deploy.sh all
+# Paso 2: Desplegar colonia en Docker (C2 + agentes)
+./hive.sh colony
 
-# Paso 3: Desplegar localmente
-./scripts/launch_colony.sh
+# Paso 3: Conectar el TUI del operador
+./hive.sh tui
 
 # Verificar
 curl http://localhost:8444/health
 ```
+
+> Ronda 4: las herramientas de armado de payloads (`deploy.sh`,
+> `build_payload.sh`, `obfuscate_pe.py`) fueron retiradas. Las tácticas se
+> ejecutan en modo emulación — ver `docs/EMULATION.md`.
 
 ---
 
@@ -98,58 +101,15 @@ curl http://localhost:8444/health
 ```
 scripts/
 │
-├── deploy.sh          ◀── Generador de payloads
-│                        network | usb | phishing | exe
-│                        Flags: --windows, --obfuscate, --c2-host
-│
-├── build_payload.sh   ◀── Stager monolítico auto-extraíble
-│                        Un solo script con todo embebido
-│
 ├── launch_colony.sh   ◀── Despliegue local Docker
-│                        Lanza C2 + 6 agentes + dashboard
+│                        Lanza C2 + agentes + dashboard
 │
-├── obfuscate_pe.py    ◀── PE obfuscator v2.2
-│                        8 técnicas polimórficas
+├── lab_setup.sh       ◀── Preparación del laboratorio SSH
+│                        Objetivos de práctica aislados
 │
 └── scenario.sh        ◀── Tests de escenarios
-                         Validación de comportamiento
+                         Validación de comportamiento (simulado)
 ```
-
-### deploy.sh — Flags
-
-| Flag | Default | Descripción |
-|------|---------|-------------|
-| `--windows` | off | Genera payloads Windows (.exe) |
-| `--obfuscate` | off | Aplica PE obfuscation (requiere --windows) |
-| `--c2-host HOST` | `your-c2.com` | Hostname/IP del C2 |
-| `--c2-port PORT` | `8444` | Puerto del C2 |
-
-### build_payload.sh — Flags
-
-| Flag | Default | Descripción |
-|------|---------|-------------|
-| `--windows` | off | Stager para Windows |
-| `--obfuscate` | off | PE obfuscation en bins embebidos |
-| `--output FILE` | `hive_payload.sh` | Nombre del archivo generado |
-| `--c2-host HOST` | `your-c2.com` | C2 hostname |
-| `--c2-port PORT` | `8444` | C2 port |
-| `--no-compress` | off | Sin compresión GZip |
-
-### obfuscate_pe.py — Flags
-
-| Flag | Descripción |
-|------|-------------|
-| `-o OUTPUT` | Archivo de salida |
-| `--quiet` | Solo imprime SHA256 |
-| `--no-rename` | Desactiva sección renaming |
-| `--no-rich` | Desactiva Rich header scrub |
-| `--no-debug` | Desactiva debug directory kill |
-| `--no-overlay` | Desactiva overlay entrópico |
-| `--no-dummies` | Desactiva dummy sections |
-| `--no-cert` | Desactiva cert injection |
-| `--no-entropy` | Desactiva entropy normalization |
-| `--no-checksum` | Desactiva fix checksum |
-| `--cert-path PATH` | Ruta al certificado PKCS#7 |
 
 ---
 
@@ -192,8 +152,9 @@ threshold = 0.66
 |----------|---------|-----------|
 | `__HIVE_ARENA` | `/dev/shm/hive_arena` | Ruta del archivo de arena IPC |
 | `HIVE_C2_URL` | `https://c2:8444/collect` | Endpoint HTTP C2 |
-| `HIVE_C2_DNS_DOMAIN` | `tunnel.example.com` | Dominio para DNS tunnel |
-| `HIVE_C2_ICMP_TARGET` | `8.8.8.8` | Target para ICMP tunnel |
+| `HIVE_C2_API_KEY` | — | Clave si el C2 exige `x-api-key` (TaskPoller) |
+| `HIVE_POLL_SECS` | `10` | Intervalo del TaskPoller (mín. 2 s) |
+| `HIVE_LAB_AUTHORIZED` | — | `1` habilita ejecución fileless en lab autorizado |
 | `HIVE_LAB_MODE` | `0` | Modo laboratorio (1=simulado) |
 | `HIVE_TELEMETRY_DIR` | `/tmp/hive_telemetry` | Directorio de telemetría |
 | `HIVE_EXEC_TIMEOUT` | `30` | Timeout para comandos (s) |
@@ -296,14 +257,9 @@ for p in queen worker drone honeybee swarm c2-server; do
     cargo build --release --target x86_64-pc-windows-gnu -p "$p"
 done
 
-# 4. Generar payload Windows con ofuscación
-./scripts/deploy.sh exe --windows --obfuscate --c2-host tu-c2.com
-
-# Output: payloads/executable/
-# ├── loader.cs         C# loader
-# ├── queen.b64         Queen cifrado
-# ├── compile.sh        Compilación Linux
-# └── compile.bat       Compilación Windows
+# 4. Artefactos: la entrega de payloads armados fue retirada (ronda 4).
+#    Despliega los binarios del build directo en tu laboratorio o usa
+#    docker compose (ver DEPLOYMENT.md).
 ```
 
 ### Módulos Windows disponibles
@@ -360,10 +316,10 @@ rm -rf /tmp/.hive /tmp/.h /dev/shm/hive_arena
 |----------|---------------|----------|
 | `cargo build` falla | Falta OpenSSL | `apt install libssl-dev pkg-config` |
 | `cargo build --target windows` falla | Falta mingw | `./setup_cross.sh win` |
-| `deploy.sh` no encuentra bins | No compilaste | `cargo build --release --workspace` |
-| `--obfuscate` no funciona | Falta `--windows` | Usar `--windows --obfuscate` |
-| Cert injection falla | No estás en WSL | El cert se extrae de ntdll.dll en WSL |
 | Agente no conecta al C2 | Firewall | Verificar puerto 8444 accesible |
+| TaskPoller inactivo | Falta `HIVE_C2_URL` | Exportar `HIVE_C2_URL=http://127.0.0.1:8444` |
+| Tarea sin respuesta | Falta API key | Exportar `HIVE_C2_API_KEY` si el C2 exige `x-api-key` |
+| Fileless bloqueado | Política de lab | `HIVE_LAB_AUTHORIZED=1` en laboratorio autorizado |
 | Logs de agente vacíos | Modo oculto | `tail -f /tmp/hive_<agent>.log` |
 | Queen no lanza agentes | Arena no disponible | `ls -la /dev/shm/hive_arena` |
 | Docker no arranca | Puerto ocupado | `netstat -tlnp \| grep 8444` |
@@ -391,25 +347,21 @@ RUST_LOG=trace ./target/debug/queen
 # Compilar
 cargo build --release --workspace
 
-# Generar payload USB
-./scripts/deploy.sh usb
-
-# Generar EXE Windows ofuscado
-./scripts/deploy.sh exe --windows --obfuscate
-
-# Stager monolítico
-./scripts/build_payload.sh
-
-# Despliegue local
+# Despliegue local de la colonia
 ./scripts/launch_colony.sh
+
+# Ciclo de tareas del operador (ronda 4):
+curl -X POST http://localhost:8444/task/<agent_id> \
+  -H 'x-api-key: ...' -H 'Content-Type: application/json' \
+  -d '{"id":"t1","command":"shell","payload":"uptime"}'
+# El agente lo recoge por TaskPoller y responde vía beacon al shell del C2
 ```
 
 ### Documentación relacionada
 
 | Documento | Contenido |
-|-----------|-----------|
-| [DEPLOYMENT.md](DEPLOYMENT.md) | Guía detallada de todos los vectores |
+|-----------|----------|
+| [DEPLOYMENT.md](DEPLOYMENT.md) | Build y despliegue en laboratorio |
 | [AGENTS.md](AGENTS.md) | Referencia de cada agente |
 | [PLAYBOOK.md](PLAYBOOK.md) | Playbook operativo completo |
-| [EVASION.md](EVASION.md) | Técnicas de evasión implementadas |
-| [MITRE_MAPPING.md](MITRE_MAPPING.md) | Mapeo MITRE ATT&CK |
+| [EMULATION.md](EMULATION.md) | Política de emulación y técnicas simuladas |

