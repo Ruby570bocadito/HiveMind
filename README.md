@@ -14,20 +14,21 @@
   <img src="https://img.shields.io/badge/rust-stable%201.82%2B-000000?style=flat-square&logo=rust" alt="Rust"/>
   <img src="https://img.shields.io/badge/version-3.0.0-6C63FF?style=flat-square" alt="Version"/>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-6C63FF?style=flat-square" alt="MIT License"/></a>
-  <img src="https://img.shields.io/badge/tests-315%20passing-73d0a0?style=flat-square" alt="Tests"/>
+  <img src="https://img.shields.io/badge/tests-278%20passing-73d0a0?style=flat-square" alt="Tests"/>
   <img src="https://img.shields.io/badge/platform-linux%20x86__64%20%7C%20windows%20(partial)-0d1117?style=flat-square&logo=linux" alt="Platform"/>
 </p>
 
 ---
 
 > [!IMPORTANT]
-> **Red-team swarm for labs you own.** Hive Colony is a red-team agent swarm
-> designed for **isolated lab environments that you own**. Since ronda 4 the
-> project follows an **emulation policy** ([docs/EMULATION.md](docs/EMULATION.md)):
-> enumeration is read-only, destructive effects (exfil, sabotage, persistence,
-> escalation) are always simulated with labelled telemetry, and no weaponized
-> code ships in the repository. The shipped configuration runs with
-> `safe_mode = true`.
+> **Multi-agent swarm framework — real infrastructure, zero attack payloads.**
+> Hive Colony is a multi-agent swarm framework designed for **isolated lab
+> environments that you own**. Since ronda 6 the repository contains **no
+> offensive modules at all**: exploits, exfiltration, sabotage, credential
+> harvesting, persistence, evasion and anti-forensics were removed from the
+> codebase. What remains is the real engineering: shared-memory IPC, signed
+> message protocol, consensus, tasking, C2, telemetry and read-only system
+> enumeration.
 
 ## Why this project is interesting
 
@@ -45,8 +46,8 @@
 - **LLM optional, not required.** The Queen can consult a local Ollama model
   for strategy, and the whole colony degrades gracefully to heuristic mode
   when no model is present.
-- **Tested like a library, not a script.** 315 tests across four suites
-  (272 unit · 9 integration · 28 phase-A · 6 c2-server), two criterion benches,
+- **Tested like a library, not a script.** 278 tests across five suites
+  (229 unit · 9 integration · 34 lab/e2e · 6 c2-server), two criterion benches,
   and cargo-fuzz targets on the IPC and ring-buffer paths.
 
 ## Architecture
@@ -65,8 +66,8 @@ consensus engine tallies it. The C2 server is the *operator* boundary
 git clone https://github.com/Ruby570bocadito/HiveMind
 cd HiveMind
 
-./hive.sh build          # build all 11 crates
-./hive.sh test           # run the hive_base test suite (300+ tests)
+./hive.sh build          # build all 9 crates
+./hive.sh test           # run the hive_base test suite (270+ tests)
 
 ./hive.sh c2             # C2 server on http://localhost:8444
 ./hive.sh tui            # Beekeeper operator TUI (in another terminal)
@@ -100,8 +101,7 @@ cargo run -p beekeeper
 | **Queen** | Overmind | HiveMind directive consensus, reputation ledger, Ollama LLM bridge, failover decisions |
 | **Worker** | Scout | System profiling, EDR/backup process detection (8 signatures on Linux, 34 on Windows), embedded Random-Forest classifier with heuristic fallback |
 | **Drone** | Shaper | Belief-driven decisions, lab host discovery, dead-agent genome regeneration (in-memory) |
-| **Honeybee** | Hoarder | Emulation-only action executor (encrypt/exfil/destroy are hard-disabled by design), remote shell, privesc enumeration |
-| **Swarm** | Worm | Self-limiting spread logic: max hops, rate cap, TTL self-destruct, kill-switch aware |
+| **Honeybee** | Hoarder | Consensus participant, remote shell exec, in-memory genome snapshots (destructive actions removed from the build) |
 
 Every agent:
 
@@ -109,31 +109,31 @@ Every agent:
   before anything else in its message loop,
 - runs the **TaskPoller** (ronda 4): pulls `GET /task/:agent_id` from the C2
   and streams results back via `POST /beacon`, closing the operator loop
-  (shell tasks execute with audit; destructive tasks always simulate),
-- respects `hive.toml` (`HiveConfig::load()`) and its `[exploits] safe_mode`
-  default of **true**,
+  (shell tasks execute with audit; destructive/exfil task types are
+  **rejected**, ronda 6),
+- respects `hive.toml` (`HiveConfig::load()`),
 - shuts down cleanly when the Queen dies (the "death dance").
 
 ## Engineering quality
 
 | Area | Status |
 |------|--------|
-| Tests | **367 passing** — 326 unit + 41 integration (phase-A scenarios, arena regressions, no-TCP-port invariant; +9 new: C2 api-key auth, C2 rate limiter, config parse regressions) |
+| Tests | **278 passing** — 229 unit + 43 integration (phase-A scenarios, arena regressions, lab/e2e) + 6 c2-server (auth, rate limiter) |
 | CI | GitHub Actions: `cargo fmt --check`, `cargo clippy -D warnings`, full workspace build, release artifacts |
 | Fuzzing | `cargo-fuzz` targets: IPC contract validation, ring-buffer ops |
 | Benches | criterion: HTL throughput, IPC validation |
-| Lints | zero clippy warnings across all 10 crates |
+| Lints | zero clippy warnings across all 9 crates |
 | Config | single `hive.toml`, loaded by every agent, loud failures on parse errors |
 
 Repository layout:
 
 ```
 hive_base/    shared library: arena IPC, LdC protocol, consensus, telemetry,
-              config, tactics modules (67 modules)
-agents/       queen · worker · drone · honeybee · swarm
+              config (45 modules)
+agents/       queen · worker · drone · honeybee
 c2/           Rust C2 server (axum + SQLite, :8444)
 beekeeper/    operator TUI (ratatui + Lua scripting)
-stinger/      dropper: fileless agent execution via memfd
+stinger/      launcher: fileless agent execution via memfd (lab-gated)
 buzz/         dev harness: boots a local colony, tears it down
 training/     Python ML: dataset gen, RF classifier, DQN/PPO experiments
 tests/        end-to-end lab scripts + Python reference C2
@@ -148,7 +148,7 @@ deploy/       Helm chart · docker compose labs
 | [docs/AGENTS.md](docs/AGENTS.md) | per-agent reference, message payloads, env vars |
 | [docs/OPERATOR_GUIDE.md](docs/OPERATOR_GUIDE.md) | environment variables, TUI, subcommands |
 | [docs/API.md](docs/API.md) | C2 HTTP/WS API (routes verified against code) |
-| [docs/EMULATION.md](docs/EMULATION.md) | emulation policy: what is real vs simulated |
+| [docs/CAPABILITIES.md](docs/CAPABILITIES.md) | capability matrix: what is real, what is gated |
 | [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) | build, test, conventions |
 | [docs/NAMING.md](docs/NAMING.md) | old ↔ current name mapping (Scout→Worker, …) |
 | [ROADMAP.md](ROADMAP.md) | known gaps and planned work |
@@ -162,18 +162,19 @@ Kept public on purpose — a portfolio should know what it isn't:
   their export format to the runtime `.bin` model is pending — the shipped
   model is a pre-trained fixture.
 - `rlua` is archived upstream; migration to `mlua` is tracked in the roadmap.
-- Destructive/offensive effects are **emulation-only** across the whole
-  codebase (ronda 4): exfil, sabotage, persistence, escalation, evasion and
-  anti-forensics simulate with labelled telemetry;
-  [docs/EMULATION.md](docs/EMULATION.md) is the authoritative matrix.
-  Destructive actions were first hard-disabled in honeybee (2026-09-14,
-  ronda 1) and the overmind ransom-decision training dataset was removed.
+- Destructive/offensive capabilities **do not exist** in this codebase
+  (ronda 6): exploits, exfiltration, sabotage, credential harvesting,
+  persistence, evasion and anti-forensics were **deleted**, not emulated
+  (history: hard-disabled in ronda 1, emulated in rondas 4–5, removed in
+  ronda 6). [docs/CAPABILITIES.md](docs/CAPABILITIES.md) is the matrix of
+  what remains.
 
 ## Security & ethics
 
 - **Target only systems you own or have written authorization to test.**
-- The repository ships `safe_mode = true`; enabling the exploits module is an
-  explicit, per-lab decision documented in [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
+- The repository contains no offensive modules; nothing to enable. The C2
+  enforces optional `x-api-key` auth, per-IP rate limiting and closed CORS
+  by default.
 - All credentials in `docker/` are throwaway lab credentials; no secrets are
   committed (a lab SSH keypair is generated at image build time).
 - The kill switch (`beekeeper kill-switch --confirm`) is the operator's

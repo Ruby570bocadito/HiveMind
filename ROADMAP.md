@@ -26,18 +26,23 @@ Prioritized list of known gaps and planned work. Items marked ✅ are done.
   rate limiter, CORS allow-list, documented TLS reverse-proxy setup.
 - [x] **Emulation policy** (ronda 4): weaponized code removed (exploit
   payloads, PE obfuscator, stagers, deploy vectors, NtCreateSection
-  machinery); tactics modules simulate with labelled telemetry;
-  [docs/EMULATION.md](docs/EMULATION.md) is the reference matrix.
+  machinery); tactics modules simulate with labelled telemetry. Superseded
+  by the ronda 6 removal — see [docs/CAPABILITIES.md](docs/CAPABILITIES.md).
+- [x] **Remove module theater or make it real** (ronda 6): the owner decided
+  "real or delete" — all simulated/offensive modules were **deleted**
+  (exploits, exfil, nectar, leech, saboteur, kerberos, smb, hades_gate,
+  stack_spoof, anti_analysis, anti_forensics, cloud_worker, honeycomb,
+  seer, channel_rotator, death_dance, swarm worm agent, C2 /collect loot
+  endpoint, syscalls::windows). `reactive_llm::reactive_cycle` and
+  `io_uring_ops` ABI remain as P1 cleanup items.
 - [ ] **ML model converter**: script that converts the `training/` exports
   (`.onnx` / `.joblib` / `.json`) into the runtime `.bin` format consumed by
   `hive_base::ml::RandomForest::from_binary`, plus a test on roundtrip parity.
-- [ ] **Remove module theater or make it real**: `seer` feedback loop returns
-  zeros (acknowledged in code), `reactive_llm::reactive_cycle` compiles a
-  never-declared `variant.rs`, `io_uring_ops` has an incorrect ABI and no
-  callers. Each one: implement honestly or delete. (`stack_spoof` was
-  resolved by the ronda 4 emulation policy.)
-- [ ] **Split `hive_base` with cargo features** (`core`, `tactics`, `chaos`,
-  `cloud`, `telemetry-file`, `windows`) — still ~60 unconditioned `pub mod`s.
+- [ ] **Fix or delete the remaining dead paths**: `reactive_llm::reactive_cycle`
+  compiles a never-declared `variant.rs`, and `io_uring_ops` has an incorrect
+  ABI with no callers. Each one: implement honestly or delete.
+- [ ] **Split `hive_base` with cargo features** (`core`, `telemetry`,
+  `windows`) — fewer unconditioned `pub mod`s after the ronda 6 purge.
 - [ ] **`mlua` migration** (`rlua` is archived and emits a future-incompat note).
 - [ ] **Concurrency test suite for the arena**: loom-based tests for the
   ring buffer (multi-writer / multi-reader), reader/writer cursor invariants.

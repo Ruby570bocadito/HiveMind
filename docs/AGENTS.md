@@ -298,7 +298,7 @@ max_concurrent_infections = 5
 > 2026-09-14 a petición del propietario. Ese mismo día (ronda 3) el
 > módulo `chrononaut` completo y el módulo `propaganda` (phishing con
 > IA) se eliminaron de `hive_base`. En la ronda 4 la política se extendió
-> a TODO el enjambre (matriz en `docs/EMULATION.md`): exfil, sabotaje,
+> a TODO el enjambre (matriz en `docs/CAPABILITIES.md`): exfil, sabotaje,
 > persistencia, escalada, evasión y anti-forense son simulados con
 > telemetría etiquetada. Independiente de `safe_mode`:
 > las acciones se registran como simuladas y publican telemetría
@@ -490,3 +490,12 @@ safe_ips = ["192.168.1.100", "192.168.1.1"]
 > `honeycomb` pasa a EMULADO: persistencia y EFI sin escrituras; desinstalación
 > quirúrgica de remediación (sin `crontab -r`) que respeta
 > `HIVE_PERSISTENCE_DRY_RUN=1`.
+
+> **Nota ronda 6 (2026-09-14):** ELIMINACIÓN total de módulos ofensivos y
+> simulados por decisión del propietario ("hazlo real o elimínalo"): exploits,
+> exfil, nectar, leech, saboteur, kerberos, smb, hades_gate, stack_spoof,
+> anti_analysis, anti_forensics, cloud_worker, honeycomb, seer,
+> channel_rotator, death_dance, agente worm (swarm), `syscalls::windows` y el
+> endpoint `POST /collect` del C2. Podas: privesc (solo scan), lateral (solo
+> discover_hosts), phoenix (solo genoma en memoria), swarming (solo decisión).
+> TaskPoller: tareas destructivas → `rejected`. Matriz: `docs/CAPABILITIES.md`.

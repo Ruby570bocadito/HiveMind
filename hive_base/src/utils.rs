@@ -40,19 +40,10 @@ pub fn init_logging(agent_name: &str) {
     }
 }
 
-/// Initialize agent with anti-analysis checks.
-/// Returns false if the environment appears dangerous (debugger, sandbox, VM).
-/// If unsafe, the agent can choose to lie dormant or use conservative behavior.
+/// Initialize agent logging (ronda 6: sin anti-analysis ni delays evasivos).
 pub fn safe_init(agent_name: &str) -> bool {
     init_logging(agent_name);
-
-    // Random delay to evade timing-based sandbox detection
-    let delay = random_delay(1, 10);
-    std::thread::sleep(std::time::Duration::from_secs(delay));
-
-    // Run anti-analysis
-
-    crate::anti_analysis::AntiAnalysis::is_safe()
+    true
 }
 
 pub fn timestamp_now() -> u64 {

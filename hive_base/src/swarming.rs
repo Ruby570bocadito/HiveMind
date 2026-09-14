@@ -1,6 +1,9 @@
-// Swarming: when the colony reaches critical mass on one host,
-// it splits — half the agents migrate to a new host and form a new hive.
-// Like a bee colony swarming to establish a new nest.
+// Swarming: decisiones internas de la colonia sobre división de carga.
+//
+// Ronda 6: la migración real entre hosts (SSH + harvesting de claves) fue
+// ELIMINADA junto con los módulos `lateral` (exec_ssh) y `leech`. Lo que
+// queda es la lógica de decisión/umbral y la señal interna `swarm_initiate`
+// (mensaje LdC de la arena), sin ningún transporte de propagación.
 
 use crate::ldc::{Message, Role};
 use tracing::info;
@@ -23,7 +26,7 @@ impl Default for SwarmConfig {
     }
 }
 
-/// Result of a swarm attempt.
+/// Result of a swarm decision.
 pub struct SwarmResult {
     pub success: bool,
     pub new_host: String,
@@ -31,8 +34,12 @@ pub struct SwarmResult {
     pub reason: String,
 }
 
-/// Execute a colony split: migrate half the agents to a new host.
-pub fn initiate_swarm(
+/// Evalúa si la colonia alcanzaría el umbral de división en `target_host`.
+///
+/// Ronda 6: NO ejecuta ninguna migración (no hay transporte de propagación en
+/// el build). Solo comprueba umbrales y el gate BRAIN, y devuelve la decisión
+/// documental para que la telemetría/consenso la registren.
+pub fn evaluate_swarm(
     current_agent_count: usize,
     target_host: &str,
     config: &SwarmConfig,
@@ -52,47 +59,18 @@ pub fn initiate_swarm(
         });
     }
 
-    // Try SSH to target
-    let keys = crate::harvest_credentials();
-    let has_keys = keys.iter().any(|(_, kd, _)| kd.contains("PRIVATE KEY"));
-
-    if !has_keys {
-        return Some(SwarmResult {
-            success: false,
-            new_host: target_host.to_string(),
-            migrated_agents: 0,
-            reason: "No SSH keys available".into(),
-        });
-    }
-
-    // Deploy stinger to new host
-    let deploy_result = crate::exec_ssh(target_host, "root", "cat /proc/loadavg", None, None);
-
-    if !deploy_result.success {
-        return Some(SwarmResult {
-            success: false,
-            new_host: target_host.to_string(),
-            migrated_agents: 0,
-            reason: format!("SSH failed: {}", deploy_result.output),
-        });
-    }
-
     let half = current_agent_count / 2;
 
     info!(
-        "SWARMING: colony splitting → {} agents migrating to {}",
+        "SWARMING: umbral de división alcanzado — decisión documental: {} agentes migrarían a {} (sin transporte de propagación en el build)",
         half, target_host
     );
 
     Some(SwarmResult {
-        success: true,
+        success: false,
         new_host: target_host.to_string(),
         migrated_agents: half,
-        reason: format!(
-            "Colony split: {} agents remain, {} migrate",
-            current_agent_count - half,
-            half
-        ),
+        reason: "decisional only: no propagation transport exists (ronda 6)".into(),
     })
 }
 
@@ -122,7 +100,17 @@ mod tests {
     #[test]
     fn test_swarm_below_threshold() {
         let cfg = SwarmConfig::default();
-        assert!(initiate_swarm(3, "10.0.0.1", &cfg).is_none());
+        assert!(evaluate_swarm(3, "10.0.0.1", &cfg).is_none());
+    }
+
+    #[test]
+    fn test_swarm_decisional_never_succeeds() {
+        // Ronda 6: la decisión nunca implica migración real.
+        let cfg = SwarmConfig::default();
+        if let Some(r) = evaluate_swarm(10, "10.99.99.99", &cfg) {
+            assert!(!r.success);
+            assert!(r.reason.contains("no propagation transport"));
+        }
     }
 
     #[test]

@@ -1,15 +1,17 @@
 #!/bin/bash
-# Hive Colony v3.0 — Full APT Campaign Orchestrator
-# Simula una campaña completa de 5 fases contra un laboratorio.
+# Hive Colony v3.0 — Colony Lifecycle Orchestrator (ronda 6)
+# Ejecuta el ciclo de vida completo de la colonia en un laboratorio propio:
+# lanzamiento, reconocimiento, consenso y C2. Sin módulos ofensivos ni
+# simulados (eliminados en ronda 6).
 #
 # Uso:
 #   ./scripts/scenario.sh [--target <ip>] [--quick] [--cleanup] [--report]
 #
 # Flags:
-#   --target   IP del host víctima (default: 127.0.0.1)
+#   --target   IP del lab (default: 127.0.0.1)
 #   --quick    Ejecuta todas las fases sin pausas
-#   --cleanup  Limpia todos los rastros de la campaña
-#   --report   Genera reporte Markdown de resultados
+#   --cleanup  Limpia rastros del lab
+#   --report   Muestra el reporte Markdown al final
 
 set -euo pipefail
 trap 'echo "[!] Escenario interrumpido en línea $LINENO"; exit 1' ERR
@@ -19,7 +21,7 @@ QUICK=false
 CLEANUP=false
 REPORT=false
 ARENA="hive_campaign_$(date +%s)"
-LOOT_DIR="./loot/campaign_$(date +%Y%m%d_%H%M%S)"
+OUT_DIR="./loot/campaign_$(date +%Y%m%d_%H%M%S)"
 HIVE_BIN="./target/release"
 
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'
@@ -51,129 +53,111 @@ phase_sleep() {
 
 phase_prepare() {
     info "=== FASE 0: Preparación del entorno ==="
-    for bin in worker drone honeybee queen stinger beekeeper; do
+    for bin in worker drone honeybee queen beekeeper; do
         if [[ ! -f "$HIVE_BIN/$bin" ]]; then
             err "Binario no encontrado: $HIVE_BIN/$bin"
-            info "Ejecuta: source build_env.sh && cargo build --release --workspace"
+            info "Ejecuta: cargo build --release -p $bin"
             exit 1
         fi
     done
     ok "Todos los binarios presentes"
-    mkdir -p "$LOOT_DIR"
+    mkdir -p "$OUT_DIR"
     export __HIVE_ARENA="$ARENA"
-    export HIVE_C2_URL="http://localhost:8443/collect"
+    export HIVE_C2_URL="http://localhost:8443/beacon"
 
     if ! pgrep -f "c2_server.py" >/dev/null 2>&1; then
         python3 tests/c2_server.py --port 8443 &
         sleep 2
-        ok "C2 server iniciado en puerto 8443"
+        ok "C2 de referencia iniciado en puerto 8443"
     fi
 
-    mkdir -p /tmp/financial_data /tmp/.aws /tmp/.kube
-    echo 'account,balance,limit
-1001,1250000,500000
-1002,3400000,1000000' > /tmp/financial_data/accounts.csv
-    echo 'server { listen 80; timeout 30; }' > /tmp/nginx.conf
-    echo 'AWS_ACCESS_KEY=AKIA123456789EXAMPLE' > /tmp/.aws/credentials
-
-    ok "Entorno preparado — Arena: $ARENA | Target: $TARGET"
+    ok "Entorno preparado — Arena: $ARENA | Lab: $TARGET"
 }
 
-phase_infiltrate() {
-    info "=== FASE 1: Infiltración (Stinger) ==="
-    export __HIVE_ARENA="$ARENA"
-    "$HIVE_BIN/stinger" &
-    phase_sleep 3
-    echo "[FASE1] Stinger deployed" >> "$LOOT_DIR/campaign.log"
-    ok "Stinger desplegó agentes fileless"
-}
-
-phase_recon() {
-    info "=== FASE 2: Reconocimiento (Worker + Drone + Seer) ==="
+phase_launch() {
+    info "=== FASE 1: Lanzamiento de la colonia ==="
     export __HIVE_ARENA="$ARENA"
     "$HIVE_BIN/worker" &
     phase_sleep 2
     "$HIVE_BIN/drone" &
-    phase_sleep 5
-    echo "[FASE2] Worker+Drone+Seer active" >> "$LOOT_DIR/campaign.log"
-    ok "Reconocimiento completado — Seer prediciendo detección"
+    phase_sleep 2
+    echo "[FASE1] worker+drone lanzados" >> "$OUT_DIR/campaign.log"
+    ok "Worker y Drone activos sobre la arena IPC"
 }
 
-phase_sabotage_exfil() {
-    info "=== FASE 3: Sabotaje + Exfiltración ==="
+phase_recon() {
+    info "=== FASE 2: Reconocimiento (solo lectura) ==="
+    export __HIVE_ARENA="$ARENA"
+    phase_sleep 5
+    echo "[FASE2] system profile + propuestas" >> "$OUT_DIR/campaign.log"
+    ok "Worker publica perfil del sistema; Drone propone acciones internas"
+}
+
+phase_consensus() {
+    info "=== FASE 3: Consenso + C2 ==="
     export __HIVE_ARENA="$ARENA"
     "$HIVE_BIN/honeybee" &
-    phase_sleep 5
-    echo "[FASE3] Sabotage+Exfil(simulado)" >> "$LOOT_DIR/campaign.log"
-    ok "Sabotaje + exfiltración simulada (Chrononaut eliminado en ronda 3)"
-}
-
-phase_persistence() {
-    info "=== FASE 4: Persistencia + Evolución ==="
-    export __HIVE_ARENA="$ARENA"
+    phase_sleep 3
     "$HIVE_BIN/queen" &
     phase_sleep 5
-    echo "[FASE4] Phoenix+Tournament+HiveMind" >> "$LOOT_DIR/campaign.log"
-    ok "Queen activa — torneos darwinianos + HiveMind consenso"
+    echo "[FASE3] honeybee+queen activas" >> "$OUT_DIR/campaign.log"
+    ok "Queen activa — HiveMind consenso + TaskPoller + shell del operador"
 }
 
-phase_evasion() {
-    info "=== FASE 5: Evasión + Reporte ==="
-    export __HIVE_ARENA="$ARENA"
-    phase_sleep 3
+phase_report() {
+    info "=== FASE 4: Reporte ==="
 
-    cat > "$LOOT_DIR/reporte_campana.md" << REOF
-# Reporte Campaña Hive Colony v3.0
+    cat > "$OUT_DIR/reporte_campana.md" << REOF
+# Reporte Colonia Hive Colony v3.0 (ronda 6)
 
 **Fecha:** $(date)
-**Target:** $TARGET
+**Lab:** $TARGET
 **Arena:** $ARENA
 
 ## Fases
-| Fase | Módulo | Estado |
-|------|--------|--------|
-| 1. Infiltración | Stinger | ✅ |
-| 2. Reconocimiento | Worker + Drone + Seer | ✅ |
-| 3. Sabotaje | Saboteur | ✅ |
-| 3. Exfiltración | Honeybee (simulado) | ✅ |
-| 4. Persistencia | Phoenix | ✅ |
-| 4. Evolución | Tournament + HiveMind | ✅ |
-| 5. Evasión | WhisperNet | ✅ |
+| Fase | Componente | Estado |
+|------|------------|--------|
+| 1. Lanzamiento | worker + drone (arena IPC) | ✅ |
+| 2. Reconocimiento | system profile (solo lectura) | ✅ |
+| 3. Consenso | HiveMind + Tournament | ✅ |
+| 3. C2 | TaskPoller + beacons + shell operador | ✅ |
+| 4. Transporte | WhisperNet P2P + failover multi-canal | ✅ |
 
-## Técnicas MITRE ATT&CK
-$(grep -oP 'id: "\K[^"]+' hive_base/src/attack.rs | head -30 | sed 's/^/- /')
+## Nota
+El build no contiene módulos ofensivos ni simulados (ronda 6):
+exploits, exfiltración, sabotaje, recolección de credenciales,
+persistencia y evasión fueron eliminados del repositorio.
 REOF
-    echo "[FASE5] Reporte generado" >> "$LOOT_DIR/campaign.log"
-    ok "Reporte: $LOOT_DIR/reporte_campana.md"
+    echo "[FASE4] Reporte generado" >> "$OUT_DIR/campaign.log"
+    ok "Reporte: $OUT_DIR/reporte_campana.md"
 }
 
 cleanup() {
     info "=== CLEANUP ==="
-    for proc in stinger worker drone honeybee queen beekeeper; do
+    for proc in worker drone honeybee queen beekeeper; do
         pkill -f "$HIVE_BIN/$proc" 2>/dev/null || true
     done
     pkill -f "c2_server.py" 2>/dev/null || true
-    rm -rf /dev/shm/colmena_* /dev/shm/hive_* /dev/shm/.hive_* /dev/shm/.hive_genome 2>/dev/null || true
+    rm -rf /dev/shm/colmena_* /dev/shm/hive_* /dev/shm/.hive_* 2>/dev/null || true
     ok "Cleanup completado"
 }
 
 main() {
     parse_args "$@"
     echo -e "${CYAN}╔════════════════════════════════════╗${NC}"
-    echo -e "${CYAN}║   Hive Colony v3.0 — APT Campaign  ║${NC}"
+    echo -e "${CYAN}║  Hive Colony v3.0 — Colony Lab     ║${NC}"
     echo -e "${CYAN}╚════════════════════════════════════╝${NC}"
 
     if $CLEANUP; then cleanup; exit 0; fi
 
     phase_prepare;  phase_sleep 2
-    phase_infiltrate; phase_sleep 3
+    phase_launch; phase_sleep 3
     phase_recon;    phase_sleep 3
-    phase_sabotage_exfil; phase_sleep 3
-    phase_persistence; phase_sleep 3
-    phase_evasion
+    phase_consensus; phase_sleep 3
+    phase_report
 
-    echo -e "${GREEN}CAMPAÑA COMPLETADA — Reporte: $LOOT_DIR/reporte_campana.md${NC}"
-    $REPORT && cat "$LOOT_DIR/reporte_campana.md"
+    echo -e "${GREEN}CICLO COMPLETADO — Reporte: $OUT_DIR/reporte_campana.md${NC}"
+    $REPORT && cat "$OUT_DIR/reporte_campana.md"
 }
 
 main "$@"

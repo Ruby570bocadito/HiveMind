@@ -14,9 +14,13 @@
 //! - `HIVE_C2_API_KEY` — si el C2 exige `x-api-key`.
 //! - `HIVE_POLL_SECS` — intervalo de sondeo (por defecto 10 s).
 //!
-//! Política de ejecución (ronda 4):
-//! - `shell`: se ejecuta con auditoría completa (función operadora del C2).
-//! - `exfil`, y cualquier comando destructivo: SIEMPRE simulado.
+//! Política de ejecución (ronda 6, tras eliminación de los módulos de
+//! simulación ofensiva):
+//! - `shell`/`shell_exec`: se ejecuta con auditoría completa (función operadora
+//!   del C2).
+//! - `exfil` y cualquier comando destructivo: RECHAZADO (`rejected`) — la
+//!   capacidad no existe en el enjambre.
+//! - Resto: `unsupported`.
 use serde::{Deserialize, Serialize};
 use tracing::{info, warn};
 use uuid::Uuid;
@@ -166,7 +170,7 @@ impl TaskPoller {
         }
     }
 
-    /// Ejecuta una tarea localmente bajo la política de emulación (ronda 4).
+    /// Ejecuta una tarea localmente bajo la política de la ronda 6.
     pub fn execute(&self, task: &C2Task) -> TaskOutcome {
         let base = |status: &str, output: String, shell_session: Option<String>| TaskOutcome {
             task_id: task.id.clone(),
@@ -219,22 +223,17 @@ impl TaskPoller {
                         .map(|s| s.to_string()),
                 )
             }
-            "exfil" => base(
-                "simulated",
-                "simulated: exfiltration disabled (emulation mode, ronda 4)".into(),
-                None,
-            ),
-            "encrypt" | "wipe" | "destroy" | "sabotage" => base(
-                "simulated",
+            "exfil" | "encrypt" | "wipe" | "destroy" | "sabotage" => base(
+                "rejected",
                 format!(
-                    "simulated: destructive command '{}' disabled (emulation mode, ronda 4)",
+                    "rejected: task type '{}' not supported by this colony (destructive/exfil capability removed, ronda 6)",
                     task.command
                 ),
                 None,
             ),
             other => base(
                 "unsupported",
-                format!("unsupported command '{other}' (emulation mode)"),
+                format!("unsupported command '{other}'"),
                 None,
             ),
         }
@@ -306,30 +305,18 @@ mod tests {
     }
 
     #[test]
-    fn destructive_commands_are_always_simulated() {
+    fn destructive_and_exfil_commands_are_rejected() {
         let p = poller();
-        for cmd in ["encrypt", "wipe", "destroy", "sabotage"] {
+        for cmd in ["encrypt", "wipe", "destroy", "sabotage", "exfil"] {
             let task = C2Task {
                 id: "t1".into(),
                 command: cmd.into(),
                 payload: serde_json::json!({ "path": "/tmp/x" }),
             };
             let out = p.execute(&task);
-            assert_eq!(out.status, "simulated", "{cmd} debe ser simulado");
-            assert!(out.output.contains("emulation mode"), "{cmd} debe etiquetarse");
+            assert_eq!(out.status, "rejected", "{cmd} debe rechazarse");
+            assert!(out.output.contains("rejected"), "{cmd} debe etiquetarse");
         }
-    }
-
-    #[test]
-    fn exfil_is_simulated() {
-        let p = poller();
-        let task = C2Task {
-            id: "t2".into(),
-            command: "exfil".into(),
-            payload: serde_json::json!({ "path": "/tmp/secret.csv" }),
-        };
-        let out = p.execute(&task);
-        assert_eq!(out.status, "simulated");
     }
 
     #[test]
@@ -342,7 +329,6 @@ mod tests {
         };
         let out = p.execute(&task);
         assert_eq!(out.status, "unsupported");
-        assert!(out.output.contains("emulation mode"));
     }
 
     #[test]

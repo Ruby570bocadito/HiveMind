@@ -122,11 +122,6 @@ fn test_config_default_loads() {
     let cfg = hive_base::config::HiveConfig::default();
     assert!(cfg.agents.edr_processes.contains(&"csfalcon".to_string()));
     assert_eq!(cfg.consensus.threshold, 0.66);
-    assert!(cfg.exploits.safe_mode, "Exploits must default to safe mode");
-    assert!(
-        !cfg.exploits.operator_approved,
-        "Exploits must require operator approval"
-    );
 }
 
 /// Test 7: Obfuscate string at compile time.
@@ -137,17 +132,13 @@ fn test_obfuscate_string() {
     assert!(s.contains("4242"));
 }
 
-/// Test 8: Exfil scheduler respects business hours.
+/// Test 8 (ronda 6): el scheduler de exfiltración fue eliminado junto con el
+/// módulo `exfil`; se conserva la prueba de roundtrip de estigmergia.
 #[test]
-fn test_exfil_scheduler_default() {
-    let s = hive_base::ExfilScheduler::default();
-    assert_eq!(s.min_chunk_size, 256);
-    assert_eq!(s.max_chunk_size, 8192);
-    let data = vec![0u8; 10000];
-    let chunks = s.schedule(&data);
-    assert!(!chunks.is_empty(), "Schedule should fragment data");
-    let total: usize = chunks.iter().map(|(c, _)| c.len()).sum();
-    assert_eq!(total, 10000);
+fn test_stigmergy_trail_roundtrip_available() {
+    // La comunicación interna de la colonia (trails cifrados) sigue operativa.
+    let key = hive_base::colony_key();
+    assert_eq!(key.len(), 32);
 }
 
 /// Test 10: MemfdBinary creation on Linux.

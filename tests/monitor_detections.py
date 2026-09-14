@@ -9,11 +9,8 @@ Chequea:
   2. Memoria compartida (/dev/shm colmena_*, hive_*)
   3. Firmas de procesos (worker, drone, honeybee, etc.)
   4. Archivos xattr (stigmergy)
-  5. Mutación de datos (saboteur)
-  6. Fragmentos de genoma (phoenix)
-  7. Cápsulas chrononaut
-  8. Conexiones de red
-  9. Modificaciones de timestamps
+  5. Fragmentos de genoma (phoenix)
+  6. Conexiones de red
 """
 
 import os, re, sys, time, json, argparse, subprocess
@@ -36,11 +33,6 @@ DETECTION_RULES = {
         "description": "Procesos Hive en ejecución (worker/drone/honeybee/queen)",
         "check": check_hive_processes,
     },
-    "saboteur_data_mutation": {
-        "severity": "HIGH",
-        "description": "Mutación de datos financieros/CSV/JSON (Saboteur)",
-        "check": check_data_integrity,
-    },
     "phoenix_genome_fragments": {
         "severity": "MEDIUM",
         "description": "Fragmentos de genoma ocultos (Phoenix en /dev/shm/.hive*)",
@@ -52,11 +44,6 @@ DETECTION_RULES = {
         "severity": "LOW",
         "description": "Atributos extendidos xattr (Stigmergy en /bin/ls, /bin/ps)",
         "check": check_stigmergy_xattr,
-    },
-    "chrononaut_timestamp_anomaly": {
-        "severity": "MEDIUM",
-        "description": "Anomalías en timestamps de archivos (Chrononaut capsules)",
-        "check": check_timestamp_anomalies,
     },
     "whispernet_p2p": {
         "severity": "MEDIUM",
@@ -92,24 +79,6 @@ def check_hive_processes():
         return sum(1 for line in r.stdout.split('\n') if any(a in line.lower() for a in agents))
     except: return 0
 
-def check_data_integrity():
-    """Busca mutaciones de Saboteur en CSVs."""
-    findings = 0
-    for csv in Path("/tmp").rglob("*.csv"):
-        try:
-            data = csv.read_text()
-            # Saboteur inserta filas corruptas o modifica balances
-            if "nan" in data.lower() or "null" in data.lower() or "ERROR" in data:
-                findings += 1
-        except: pass
-    for json_f in Path("/tmp").rglob("*.json"):
-        try:
-            data = json_f.read_text()
-            if "corrupted" in data.lower() or "TAMPERED" in data:
-                findings += 1
-        except: pass
-    return findings > 0
-
 def check_stigmergy_xattr():
     try:
         for bin_path in ["/bin/ls", "/bin/ps", "/usr/bin/ssh", "/bin/bash"]:
@@ -119,18 +88,6 @@ def check_stigmergy_xattr():
                 return True
     except: pass
     return False
-
-def check_timestamp_anomalies():
-    """Chrononaut codifica timestamps futuros en mtime."""
-    anomalies = 0
-    now = time.time()
-    try:
-        for log in Path("/var/log").rglob("*.log") if Path("/var/log").exists() else []:
-            mtime = log.stat().st_mtime
-            if mtime > now + 3600 or mtime < 1000000000:
-                anomalies += 1
-    except: pass
-    return anomalies > 0
 
 def check_whispernet_traffic():
     try:

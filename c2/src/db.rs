@@ -18,16 +18,6 @@ impl Db {
     fn migrate(&self) -> Result<()> {
         self.conn.execute_batch(
             "
-            CREATE TABLE IF NOT EXISTS exfils (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                timestamp INTEGER NOT NULL,
-                agent_id TEXT NOT NULL,
-                agent_role TEXT NOT NULL,
-                filename TEXT NOT NULL,
-                size INTEGER NOT NULL,
-                sha256 TEXT NOT NULL,
-                filepath TEXT NOT NULL
-            );
             CREATE TABLE IF NOT EXISTS beacons (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 timestamp INTEGER NOT NULL,
@@ -51,7 +41,6 @@ impl Db {
             );
             CREATE INDEX IF NOT EXISTS idx_tasks_agent ON tasks(agent_id, claimed);
             CREATE INDEX IF NOT EXISTS idx_beacons_ts ON beacons(timestamp DESC);
-            CREATE INDEX IF NOT EXISTS idx_exfils_ts ON exfils(timestamp DESC);
             ",
         )?;
         Ok(())
@@ -62,33 +51,6 @@ impl Db {
             .duration_since(UNIX_EPOCH)
             .map(|d| d.as_secs() as i64)
             .unwrap_or(0)
-    }
-
-    pub fn record_exfil(
-        &self,
-        agent_id: &str,
-        agent_role: &str,
-        filename: &str,
-        size: usize,
-        sha256: &str,
-        filepath: &Path,
-    ) {
-        let ts = Self::now();
-        if let Err(e) = self.conn.execute(
-            "INSERT INTO exfils (timestamp, agent_id, agent_role, filename, size, sha256, filepath)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-            params![
-                ts,
-                agent_id,
-                agent_role,
-                filename,
-                size as i64,
-                sha256,
-                filepath.to_string_lossy().as_ref()
-            ],
-        ) {
-            tracing::error!("record_exfil failed: {e}");
-        }
     }
 
     #[allow(clippy::too_many_arguments)] // mirrors the beacons table columns
@@ -158,48 +120,16 @@ impl Db {
         tasks
     }
 
-    pub fn counts(&self) -> (usize, usize) {
-        let exfils: i64 = self
-            .conn
-            .query_row("SELECT COUNT(*) FROM exfils", [], |r| r.get(0))
-            .unwrap_or(0);
+    pub fn beacon_count(&self) -> usize {
         let beacons: i64 = self
             .conn
             .query_row("SELECT COUNT(*) FROM beacons", [], |r| r.get(0))
             .unwrap_or(0);
-        (exfils as usize, beacons as usize)
+        beacons as usize
     }
 
     pub fn recent_activity(&self, limit: usize) -> Vec<super::LogEntry> {
         let mut entries = Vec::new();
-        if let Ok(mut stmt) = self.conn.prepare(
-            "SELECT timestamp, agent_id, agent_role, filename, size, sha256
-                 FROM exfils ORDER BY timestamp DESC LIMIT ?1",
-        ) {
-            if let Ok(rows) = stmt.query_map(params![limit as i64], |row| {
-                let ts: i64 = row.get(0)?;
-                let agent_id: String = row.get(1)?;
-                let agent_role: String = row.get(2)?;
-                let filename: String = row.get(3)?;
-                let size: i64 = row.get(4)?;
-                let sha256: String = row.get(5)?;
-                Ok(super::LogEntry {
-                    timestamp: Self::format_ts(ts),
-                    agent_id,
-                    agent_role,
-                    data: serde_json::json!({
-                        "type": "exfil",
-                        "filename": filename,
-                        "size": size,
-                        "sha256": sha256,
-                    }),
-                })
-            }) {
-                for row in rows.flatten() {
-                    entries.push(row);
-                }
-            }
-        }
 
         if let Ok(mut stmt) = self.conn.prepare(
             "SELECT timestamp, agent_id, agent_role, hostname, username, os, version

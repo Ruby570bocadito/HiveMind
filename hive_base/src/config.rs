@@ -13,12 +13,9 @@ pub struct HiveConfig {
     pub consensus: ConsensusConfig,
     pub agents: AgentsConfig,
     pub c2: C2Config,
-    pub exploits: ExploitsConfig,
     pub limits: LimitsConfig,
-    pub anti_analysis: AntiAnalysisConfig,
     pub timing: TimingConfig,
     pub brain: HoneycombConfig,
-    pub colony: SwarmConfig,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -61,20 +58,8 @@ pub struct AgentsConfig {
 pub struct C2Config {
     pub url: String,
     pub api_key: String,
-    pub dns_domain: String,
-    pub dns_resolver: String,
     pub http_user_agents: Vec<String>,
     pub cdn_hosts: Vec<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ExploitsConfig {
-    pub enabled: bool,
-    pub operator_approved: bool,
-    pub target_whitelist: Vec<String>,
-    pub max_attempts: u32,
-    pub safe_mode: bool,
-    pub forbidden_segments: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -83,16 +68,6 @@ pub struct LimitsConfig {
     pub max_disk_mb: u64,
     pub max_network_mbps: f64,
     pub business_hours_only: bool,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AntiAnalysisConfig {
-    pub check_debugger: bool,
-    pub check_sandbox: bool,
-    pub check_vm: bool,
-    pub check_timing: bool,
-    pub random_delay_min_secs: u64,
-    pub random_delay_max_secs: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -168,10 +143,8 @@ impl Default for HiveConfig {
                 ],
             },
             c2: C2Config {
-                url: "http://localhost:8444/collect".into(),
+                url: "http://localhost:8444/beacon".into(),
                 api_key: "".into(),
-                dns_domain: "swarm.c2.local".into(),
-                dns_resolver: "8.8.8.8".into(),
                 http_user_agents: vec![
                     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0"
                         .into(),
@@ -179,50 +152,14 @@ impl Default for HiveConfig {
                 ],
                 cdn_hosts: vec!["cdn.jsdelivr.net".into(), "cdnjs.cloudflare.com".into()],
             },
-            exploits: ExploitsConfig {
-                enabled: false,
-                operator_approved: false,
-                target_whitelist: vec![],
-                max_attempts: 3,
-                safe_mode: true,
-                forbidden_segments: vec!["10.0.0.0/8".into(), "172.16.0.0/12".into()],
-            },
             limits: LimitsConfig {
                 max_processes: 20,
                 max_disk_mb: 100,
                 max_network_mbps: 1.0,
                 business_hours_only: true,
             },
-            anti_analysis: AntiAnalysisConfig {
-                check_debugger: true,
-                check_sandbox: true,
-                check_vm: true,
-                check_timing: true,
-                random_delay_min_secs: 1,
-                random_delay_max_secs: 10,
-            },
             timing: TimingConfig::default(),
             brain: HoneycombConfig::default(),
-            colony: SwarmConfig::default(),
-        }
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SwarmConfig {
-    pub aggressive: bool,
-    pub scan_subnets: Vec<String>,
-    pub max_concurrent_infections: u32,
-    pub infection_cooldown_secs: u64,
-}
-
-impl Default for SwarmConfig {
-    fn default() -> Self {
-        Self {
-            aggressive: false,
-            scan_subnets: vec!["192.168.1.0/24".into(), "10.0.0.0/24".into()],
-            max_concurrent_infections: 5,
-            infection_cooldown_secs: 30,
         }
     }
 }
@@ -333,8 +270,7 @@ mod tests {
     fn test_parse_config_accepts_defaults() {
         let toml_str = toml::to_string_pretty(&HiveConfig::default()).unwrap();
         let cfg = parse_config(&toml_str).expect("generated default config must parse");
-        assert!(cfg.exploits.safe_mode, "safe_mode must default to true");
-        assert!(!cfg.exploits.enabled, "exploits must default to disabled");
+        assert_eq!(cfg.consensus.threshold, 0.66);
     }
 
     #[test]

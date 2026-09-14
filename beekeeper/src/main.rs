@@ -252,12 +252,6 @@ async fn cmd_validate() {
                 .map(|d| !d.windows(14).any(|w| w == b"127.0.0.1:4242"))
                 .unwrap_or(true)
         }),
-        ("Debugger", "Anti-debug activo", || {
-            !hive_base::anti_analysis::AntiAnalysis::run_checks().is_debugged
-        }),
-        ("Sandbox", "Anti-sandbox activo", || {
-            !hive_base::anti_analysis::AntiAnalysis::run_checks().is_sandbox
-        }),
         ("Memfd", "Fileless exec disponible", || {
             hive_base::MemfdBinary::new("_test", b"x").is_ok()
         }),
@@ -327,22 +321,8 @@ fn cmd_config_check(path: Option<&str>) {
 }
 
 fn print_config_summary(cfg: &hive_base::config::HiveConfig, source: &str) {
-    let flag = |on: bool| {
-        if on {
-            "\x1b[93mON\x1b[0m"
-        } else {
-            "\x1b[92mOFF\x1b[0m"
-        }
-    };
     println!("  ─────────────────────────────────────────────");
     println!("  source: {}", source);
-    println!("  exploits.enabled        : {}", flag(cfg.exploits.enabled));
-    println!("  exploits.safe_mode      : {}", flag(cfg.exploits.safe_mode));
-    println!(
-        "  exploits.operator_approved : {}",
-        flag(cfg.exploits.operator_approved)
-    );
-    println!("  colony.aggressive       : {}", flag(cfg.colony.aggressive));
     println!("  c2.url                  : {}", cfg.c2.url);
     println!(
         "  c2.api_key              : {}",
@@ -355,12 +335,7 @@ fn print_config_summary(cfg: &hive_base::config::HiveConfig, source: &str) {
     println!("  consensus.threshold     : {}", cfg.consensus.threshold);
     println!("  arena.max_agents        : {}", cfg.arena.max_agents);
     println!("  ─────────────────────────────────────────────");
-    println!("  Safe defaults: exploits disabled + safe_mode ON = lab-ready.");
-    if cfg.exploits.enabled {
-        println!(
-            "  \x1b[93m[!] exploits module is ENABLED — make sure this is intentional and documented in docs/DEPLOYMENT.md\x1b[0m"
-        );
-    }
+    println!("  Ronda 6: módulos ofensivos/simulados eliminados del build.");
 }
 
 async fn cmd_reputation() {
@@ -389,28 +364,28 @@ async fn cmd_scenario(mode: &str) {
     let phases = [
         (
             "FASE 1",
-            "Infiltración",
-            "Stinger — fileless agents via memfd",
+            "Lanzamiento",
+            "worker/drone/honeybee/queen sobre arena IPC compartida",
         ),
         (
             "FASE 2",
             "Reconocimiento",
-            "Worker scan + Drone RL + Seer prediction",
+            "Worker system profile + Drone propuestas (solo lectura)",
         ),
         (
             "FASE 3",
-            "Sabotaje+Exfil",
-            "Saboteur muta datos + Honeybee exfil (simulado)",
+            "Consenso",
+            "Tournament + HiveMind voting sobre directivas internas",
         ),
         (
             "FASE 4",
-            "Persistencia",
-            "Phoenix genome + Tournament + HiveMind consensus",
+            "C2",
+            "TaskPoller (poll/exec/report) + shell del operador auditado",
         ),
         (
             "FASE 5",
-            "Evasión",
-            "WhisperNet P2P mesh",
+            "Transporte",
+            "WhisperNet P2P mesh + failover multi-canal",
         ),
     ];
     for (num, name, desc) in &phases {

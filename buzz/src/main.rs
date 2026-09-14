@@ -10,14 +10,9 @@ fn main() {
         .init();
 
     let cfg = hive_base::config::HiveConfig::load();
+    let _ = cfg; // configuración disponible para los agentes vía HIVE_* env
 
-    if cfg.colony.aggressive {
-        info!("=== SWARM COLONY MODE (AGGRESSIVE) ===");
-        info!("Scan subnets: {:?}", cfg.colony.scan_subnets);
-        info!("Safe IPs: {:?}", cfg.brain.safe_ips);
-    } else {
-        info!("=== SWARM INTEGRATION TEST ===");
-    }
+    info!("=== SWARM INTEGRATION TEST ===");
 
     let arena_name = hive_base::shared_arena::generate_arena_name();
     info!("Arena: {}", arena_name);
@@ -31,17 +26,7 @@ fn main() {
     thread::sleep(Duration::from_millis(500));
     let mut overmind = spawn_agent("queen", &arena_name);
 
-    // Colony mode: also launch Worm
-    let worm = if cfg.colony.aggressive {
-        thread::sleep(Duration::from_millis(500));
-        info!("  worm agent starting (autonomous spread)...");
-        Some(spawn_agent("swarm", &arena_name))
-    } else {
-        info!("  worm agent SKIPPED (colony.aggressive=false)");
-        None
-    };
-
-    let duration = if cfg.colony.aggressive { 120 } else { 30 };
+    let duration = 30;
     info!("All agents launched. Running {}s...", duration);
     thread::sleep(Duration::from_secs(duration));
 
@@ -54,10 +39,6 @@ fn main() {
     let _ = hoarder.wait();
     let _ = overmind.kill();
     let _ = overmind.wait();
-    if let Some(mut w) = worm {
-        let _ = w.kill();
-        let _ = w.wait();
-    }
     info!("Done.");
 }
 

@@ -15,7 +15,7 @@ services:
       - __HIVE_ARENA=hive_arena
       - HIVE_LAB_MODE=1
       - HIVE_TELEMETRY_DIR=/tmp/hive_telemetry
-      - HIVE_C2_URL=http://c2-server:8444/collect
+      - HIVE_C2_URL=http://c2-server:8444/beacon
       - HIVE_C2_DNS_DOMAIN=tunnel.example.com
       - HIVE_C2_ICMP_TARGET=8.8.8.8
       - RUST_LOG=info
@@ -31,7 +31,7 @@ services:
     environment:
       - __HIVE_ARENA=hive_arena
       - HIVE_LAB_MODE=1
-      - HIVE_C2_URL=http://c2-server:8444/collect
+      - HIVE_C2_URL=http://c2-server:8444/beacon
       - RUST_LOG=info
     volumes:
       - hive_arena:/dev/shm
@@ -45,7 +45,7 @@ services:
       - __HIVE_ARENA=hive_arena
       - HIVE_LAB_MODE=1
       - HIVE_TELEMETRY_DIR=/tmp/hive_telemetry
-      - HIVE_C2_URL=http://c2-server:8444/collect
+      - HIVE_C2_URL=http://c2-server:8444/beacon
       - HIVE_C2_DNS_DOMAIN=tunnel.example.com
       - HIVE_C2_ICMP_TARGET=8.8.8.8
       - HIVE_EXEC_TIMEOUT=30
@@ -61,7 +61,7 @@ services:
     environment:
       - __HIVE_ARENA=hive_arena
       - HIVE_LAB_MODE=1
-      - HIVE_C2_URL=http://c2-server:8444/collect
+      - HIVE_C2_URL=http://c2-server:8444/beacon
       - RUST_LOG=info
     volumes:
       - hive_arena:/dev/shm
@@ -74,7 +74,7 @@ services:
     environment:
       - __HIVE_ARENA=hive_arena
       - HIVE_LAB_MODE=1
-      - HIVE_C2_URL=http://c2-server:8444/collect
+      - HIVE_C2_URL=http://c2-server:8444/beacon
       - RUST_LOG=info
     volumes:
       - hive_arena:/dev/shm

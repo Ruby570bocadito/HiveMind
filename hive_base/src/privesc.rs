@@ -1,5 +1,4 @@
 use std::process::Command;
-use std::time::{Duration, Instant};
 use tracing::info;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -29,54 +28,6 @@ pub struct PrivEscResult {
     pub output: String,
 }
 
-#[derive(Debug, Clone)]
-pub struct ExploitTracker {
-    pub attempts: u32,
-    pub last_attempt: Option<Instant>,
-    pub succeeded: bool,
-}
-
-impl Default for ExploitTracker {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl ExploitTracker {
-    pub fn new() -> Self {
-        Self {
-            attempts: 0,
-            last_attempt: None,
-            succeeded: false,
-        }
-    }
-
-    pub fn wait_seconds(&self) -> u64 {
-        if self.succeeded {
-            return 3600;
-        }
-        match self.attempts {
-            0 => 60,
-            1 => 120,
-            2 => 240,
-            3 => 480,
-            4 => 960,
-            5 => 1800,
-            _ => 3600,
-        }
-    }
-
-    pub fn should_attempt(&self) -> bool {
-        if self.succeeded {
-            return false;
-        }
-        match self.last_attempt {
-            Some(last) => last.elapsed() >= Duration::from_secs(self.wait_seconds()),
-            None => true,
-        }
-    }
-}
-
 pub fn scan_privilege_escalation() -> Vec<PrivEscVector> {
     let mut vectors = Vec::new();
     vectors.extend(scan_suid_binaries());
@@ -91,32 +42,6 @@ pub fn scan_privilege_escalation() -> Vec<PrivEscVector> {
     vectors.sort_by_key(|v| v.risk);
     info!("PRIVESC: found {} potential vectors", vectors.len());
     vectors
-}
-
-pub fn attempt_escalation(vectors: &[PrivEscVector]) -> PrivEscResult {
-    // Ronda 4 (emulación): la escalada real fue eliminada. El marco red-team
-    // conserva la ENUMERACIÓN de vectores (scan_privilege_escalation) y aquí
-    // solo emite telemetría del intento simulado, para validar detecciones y
-    // flujos de consenso sin ejecutar ninguna técnica de elevación.
-    let techniques: Vec<&str> = vectors.iter().map(|v| v.technique.as_str()).collect();
-    info!(
-        "PRIVESC (simulated): {} vectores identificados [{}] — ejecución no realizada (emulation mode)",
-        vectors.len(),
-        techniques.join(", ")
-    );
-    PrivEscResult {
-        success: false,
-        technique: vectors
-            .first()
-            .map(|v| v.technique.clone())
-            .unwrap_or_else(|| "none".into()),
-        root_shell: false,
-        new_uid: None,
-        output: format!(
-            "simulated: {} escalation vector(s) identified; execution disabled (emulation mode)",
-            vectors.len()
-        ),
-    }
 }
 
 fn scan_suid_binaries() -> Vec<PrivEscVector> {
@@ -395,7 +320,6 @@ fn scan_container_escapes() -> Vec<PrivEscVector> {
     vectors
 }
 
-#[cfg(target_os = "linux")]
 
 #[cfg(test)]
 mod tests {
@@ -407,51 +331,10 @@ mod tests {
         assert!(RiskLevel::Medium < RiskLevel::High);
     }
 
-    #[test]
-    fn test_exploit_tracker_initial() {
-        let t = ExploitTracker::new();
-        assert!(t.should_attempt());
-        assert_eq!(t.wait_seconds(), 60);
-    }
 
-    #[test]
-    fn test_exploit_tracker_backoff() {
-        let mut t = ExploitTracker::new();
-        assert_eq!(t.wait_seconds(), 60);
-        t.attempts = 1;
-        assert_eq!(t.wait_seconds(), 120);
-        t.attempts = 6;
-        assert_eq!(t.wait_seconds(), 3600);
-    }
 
-    #[test]
-    fn test_exploit_tracker_succeeded() {
-        let mut t = ExploitTracker::new();
-        t.succeeded = true;
-        assert!(!t.should_attempt());
-        assert_eq!(t.wait_seconds(), 3600);
-    }
 
-    #[test]
-    fn test_attempt_escalation_empty() {
-        let result = attempt_escalation(&[]);
-        assert!(!result.success);
-        assert_eq!(result.technique, "none");
-    }
 
-    #[test]
-    fn test_attempt_escalation_unknown() {
-        let vecs = vec![PrivEscVector {
-            technique: "unknown test".into(),
-            binary: "test".into(),
-            confidence: 0.5,
-            description: "test".into(),
-            mitre_id: "T1068",
-            risk: RiskLevel::Low,
-        }];
-        let result = attempt_escalation(&vecs);
-        assert!(!result.success);
-    }
 
     #[test]
     fn test_scan_sorted_by_risk() {
@@ -487,24 +370,6 @@ mod tests {
         assert_eq!(vecs[2].risk, RiskLevel::Critical);
     }
 
-    #[test]
-    fn test_attempt_escalation_is_simulated() {
-        // Ronda 4: la escalada es simulada — nunca hay root shell, aunque
-        // existan vectores identificados.
-        let vecs = vec![PrivEscVector {
-            technique: "suid".into(),
-            binary: "find".into(),
-            confidence: 0.9,
-            description: "test".into(),
-            mitre_id: "T1548.001",
-            risk: RiskLevel::Critical,
-        }];
-        let result = attempt_escalation(&vecs);
-        assert!(!result.success);
-        assert!(!result.root_shell);
-        assert!(result.new_uid.is_none());
-        assert!(result.output.contains("simulated"));
-    }
 
     #[test]
     fn test_scan_suid_binaries_readonly() {

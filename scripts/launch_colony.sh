@@ -58,7 +58,7 @@ mkdir -p "$LOOT_DIR"
 export __HIVE_ARENA="${ARENA_NAME}"
 export HIVE_LAB_MODE=1
 export RUST_LOG=info
-export HIVE_C2_URL="http://127.0.0.1:${PORT}/collect"
+export HIVE_C2_URL="http://127.0.0.1:${PORT}/beacon"
 export HIVE_C2_DNS_DOMAIN="tunnel.example.com"
 export HIVE_C2_ICMP_TARGET="127.0.0.1"
 

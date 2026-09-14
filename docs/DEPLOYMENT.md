@@ -57,7 +57,7 @@ Flujo operativo del ejercicio:
    **TaskPoller** (ronda 4) y devuelven resultados vía `POST /beacon`.
 4. Las tácticas se ejecutan en **modo emulación**: la enumeración real es de
    solo lectura y los efectos (exfil, sabotaje, persistencia, escalada)
-   se simulan con telemetría etiquetada — ver `docs/EMULATION.md`.
+   se simulan con telemetría etiquetada — ver `docs/CAPABILITIES.md`.
 
 ## 3. Variables de entorno
 

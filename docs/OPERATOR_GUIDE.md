@@ -92,7 +92,7 @@ curl http://localhost:8444/health
 
 > Ronda 4: las herramientas de armado de payloads (`deploy.sh`,
 > `build_payload.sh`, `obfuscate_pe.py`) fueron retiradas. Las tácticas se
-> ejecutan en modo emulación — ver `docs/EMULATION.md`.
+> ejecutan en modo emulación — ver `docs/CAPABILITIES.md`.
 
 ---
 
@@ -366,4 +366,4 @@ curl -X POST http://localhost:8444/task/<agent_id> \
 | [DEPLOYMENT.md](DEPLOYMENT.md) | Build y despliegue en laboratorio |
 | [AGENTS.md](AGENTS.md) | Referencia de cada agente |
 | [PLAYBOOK.md](PLAYBOOK.md) | Playbook operativo completo |
-| [EMULATION.md](EMULATION.md) | Política de emulación y técnicas simuladas |
+| [CAPABILITIES.md](CAPABILITIES.md) | Matriz de capacidades (ronda 6): real vs eliminado |

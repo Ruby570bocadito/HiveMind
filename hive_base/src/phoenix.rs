@@ -1,23 +1,15 @@
-//! Phoenix — colony genome modeling + persistence EMULATION.
-//! Hive Colony (red-team lab edition).
+//! Phoenix — colony genome modeling (in memory).
 //!
-//! Ronda 4 (emulación): las escrituras de persistencia real (fragmentos en
-//! SPI/MBR/UEFI/bloques defectuosos, mecanismos systemd/cron, chattr +i,
-//! reconstrucción de binarios en disco) fueron ELIMINADAS. Se conserva:
-//!
-//! - El modelado COMPLETO del genoma de la colonia (`ColonyGenome`,
-//!   `AgentBlueprint`, `GenomeFragment`, `FragmentLocation`) y sus funciones
-//!   puras en memoria (`generate_genome`, `fragment_genome`,
-//!   `reassemble_genome`, `self_heal`) — es el valor arquitectónico del
-//!   módulo y permite probar recuperación topológica sin tocar disco.
-//! - `hide` / `hide_fragment` / `install_persistence` / `rebuild_from_genome`
-//!   → SIMULADOS: registran el paso y devuelven resultados coherentes sin
-//!   escribir nada en el sistema.
-//! - `scan_for_fragments`: lectura de directorio (solo lectura).
+//! Ronda 6: las APIs de ocultación, persistencia y reconstrucción en disco
+//! fueron ELIMINADAS del repositorio (histórico: emulación en ronda 4,
+//! eliminación en ronda 6). Se conserva exclusivamente el modelado del
+//! genoma de la colonia (`ColonyGenome`, `AgentBlueprint`, `GenomeFragment`,
+//! `FragmentLocation`) y sus funciones puras en memoria (`generate_genome`,
+//! `fragment_genome`, `reassemble_genome`, `self_heal`), que permiten probar
+//! recuperación topológica sin tocar disco. El campo `location` es
+//! taxonomía documental heredada; no corresponde a ninguna escritura real.
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::path::Path;
-use tracing::info;
 use uuid::Uuid;
 
 // ── tipos del genoma ─────────────────────────────────────────────────────────
@@ -47,7 +39,6 @@ pub struct GenomeFragment {
     pub genome_id: Uuid,
     pub data: Vec<u8>,
     pub location: FragmentLocation,
-    pub stored_path: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -72,14 +63,6 @@ impl FragmentLocation {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PersistenceMechanism {
-    pub name: String,
-    pub path: String,
-    pub mechanism_type: String,
-    pub installed: bool,
-    pub description: String,
-}
 
 // ── Phoenix ──────────────────────────────────────────────────────────────────
 
@@ -103,7 +86,7 @@ impl Phoenix {
         config.insert("consensus_threshold".into(), "0.66".into());
         config.insert("max_hops".into(), "10".into());
         config.insert("safe_mode".into(), "true".into());
-        config.insert("emulation".into(), "true".into());
+        config.insert("lab_mode".into(), "true".into());
 
         ColonyGenome {
             genome_id: Uuid::new_v4(),
@@ -146,73 +129,16 @@ impl Phoenix {
                 genome_id: genome.genome_id,
                 data: chunk,
                 location,
-                stored_path: None,
             });
         }
 
         fragments
     }
-
-    /// SIMULADO (ronda 4): no escribe el fragmento en ninguna ubicación.
-    /// Devuelve una descripción documental de dónde *se habría* escondido.
-    pub fn hide_fragment(fragment: &GenomeFragment, base_path: &Path) -> Result<String, String> {
-        info!(
-            "PHOENIX (simulated): fragmento {} -> {} en base '{}' — sin escritura (emulation mode)",
-            fragment.fragment_id,
-            fragment.location.describe(),
-            base_path.display()
-        );
-        Ok(format!(
-            "simulated: fragment {} would be hidden in {} (no data written; emulation mode)",
-            fragment.fragment_id,
-            fragment.location.describe()
-        ))
-    }
-
-    /// SIMULADO (ronda 4): marca la ubicación documental en el fragmento pero
-    /// no cifra ni escribe nada.
-    pub fn hide(fragment: &mut GenomeFragment, base_path: &Path) -> Result<String, String> {
-        let msg = Self::hide_fragment(fragment, base_path)?;
-        fragment.stored_path = Some(format!(
-            "{}/(simulado::{})",
-            base_path.display(),
-            format!("{:?}", fragment.location).to_lowercase()
-        ));
-        Ok(msg)
-    }
-
     /// SIMULADO (ronda 4): los fragmentos ya no se cifran al esconderse, así
     /// que la recuperación devuelve los datos tal cual (operación en memoria).
     pub fn recover(fragment: &GenomeFragment) -> Result<Vec<u8>, String> {
         Ok(fragment.data.clone())
     }
-
-    /// SIMULADO (ronda 4): no instala ningún mecanismo de persistencia.
-    /// Devuelve los mecanismos *que se habrían instalado*, con `installed: false`.
-    pub fn install_persistence(loader_script: &str, base_path: &Path) -> Vec<PersistenceMechanism> {
-        info!(
-            "PHOENIX (simulated): install_persistence (loader {}B, base '{}') — nada instalado (emulation mode)",
-            loader_script.len(),
-            base_path.display()
-        );
-        vec![
-            PersistenceMechanism {
-                name: "systemd-user-unit (simulated)".into(),
-                path: "~/.config/systemd/user/hive.service".into(),
-                mechanism_type: "service".into(),
-                installed: false,
-                description: "simulated: persistence disabled (emulation mode, ronda 4)".into(),
-            },
-            PersistenceMechanism {
-                name: "cron-entry (simulated)".into(),
-                path: "/etc/cron.d/hive".into(),
-                mechanism_type: "scheduler".into(),
-                installed: false,
-                description: "simulated: persistence disabled (emulation mode, ronda 4)".into(),
-            },
-        ]
-    }
-
     /// Recupera el genoma a partir de fragmentos completos (en memoria).
     /// Función pura: reconstrucción por orden de fragment_id.
     pub fn self_heal(fragments: &[GenomeFragment]) -> Result<ColonyGenome, Vec<u32>> {
@@ -250,57 +176,4 @@ impl Phoenix {
         serde_json::from_slice(&data).map_err(|e| e.to_string())
     }
 
-    /// SIMULADO (ronda 4): no reconstruye binarios en disco. Devuelve la
-    /// lista de agentes que *se habrían reconstruido*.
-    pub fn rebuild_from_genome(
-        genome: &ColonyGenome,
-        base_path: &Path,
-    ) -> Result<Vec<String>, String> {
-        let roles: Vec<String> = genome
-            .agent_blueprints
-            .iter()
-            .map(|b| b.role.clone())
-            .collect();
-        info!(
-            "PHOENIX (simulated): rebuild_from_genome para [{}] en '{}' — sin escritura (emulation mode)",
-            roles.join(", "),
-            base_path.display()
-        );
-        Ok(roles
-            .into_iter()
-            .map(|r| format!("simulated: .hive_reborn_{r} (not written; emulation mode)"))
-            .collect())
-    }
-
-    /// Escaneo de solo lectura de fragmentos previos en `base_path`.
-    /// Con la ocultación simulada no encontrará fragmentos reales; se conserva
-    /// para validar el flujo y para laboratorios con fragmentos sembrados.
-    pub fn scan_for_fragments(base_path: &Path) -> Vec<GenomeFragment> {
-        let mut found = Vec::new();
-        if let Ok(entries) = std::fs::read_dir(base_path) {
-            for entry in entries.flatten() {
-                let name = entry.file_name().to_string_lossy().to_string();
-                if let Some(rest) = name.strip_prefix(".hive_frag_") {
-                    if let Ok(id) = rest.parse::<u32>() {
-                        if let Ok(data) = std::fs::read(entry.path()) {
-                            found.push(GenomeFragment {
-                                fragment_id: id,
-                                total_fragments: 0,
-                                genome_id: Uuid::nil(),
-                                data,
-                                location: FragmentLocation::SpiFlash,
-                                stored_path: Some(entry.path().to_string_lossy().to_string()),
-                            });
-                        }
-                    }
-                }
-            }
-        }
-        info!(
-            "PHOENIX (recon): {} fragmento(s) encontrado(s) en '{}' (solo lectura)",
-            found.len(),
-            base_path.display()
-        );
-        found
-    }
 }

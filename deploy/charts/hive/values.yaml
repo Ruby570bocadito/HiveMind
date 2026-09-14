@@ -10,7 +10,7 @@ arena:
   size: 64Mi
 
 c2:
-  url: "http://hive-c2:8444/collect"
+  url: "http://hive-c2:8444/beacon"
   dnsDomain: "tunnel.example.com"
   icmpTarget: "8.8.8.8"
   deadDropToken: ""
