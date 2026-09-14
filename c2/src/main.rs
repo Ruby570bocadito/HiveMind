@@ -3,13 +3,14 @@ mod session;
 mod shell;
 
 use std::collections::HashMap;
-use std::net::SocketAddr;
+use std::net::{IpAddr, SocketAddr};
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex as StdMutex};
+use std::time::{Duration, Instant};
 
 use axum::{
-    extract::{Path, Query, State, WebSocketUpgrade},
-    http::StatusCode,
+    extract::{ConnectInfo, Path, Query, State, WebSocketUpgrade},
+    http::{HeaderName, HeaderValue, StatusCode},
     middleware,
     response::{Html, IntoResponse, Json},
     routing::{get, post},
@@ -19,7 +20,7 @@ use base64::Engine;
 use clap::Parser;
 use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
-use tower_http::cors::CorsLayer;
+use tower_http::cors::{AllowOrigin, CorsLayer};
 
 use db::Db;
 use session::SessionManager;
@@ -44,6 +45,21 @@ struct Args {
     /// existing labs. `/` and `/health` always stay open for monitoring.
     #[arg(long, default_value = "")]
     api_key: String,
+
+    /// Max requests per minute per client IP on all endpoints.
+    /// 0 disables rate limiting. Default: 120 req/min.
+    #[arg(long, default_value_t = 120)]
+    rate_limit: u32,
+
+    /// Allowed browser origin for CORS (repeatable), e.g. https://ops.example.com.
+    /// Empty (default) sends no CORS headers — browsers block cross-origin reads.
+    #[arg(long = "cors-origin")]
+    cors_origins: Vec<String>,
+
+    /// Opt-in escape hatch that restores the old permissive CORS
+    /// (`Access-Control-Allow-Origin: *`). Only for throwaway labs.
+    #[arg(long, default_value_t = false)]
+    cors_anywhere: bool,
 }
 
 #[derive(Clone)]
@@ -55,6 +71,58 @@ struct AppState {
     /// When non-empty, agent/operator endpoints require the `x-api-key`
     /// header to match this value (constant-time comparison).
     api_key: String,
+    /// Shared per-IP rate limiter (public + protected routes).
+    rate: Arc<RateLimiter>,
+}
+
+/// Fixed-window per-IP rate limiter kept fully in memory (no extra deps).
+///
+/// Each IP gets a bucket that resets every `window`. Buckets for IPs that
+/// stop hitting the server are evicted lazily so the map cannot grow
+/// unbounded under scanning.
+struct RateLimiter {
+    max: u32,
+    window: Duration,
+    buckets: StdMutex<HashMap<IpAddr, Bucket>>,
+}
+
+struct Bucket {
+    window_start: Instant,
+    count: u32,
+}
+
+impl RateLimiter {
+    fn new(max: u32) -> Self {
+        Self {
+            max,
+            window: Duration::from_secs(60),
+            buckets: StdMutex::new(HashMap::new()),
+        }
+    }
+
+    /// Register a hit for `ip`. Returns false when the fixed-window
+    /// quota is exhausted (caller must answer 429).
+    fn check(&self, ip: IpAddr) -> bool {
+        if self.max == 0 {
+            return true; // disabled
+        }
+        let now = Instant::now();
+        let mut buckets = self.buckets.lock().unwrap();
+        // Lazy eviction: keep the map bounded (4× the active quota).
+        if buckets.len() > (self.max as usize) * 4 {
+            buckets.retain(|_, b| now.duration_since(b.window_start) < self.window);
+        }
+        let bucket = buckets.entry(ip).or_insert(Bucket {
+            window_start: now,
+            count: 0,
+        });
+        if now.duration_since(bucket.window_start) >= self.window {
+            bucket.window_start = now;
+            bucket.count = 0;
+        }
+        bucket.count += 1;
+        bucket.count <= self.max
+    }
 }
 
 #[derive(Serialize)]
@@ -135,6 +203,40 @@ async fn main() {
         relay: Arc::new(Mutex::new(HashMap::new())),
         loot_dir: args.loot_dir,
         api_key: args.api_key,
+        rate: Arc::new(RateLimiter::new(args.rate_limit)),
+    };
+
+    // CORS: closed by default; allow-list via --cors-origin, permissive only
+    // with the explicit --cors-anywhere opt-in.
+    let cors_layer = if args.cors_anywhere {
+        tracing::warn!("CORS set to PERMISSIVE (--cors-anywhere) — only for throwaway labs");
+        Some(CorsLayer::permissive())
+    } else if args.cors_origins.is_empty() {
+        tracing::info!("CORS disabled (no --cors-origin) — browsers cannot read the API cross-origin");
+        None
+    } else {
+        let mut origins = Vec::new();
+        for o in &args.cors_origins {
+            let v = HeaderValue::from_str(o)
+                .map_err(|e| format!("invalid --cors-origin '{o}': {e}"))
+                .expect("invalid --cors-origin");
+            origins.push(v);
+        }
+        let allow_headers = [
+            HeaderName::from_static("content-type"),
+            HeaderName::from_static("x-api-key"),
+        ];
+        tracing::info!(origins = ?args.cors_origins, "CORS allow-list active");
+        Some(
+            CorsLayer::new()
+                .allow_origin(AllowOrigin::list(origins))
+                .allow_methods([
+                    axum::http::Method::GET,
+                    axum::http::Method::POST,
+                    axum::http::Method::OPTIONS,
+                ])
+                .allow_headers(allow_headers),
+        )
     };
 
     // Public routes: liveness/monitoring stay reachable without a key so
@@ -142,10 +244,15 @@ async fn main() {
     let public = Router::new()
         .route("/health", get(health_handler))
         .route("/", get(index_handler))
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            rate_limit_middleware,
+        ))
         .with_state(state.clone());
 
     // Agent/operator routes: optionally guarded by the `x-api-key` header.
-    let protected = Router::new()
+    // Layer order (outermost first = added last): CORS → rate limit → auth.
+    let protected_base = Router::new()
         .route("/logs", get(logs_handler))
         .route("/collect", post(collect_handler))
         .route("/beacon", post(beacon_handler))
@@ -158,8 +265,15 @@ async fn main() {
             state.clone(),
             auth_middleware,
         ))
-        .layer(CorsLayer::permissive())
-        .with_state(state.clone());
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            rate_limit_middleware,
+        ));
+    let protected = match &cors_layer {
+        Some(cors) => protected_base.layer(cors.clone()),
+        None => protected_base,
+    }
+    .with_state(state.clone());
 
     let app = public.merge(protected);
 
@@ -172,6 +286,11 @@ async fn main() {
     } else {
         tracing::info!("API authentication ENABLED — agents must send the x-api-key header");
     }
+    if args.rate_limit == 0 {
+        tracing::warn!("Rate limiting DISABLED (--rate-limit 0)");
+    } else {
+        tracing::info!("Rate limiting ENABLED — {} req/min per client IP", args.rate_limit);
+    }
     tracing::info!("  POST /collect   - Receive exfiltrated data");
     tracing::info!("  POST /beacon    - Agent heartbeats");
     tracing::info!("  GET  /task/:id  - Task pull");
@@ -180,7 +299,30 @@ async fn main() {
     tracing::info!("  GET  /logs      - Recent activity");
 
     let listener = tokio::net::TcpListener::bind(addr).await.unwrap();
-    axum::serve(listener, app).await.unwrap();
+    axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<SocketAddr>(),
+    )
+    .await
+    .unwrap();
+}
+
+/// Middleware that enforces the per-IP fixed-window rate limit.
+///
+/// Runs before auth so flooding is rejected (429) without paying the
+/// API-key comparison, and applies to public + protected routes alike.
+async fn rate_limit_middleware(
+    State(state): State<AppState>,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    req: axum::extract::Request,
+    next: middleware::Next,
+) -> Result<axum::response::Response, StatusCode> {
+    if state.rate.check(peer.ip()) {
+        Ok(next.run(req).await)
+    } else {
+        tracing::warn!(ip = %peer.ip(), path = %req.uri().path(), "Rate limit exceeded (429)");
+        Err(StatusCode::TOO_MANY_REQUESTS)
+    }
 }
 
 /// Middleware that enforces the optional `x-api-key` check.
@@ -464,5 +606,46 @@ mod tests {
         assert!(!api_key_matches("lab-secret-123", Some("")));
         // Prefixes must not authenticate.
         assert!(!api_key_matches("lab-secret-123", Some("lab-secret")));
+    }
+
+    #[test]
+    fn rate_limiter_blocks_over_quota_per_ip() {
+        let limiter = RateLimiter::new(3);
+        let a: IpAddr = "10.0.0.1".parse().unwrap();
+        let b: IpAddr = "10.0.0.2".parse().unwrap();
+
+        assert!(limiter.check(a));
+        assert!(limiter.check(a));
+        assert!(limiter.check(a));
+        // Quota exhausted for A...
+        assert!(!limiter.check(a));
+        // ...but B is unaffected (per-IP isolation).
+        assert!(limiter.check(b));
+    }
+
+    #[test]
+    fn rate_limiter_disabled_when_max_zero() {
+        let limiter = RateLimiter::new(0);
+        let a: IpAddr = "10.0.0.1".parse().unwrap();
+        for _ in 0..10_000 {
+            assert!(limiter.check(a));
+        }
+    }
+
+    #[test]
+    fn rate_limiter_resets_after_window() {
+        let limiter = RateLimiter::new(1);
+        let a: IpAddr = "10.0.0.9".parse().unwrap();
+        assert!(limiter.check(a));
+        assert!(!limiter.check(a));
+
+        // Force the window to look expired (test-only shortcut: rewrite
+        // the bucket start timestamp instead of sleeping 60s).
+        {
+            let mut buckets = limiter.buckets.lock().unwrap();
+            let bucket = buckets.get_mut(&a).unwrap();
+            bucket.window_start = Instant::now() - Duration::from_secs(61);
+        }
+        assert!(limiter.check(a));
     }
 }

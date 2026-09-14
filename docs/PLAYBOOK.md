@@ -11,7 +11,7 @@
 │  ┌──────┐  ┌──────┐  ┌────────┐  ┌──────┐  ┌─────┐ │
 │  │Worker│  │Drone │  │Honeybee│  │Queen│ │
 │  └──────┘  └──────┘  └────────┘  └──────┘  └─────┘ │
-│  Saboteur    Seer     Chrononaut   Wax    HiveMind  │
+│  Saboteur    Seer     HiveMind                      │
 │  Stigmergy  Phoenix  WhisperNet           Tournament│
 ├─────────────────────────────────────────────────────┤
 │                    C2 SERVER (8443)                  │
@@ -110,13 +110,14 @@ ls -la /dev/shm/.hive_genome/
 ./target/release/beekeeper hivemind
 ```
 
-### 🎯 Playbook 5: Cápsulas del Tiempo (Chrononaut) — *DESHABILITADO*
+### 🎯 Playbook 5: Cápsulas del Tiempo (Chrononaut) — *ELIMINADO*
 ```bash
 # Honeybee ya NO planta cápsulas: el planting se eliminó del binario
 # el 2026-09-14 junto con la exfiltración real. El módulo `chrononaut`
-# sigue en hive_base (solo tests). Playbook conservado como referencia
-# forense: saber qué buscar si un despliegue antiguo plantó cápsulas.
-# Verificar cápsulas heredadas:
+# se ELIMINÓ de hive_base el 2026-09-14 (ronda 3): era persistencia
+# real (timestomping + backdoor systemd/cron). Playbook conservado como
+# referencia forense: saber qué buscar si un despliegue antiguo plantó
+# cápsulas. Verificar cápsulas heredadas:
 getfattr -d /var/log/*.log 2>/dev/null | grep user.hive
 ```
 

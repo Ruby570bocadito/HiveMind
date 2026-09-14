@@ -764,7 +764,8 @@ mod full_pipeline {
 
 // ── Scenario 5: Cross-module Integration ─────────────────────────────────────
 //
-// Tests that span multiple modules: WhisperNet ↔ HiveMind ↔ Tournament ↔ Chrononaut
+// Tests that span multiple modules: WhisperNet ↔ HiveMind ↔ Tournament
+// (Chrononaut removed in ronda 2026-09-14 (3): real persistence module)
 
 mod scenario5_cross_module {
     use super::*;
@@ -810,54 +811,6 @@ mod scenario5_cross_module {
         unsafe {
             free_arena(ptr);
         }
-    }
-
-    #[test]
-    fn test_chrononaut_hivemind_timer_triggered_directive() {
-        use hive_base::chrononaut::{Chrononaut, TimeCapsule};
-        use std::io::Write;
-
-        let dir = std::env::temp_dir().join("cross_chrono_hivemind");
-        let _ = std::fs::create_dir_all(&dir);
-        let file_path = dir.join("target.txt");
-        let mut f = std::fs::File::create(&file_path).unwrap();
-        f.write_all(b"marker").unwrap();
-
-        let capsule_id = test_id();
-        let capsule = TimeCapsule {
-            capsule_id,
-            trigger_timestamp: 1_800_000_000,
-            command: "exfil --target /tmp/creds".into(),
-            payload: b"encrypted_payload".to_vec(),
-            host_hint: "target_host".into(),
-            executed: false,
-        };
-
-        Chrononaut::encode_in_timestamp(&file_path, &capsule).unwrap();
-        let recovered = Chrononaut::decode_from_timestamp(&file_path, capsule_id).unwrap();
-
-        assert_eq!(recovered.capsule_id, capsule_id);
-        assert_eq!(recovered.trigger_timestamp, capsule.trigger_timestamp);
-        assert_eq!(recovered.command, capsule.command);
-        assert_eq!(recovered.payload, capsule.payload);
-        assert_eq!(recovered.host_hint, capsule.host_hint);
-
-        let mut hive = HiveMind::new();
-        hive.enabled = true;
-        let id = test_id();
-        let did = hive.propose_from_operator(id, recovered.command.clone(), HashMap::new());
-        assert!(hive
-            .directives
-            .iter()
-            .any(|d| d.action == recovered.command));
-
-        let mut rep = HashMap::new();
-        rep.insert(id, 1.0);
-        let vote = Message::vote(id, Role::Queen, did, Decision::Support, 1.0);
-        let _ = hive.process_arena_message(&vote, &rep);
-        assert!(hive.directives.iter().any(|d| d.approved));
-
-        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
@@ -980,10 +933,9 @@ mod scenario5_cross_module {
     }
 
     #[test]
-    fn test_hivemind_chrononaut_scheduled_directive_execution() {
-        use hive_base::chrononaut::{Chrononaut, TimeCapsule};
-        use std::io::Write;
-
+    fn test_hivemind_scheduled_directive_approval() {
+        // Scheduled execution formerly used Chrononaut capsules (removed:
+        // real persistence module). The HiveMind approval flow is still covered.
         let mut hive = HiveMind::new();
         hive.enabled = true;
         hive.consensus_threshold = 0.3;
@@ -996,30 +948,5 @@ mod scenario5_cross_module {
         let vote = Message::vote(queen_id, Role::Queen, did, Decision::Support, 1.0);
         let _ = hive.process_arena_message(&vote, &rep);
         assert!(hive.directives.iter().any(|d| d.approved));
-
-        let directive = hive.directives.iter().find(|d| d.approved).unwrap();
-
-        let dir = std::env::temp_dir().join("cross_hivemind_chrono");
-        let _ = std::fs::create_dir_all(&dir);
-        let cfg_path = dir.join("chrono_target.txt");
-        let mut f = std::fs::File::create(&cfg_path).unwrap();
-        f.write_all(b"config").unwrap();
-
-        let capsule = TimeCapsule {
-            capsule_id: directive.directive_id,
-            trigger_timestamp: 1_800_000_000,
-            command: directive.action.clone(),
-            payload: b"directive_payload".to_vec(),
-            host_hint: "colony_host".into(),
-            executed: false,
-        };
-        Chrononaut::encode_in_timestamp(&cfg_path, &capsule).unwrap();
-
-        let recovered =
-            Chrononaut::decode_from_timestamp(&cfg_path, directive.directive_id).unwrap();
-        assert_eq!(recovered.command, directive.action);
-        assert_eq!(recovered.host_hint, "colony_host");
-
-        let _ = std::fs::remove_dir_all(&dir);
     }
 }

@@ -104,8 +104,8 @@ phase_sabotage_exfil() {
     export __HIVE_ARENA="$ARENA"
     "$HIVE_BIN/honeybee" &
     phase_sleep 5
-    echo "[FASE3] Sabotage+Exfil+Chrononaut" >> "$LOOT_DIR/campaign.log"
-    ok "Sabotaje + Chrononaut capsules plantadas"
+    echo "[FASE3] Sabotage+Exfil(simulado)" >> "$LOOT_DIR/campaign.log"
+    ok "Sabotaje + exfiltración simulada (Chrononaut eliminado en ronda 3)"
 }
 
 phase_persistence() {
@@ -135,7 +135,7 @@ phase_evasion() {
 | 1. Infiltración | Stinger | ✅ |
 | 2. Reconocimiento | Worker + Drone + Seer | ✅ |
 | 3. Sabotaje | Saboteur | ✅ |
-| 3. Exfiltración | Honeybee + Chrononaut | ✅ |
+| 3. Exfiltración | Honeybee (simulado) | ✅ |
 | 4. Persistencia | Phoenix | ✅ |
 | 4. Evolución | Tournament + HiveMind | ✅ |
 | 5. Evasión | WhisperNet | ✅ |

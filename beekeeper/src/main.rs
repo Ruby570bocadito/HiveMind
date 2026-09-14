@@ -176,7 +176,7 @@ async fn cmd_status(arena: &str, watch: bool, interval: u64) {
 
         println!("\n  ── Modules Online ──");
         println!("  ◈ Saboteur  ◆ Seer  ◉ Phoenix  ✦ Tournament");
-        println!("  ◇ HiveMind  ⬡ WhisperNet  ◎ Chrononaut  📡 Stigmergy");
+        println!("  ◇ HiveMind  ⬡ WhisperNet  📡 Stigmergy");
         println!("  ────────────────────────────────────────────");
 
         if let Some(last) = msgs.last() {
@@ -400,7 +400,7 @@ async fn cmd_scenario(mode: &str) {
         (
             "FASE 3",
             "Sabotaje+Exfil",
-            "Saboteur muta datos + Honeybee exfil + Chrononaut capsules",
+            "Saboteur muta datos + Honeybee exfil (simulado)",
         ),
         (
             "FASE 4",

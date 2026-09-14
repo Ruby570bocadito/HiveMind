@@ -112,7 +112,7 @@ Every agent:
 
 | Area | Status |
 |------|--------|
-| Tests | **366 passing** — 325 unit + 41 integration (phase-A scenarios, arena regressions, no-TCP-port invariant; +6 new: C2 api-key auth, config parse regressions) |
+| Tests | **367 passing** — 326 unit + 41 integration (phase-A scenarios, arena regressions, no-TCP-port invariant; +9 new: C2 api-key auth, C2 rate limiter, config parse regressions) |
 | CI | GitHub Actions: `cargo fmt --check`, `cargo clippy -D warnings`, full workspace build, release artifacts |
 | Fuzzing | `cargo-fuzz` targets: IPC contract validation, ring-buffer ops |
 | Benches | criterion: HTL throughput, IPC validation |

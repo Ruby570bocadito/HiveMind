@@ -295,7 +295,9 @@ max_concurrent_infections = 5
 > ⚠️ **Deshabilitado por diseño:** las rutas destructivas (cifrado
 > AES-256-GCM de archivos, borrado seguro, exfiltración por C2 y las
 > cápsulas Chrononaut asociadas) fueron eliminadas del binario el
-> 2026-09-14 a petición del propietario. Independiente de `safe_mode`:
+> 2026-09-14 a petición del propietario. Ese mismo día (ronda 3) el
+> módulo `chrononaut` completo y el módulo `propaganda` (phishing con
+> IA) se eliminaron de `hive_base`. Independiente de `safe_mode`:
 > las acciones se registran como simuladas y publican telemetría
 > honesta (`"simulated (destructive actions disabled)"`).
 
