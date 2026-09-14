@@ -93,8 +93,15 @@ def main():
         cmd += ["--validate", os.path.abspath(dataset_path_validate)]
     print("\nExporting compact .bin (hive_base::ml format)...")
     if subprocess.call(cmd) != 0:
-        print("WARNING: .bin export failed; worker will fall back to ONNX "
-              "(which hive_base::ml cannot parse) and scout degrades to heuristics.")
+        # Ronda 9: fallar en serio. El .bin es lo que el worker incrusta y
+        # hive_base::ml no puede parsear ONNX, así que un export roto significa
+        # scout degradado a heurísticas — en CI eso debe ser rojo, no un aviso
+        # que nadie lee (y el .bin comprometido del checkout enmascararía el
+        # fallo en un test de existencia).
+        print("ERROR: .bin export/validation failed; refusing to ship a "
+              "degraded scout. Fix the export (see export_bin.py).",
+              file=sys.stderr)
+        sys.exit(1)
     else:
         print(f"Compact .bin saved to {bin_path}")
 

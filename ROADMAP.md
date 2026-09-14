@@ -55,18 +55,44 @@ Prioritized list of known gaps and planned work. Items marked ✅ are done.
   by `mlua 0.10` (lua54, vendored) in `beekeeper`; `scripting::LuaEngine`
   rewritten 1:1 (same public API, TUI untouched) + 4 unit tests. The
   future-incompat warning is gone from `cargo check`.
-- [ ] **Concurrency test suite for the arena**: loom-based tests for the
-  ring buffer (multi-writer / multi-reader), reader/writer cursor invariants.
+- [x] **Concurrency test suite for the arena** (ronda 9): three exhaustive
+  loom models over the REAL `shared_arena.rs` (included by `#[path]` in the
+  `loom-model` crate, compiled with `--cfg loom`): concurrent registry claims
+  (distinct slots, no garbage identities), message publish→acquire-read
+  (unique seqs, incl. the seq==0 corner), and DEAD-mark racing a reservation
+  (sticky bit survives). Writing them forced the ronda-9 memory-model
+  hardening of the registry (see below) and surfaced a loom gotcha now
+  documented in `loom-model`: its atomics must be CONSTRUCTED — casting
+  zeroed shm memory into them produces unregistered cells and impossible
+  behavior.
 - [x] **ML roundtrip in CI** (ronda 8): `worker::tests::embedded_scout_model_roundtrip`
   decrypts the embedded model, parses it with `hive_base::ml::RandomForest`
   and classifies — no Python needed. Also exposed and fixed a real bug:
   `from_binary` trusted untrusted headers and could attempt ~512 GB
   allocations on corrupt input (now bounded and rejected).
-- [x] **CI repair** (ronda 8): `ci.yml` had a malformed trigger
+- [x] **CI repair** (ronda 8 + ronda 9): `ci.yml` had a malformed trigger
   (`branches: aster]`) and still built `weaver` (removed in ronda 2) — CI
-  could not have been running. Fixed triggers, modernized jobs (tests via
+  could not have been running. Ronda 8 modernized the jobs (tests via
   default-members, builds of the 4 agents + c2-server, clippy surfaced,
-  Python syntax check for the training pipeline, release builds include queen).
+  Python syntax check, release builds include queen) but its diff never
+  touched the `on:` block — the trigger fix claimed in its commit message
+  only landed in ronda 9. Ronda 9 completed the repair: real triggers
+  (`branches: [master]`), `cargo fmt --check` + `clippy -D warnings` as
+  blocking gates, a dedicated loom job, an end-to-end ML pipeline job
+  (dataset → train → export → parity validation, failing the build on
+  export errors) and release artifacts actually uploaded.
+- [x] **Arena registry memory-model hardening** (ronda 9): the ronda-6 TOCTOU
+  fix only made the claim a CAS — `flags` was still read non-atomically
+  (pass-1/enumerate), mutated non-atomically in `mark_agent_dead` (`|=`), and
+  identity fields were written AFTER the slot was published, with no
+  happens-before edge for readers. Protocol now: CAS 0→RESERVED(0x80), fill
+  identity, publish with `fetch_or(ACTIVE, Release)`; DEAD is a sticky
+  `fetch_or`; `role` is atomic. Layout unchanged.
+- [x] **Dual-use hygiene sweep** (ronda 9): dead `PrivEscResult` struct
+  (leftover from an executing era) deleted; `privesc.rs` (read-only
+  enumeration, linpeas-style) and `remote_shell.rs` (C2-core shell behind the
+  task_poller audit + deny-list) carry explicit decision headers like
+  `lateral.rs`/`fileless.rs` already did.
 
 ## P2 — polish
 
@@ -80,5 +106,6 @@ Prioritized list of known gaps and planned work. Items marked ✅ are done.
 - [ ] Helm chart: documented image build/tag flow, de-escalated
   securityContext defaults, remove unused ConfigMap keys.
 - [ ] Progressive lint tightening: `#![deny(clippy::unwrap_used)]` for the
-  core modules (`comms`, `shared_arena`, `telemetry`, `ldc`).
+  core modules (`comms`, `shared_arena`, `telemetry`, `ldc`). Baseline
+  `clippy -D warnings` + `fmt --check` are CI gates since ronda 9.
 - [ ] Fuzz the telemetry ring buffer with concurrent writers/readers.

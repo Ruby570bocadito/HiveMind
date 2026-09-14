@@ -1,3 +1,17 @@
+//! Privilege-escalation VECTOR ENUMERATION — Hive Colony (solo lectura).
+//!
+//! Decision de ronda 6/9 (mandato "hazlo real o elimínalo"): este módulo es
+//! un auditor local estilo linpeas para triage defensivo de los anfitriones
+//! propios del laboratorio. Enumera vectores (SUID, sudo -l, getcap, rutas
+//! escribibles, cron, grupo docker, NFS no_root_squash, versión de kernel,
+//! cgroups) SIN ejecutar ninguno: no existe ruta de código que escale
+//! privilegios. Los structs de ejecución de la era anterior
+//! (`PrivEscResult { root_shell, new_uid, ... }`) quedaron como código
+//! muerto y fueron eliminados en la ronda 9.
+//!
+//! Tests: `test_scan_suid_binaries_readonly` garantiza que la enumeración
+//! no muta estado ni panicca.
+
 use std::process::Command;
 use tracing::info;
 
@@ -17,15 +31,6 @@ pub struct PrivEscVector {
     pub description: String,
     pub mitre_id: &'static str,
     pub risk: RiskLevel,
-}
-
-#[derive(Debug, Clone)]
-pub struct PrivEscResult {
-    pub success: bool,
-    pub technique: String,
-    pub root_shell: bool,
-    pub new_uid: Option<u32>,
-    pub output: String,
 }
 
 pub fn scan_privilege_escalation() -> Vec<PrivEscVector> {
@@ -320,7 +325,6 @@ fn scan_container_escapes() -> Vec<PrivEscVector> {
     vectors
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -330,11 +334,6 @@ mod tests {
         assert!(RiskLevel::Low < RiskLevel::Critical);
         assert!(RiskLevel::Medium < RiskLevel::High);
     }
-
-
-
-
-
 
     #[test]
     fn test_scan_sorted_by_risk() {
@@ -369,7 +368,6 @@ mod tests {
         assert_eq!(vecs[1].risk, RiskLevel::High);
         assert_eq!(vecs[2].risk, RiskLevel::Critical);
     }
-
 
     #[test]
     fn test_scan_suid_binaries_readonly() {

@@ -10,7 +10,10 @@ fn main() {
 
     let model_path = Path::new("models/shaper_policy.onnx");
     if !model_path.exists() {
-        println!("cargo:warning=Shaper model file not found: {:?}", model_path);
+        println!(
+            "cargo:warning=Shaper model file not found: {:?}",
+            model_path
+        );
         return;
     }
 
@@ -23,8 +26,11 @@ fn main() {
     let enc_path = Path::new(&out_dir).join("shaper_policy.onnx.enc");
     fs::write(&enc_path, &encrypted).expect("Failed to write encrypted model");
 
-    println!("cargo:warning=Obfuscated shaper model: {} bytes -> {} bytes",
-        model_bytes.len(), encrypted.len());
+    println!(
+        "cargo:warning=Obfuscated shaper model: {} bytes -> {} bytes",
+        model_bytes.len(),
+        encrypted.len()
+    );
 }
 
 fn xor_encrypt(data: &[u8], seed: &[u8]) -> Vec<u8> {
@@ -40,17 +46,30 @@ fn xor_encrypt(data: &[u8], seed: &[u8]) -> Vec<u8> {
 
 fn keystream_byte(seed: &[u8], nonce: &[u8], pos: usize) -> u8 {
     let mut h: u32 = 0x9e3779b9;
-    for &b in seed { h = h.wrapping_mul(31).wrapping_add(b as u32); }
-    for &b in nonce { h = h.wrapping_mul(31).wrapping_add(b as u32); }
+    for &b in seed {
+        h = h.wrapping_mul(31).wrapping_add(b as u32);
+    }
+    for &b in nonce {
+        h = h.wrapping_mul(31).wrapping_add(b as u32);
+    }
     h = h.wrapping_mul(31).wrapping_add(pos as u32);
-    h = h.wrapping_mul(31).wrapping_add(pos.wrapping_mul(0x517cc1b7) as u32);
+    h = h
+        .wrapping_mul(31)
+        .wrapping_add(pos.wrapping_mul(0x517cc1b7) as u32);
     ((h >> 16) ^ h) as u8
 }
 
 fn rand_u8() -> u8 {
     use std::time::{SystemTime, UNIX_EPOCH};
-    let seed = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos() as u64;
-    let mut state = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
-    state = state.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+    let seed = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos() as u64;
+    let mut state = seed
+        .wrapping_mul(6364136223846793005)
+        .wrapping_add(1442695040888963407);
+    state = state
+        .wrapping_mul(6364136223846793005)
+        .wrapping_add(1442695040888963407);
     (state >> 32) as u8
 }

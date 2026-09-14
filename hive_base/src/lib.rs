@@ -52,7 +52,7 @@ pub use identity::AgentIdentity;
 pub use lateral::discover_hosts;
 pub use ldc::{Decision, Message, Payload, Role, SignedMessage, Value};
 pub use phoenix::{AgentBlueprint, ColonyGenome, GenomeFragment};
-pub use privesc::{PrivEscResult, PrivEscVector, RiskLevel};
+pub use privesc::{PrivEscVector, RiskLevel};
 pub use remote_shell::{
     execute_command, execute_command_with_timeout, CommandResult, ExecSession, WsShell,
 };

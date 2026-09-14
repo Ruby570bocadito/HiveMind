@@ -45,7 +45,8 @@ fn agent_id_from_uuid(id: Uuid) -> [u8; 16] {
 }
 
 fn register_agent(ptr: *mut u8, id: [u8; 16]) -> usize {
-    arena::find_or_claim_agent_slot(ptr, id).expect("slot free")
+    // Ronda 9: role y verifying_key forman parte del claim.
+    arena::find_or_claim_agent_slot(ptr, id, 0, [0u8; 32]).expect("slot free")
 }
 
 fn make_collector(agent_id: [u8; 16], ptr: *mut u8, dir: &Path) -> TelemetryCollector {
@@ -799,8 +800,12 @@ mod scenario5_cross_module {
         let did = hive.propose_from_operator(queen_id, "colony_sync".into(), HashMap::new());
         assert_eq!(hive.directives.len(), 1);
 
-        let (arena_msg, _pid) =
-            Message::proposal(queen_id, Role::Queen, "colony_sync".into(), "execute".into());
+        let (arena_msg, _pid) = Message::proposal(
+            queen_id,
+            Role::Queen,
+            "colony_sync".into(),
+            "execute".into(),
+        );
 
         let mut rep = HashMap::new();
         rep.insert(worker_id, 1.0);
@@ -942,7 +947,8 @@ mod scenario5_cross_module {
 
         let queen_id = test_id();
 
-        let did = hive.propose_from_operator(queen_id, "scheduled_rebalance".into(), HashMap::new());
+        let did =
+            hive.propose_from_operator(queen_id, "scheduled_rebalance".into(), HashMap::new());
         let mut rep = HashMap::new();
         rep.insert(queen_id, 1.0);
         let vote = Message::vote(queen_id, Role::Queen, did, Decision::Support, 1.0);

@@ -63,3 +63,42 @@ no simulación). Se eliminan bajo el mismo mandato.
 | opsec | REAL (timing) | Jitter/ventanas horarias del beacon (sin anti-análisis) |
 | stigmergy | REAL | Trails cifrados con `colony_key()` (`HIVE_MASTER_KEY`) |
 | chaos / tournament / ML / hivemind | REAL (interno) | Ingeniería interna de la colonia, sin efectos externos |
+
+## Ronda 9 — endurecimiento del arena e higiene dual-use (2026-09-15)
+
+**Protocolo de memoria del registro del arena (`hive_base::shared_arena`):**
+el byte `flags` es ahora 100% atómico. Antes: el claim era un CAS (fix TOCTOU
+de la ronda 6) pero pass-1/enumerate loían `flags` sin atomicidad,
+`mark_agent_dead` hacía `flags |= 2` no atómico (RMW que podía pisar un CAS
+concurrente o perderse), y `agent_id`/`verifying_key` se escribían DESPUÉS de
+publicar el slot como activo — lectores sincronizados por `flags` no tenían
+arista happens-before hacia esas escrituras y podían enumerar identidad
+corrupta. Ahora: `CAS FREE→RESERVED(0x80)` → relleno de identidad en reserva →
+publicación con `fetch_or(ACTIVE, Release)`; DEAD es pegajoso vía `fetch_or`;
+`role` es `AtomicU8`. Layout de memoria intacto (mismos tamaños/offsets).
+
+**Verificación exhaustiva con loom:** nuevo crate `loom-model` que incluye el
+`shared_arena.rs` REAL vía `#[path]` y lo compila con `--cfg loom` (shims de
+atómicos + MAX_AGENTS/MAX_MESSAGES=2). Tres modelos exhaustivos de
+intercalados: (1) claims concurrentes → slots distintos, identidad jamás
+basura; (2) publicación de mensaje → lectura Acquire, seqs únicos (incluido
+el caso seq==0); (3) `mark_agent_dead` en carrera con reserva → el bit DEAD
+no se pierde jamás. Lección documentada en `loom-model/src/lib.rs`: los
+atómicos de loom deben CONSTRUIRSE (`AtomicU64::new` + move), no proyectarse
+sobre memoria shm ceroada — con memoria ceroada loom produce celdas no
+registradas y comportamientos imposibles.
+
+**Higiene dual-use:** `PrivEscResult` (struct de ejecución de escalada de una
+era anterior, sin productor desde la ronda 6) eliminado. `privesc.rs`
+documentado como enumeración de vectores de SOLO LECTURA (estilo linpeas,
+triage defensivo de anfitriones propios; no existe ruta de código que
+escale) y `remote_shell.rs` como núcleo C2 legítimo (tasking auditado por
+`task_poller` con deny-list destructiva desde la ronda 6) — coherente con
+`lateral.rs` y `fileless.rs`, que ya llevaban cabeceras de decisión.
+
+**CI real:** triggers `branches: [master]` (el YAML anterior era sintáctica
+pero semánticamente inválido — la CI nunca pudo dispararse), `cargo fmt
+--check` y `clippy -D warnings` como gates bloqueantes, job loom dedicado,
+job ML end-to-end (dataset → train → export → validación de paridad;
+`train_classifier.py` ahora falla de verdad si el export falla) y artifacts
+de release subidos.

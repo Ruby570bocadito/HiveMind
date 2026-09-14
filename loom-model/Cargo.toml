@@ -1,0 +1,26 @@
+[package]
+name = "loom-model"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+# Loom models for hive_base::shared_arena — the REAL file, not a copy.
+#
+# The module is pulled in with #[path] and compiled twice:
+#   * plain build  → std::sync::atomic, unit tests of the file itself
+#   * RUSTFLAGS="--cfg loom" cargo test -p loom-model --release
+#     → loom::sync::atomic shims, MAX_AGENTS/MAX_MESSAGES shrink to 2 and
+#       the exhaustive interleaving models in `models` run.
+#
+# Kept OUT of default-members: `cargo test` in the workspace root must not
+# pay for it, and CI runs the loom build as its own step.
+
+[dependencies]
+# Regular dependency (not dev): the #[path] module imports loom inside the
+# library itself when compiled with --cfg loom.
+loom = "0.7"
+# generate_arena_name() in the included file uses rand.
+rand = "0.8"
+
+[lints.rust]
+unexpected_cfgs = { level = "allow", check-cfg = ['cfg(loom)'] }

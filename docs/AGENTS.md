@@ -517,3 +517,24 @@ safe_ips = ["192.168.1.100", "192.168.1.1"]
 > aún listado (eliminado en ronda 2) y jobs modernizados. Split de
 > `hive_base` por features: análisis en ROADMAP → diferido. Tests: 281
 > (232 unit).
+>
+> ⚠️ **Corrección (ronda 9):** el diff de la ronda 8 NO tocó el bloque
+> `on:` de ci.yml — el trigger `aster]` sobrevivió a esa ronda y el fix se
+> materializó de verdad en la ronda 9.
+
+> **Nota ronda 9 (2026-09-15):** endurecimiento del protocolo de memoria del
+> registro del arena (flags 100% atómico: CAS 0→RESERVED(0x80), relleno de
+> identidad en reserva, publicación con `fetch_or(ACTIVE, Release)`, DEAD
+> pegajoso, `role` atómico — layout intacto); el análisis destapó que la
+> identidad se escribía DESPUÉS de publicar el slot y que `mark_agent_dead`
+> hacía RMW no atómico contra el CAS. Verificación con loom del archivo REAL
+> vía crate `loom-model` (#[path] + `--cfg loom`): 3 modelos exhaustivos
+> (claims concurrentes, publicación→lectura Acquire, DEAD vs reserva); lección
+> documentada: los atómicos de loom deben CONSTRUIRSE, no proyectarse sobre
+> shm ceroada. CI: triggers reales (`branches: [master]`, la ronda 8 no llegó
+> a tocarlos), `fmt --check` y `clippy -D warnings` bloqueantes, job loom,
+> job ML end-to-end (dataset → train → export → paridad; `train_classifier.py`
+> ahora sale 1 si el export falla — el WARNING enmascaraba fallos) y artifacts
+> de release subidos. Higiene dual-use: `PrivEscResult` muerto eliminado,
+> cabeceras de decisión en `privesc.rs` (solo lectura) y `remote_shell.rs`
+> (núcleo C2 tras auditoría del poller). Tests: 286 (237 unit).

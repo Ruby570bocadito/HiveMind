@@ -40,3 +40,9 @@ harness = false
 [[bench]]
 name = "ipc_validation"
 harness = false
+
+# cfg(loom) is set only when shared_arena.rs is compiled inside the
+# loom-model crate (see loom-model/). Declared here so `unexpected_cfgs`
+# stays silent for the cfg-shims in shared_arena.rs.
+[lints.rust]
+unexpected_cfgs = { level = "allow", check-cfg = ['cfg(loom)'] }

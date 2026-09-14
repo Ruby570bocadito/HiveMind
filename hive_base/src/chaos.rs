@@ -747,7 +747,7 @@ mod tests {
     }
 
     fn register_test_agent(ptr: *mut u8, id: [u8; 16]) -> usize {
-        arena::find_or_claim_agent_slot(ptr, id).expect("slot available")
+        arena::find_or_claim_agent_slot(ptr, id, 0, [0u8; 32]).expect("slot available")
     }
 
     fn write_dummy_message(ptr: *mut u8) -> usize {

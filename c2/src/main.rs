@@ -190,7 +190,9 @@ async fn main() {
         tracing::warn!("CORS set to PERMISSIVE (--cors-anywhere) — only for throwaway labs");
         Some(CorsLayer::permissive())
     } else if args.cors_origins.is_empty() {
-        tracing::info!("CORS disabled (no --cors-origin) — browsers cannot read the API cross-origin");
+        tracing::info!(
+            "CORS disabled (no --cors-origin) — browsers cannot read the API cross-origin"
+        );
         None
     } else {
         let mut origins = Vec::new();
@@ -266,7 +268,10 @@ async fn main() {
     if args.rate_limit == 0 {
         tracing::warn!("Rate limiting DISABLED (--rate-limit 0)");
     } else {
-        tracing::info!("Rate limiting ENABLED — {} req/min per client IP", args.rate_limit);
+        tracing::info!(
+            "Rate limiting ENABLED — {} req/min per client IP",
+            args.rate_limit
+        );
     }
     tracing::info!("  POST /beacon    - Agent heartbeats + task results");
     tracing::info!("  GET  /task/:id  - Task pull");
@@ -313,10 +318,7 @@ async fn auth_middleware(
     if state.api_key.is_empty() {
         return Ok(next.run(req).await);
     }
-    let provided = req
-        .headers()
-        .get("x-api-key")
-        .and_then(|v| v.to_str().ok());
+    let provided = req.headers().get("x-api-key").and_then(|v| v.to_str().ok());
     if !api_key_matches(&state.api_key, provided) {
         tracing::warn!(path = %req.uri().path(), "Rejected request: missing/invalid x-api-key");
         return Err(StatusCode::UNAUTHORIZED);

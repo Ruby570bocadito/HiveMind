@@ -1,3 +1,19 @@
+//! Remote shell — Hive Colony (núcleo C2, ronda 9: cabecera de decisión).
+//!
+//! El shell remoto ES la función central de un framework C2/orquestador
+//! (equivalente a `shell` en Sliver/Mythic): el operador envía una tarea y
+//! el agente la ejecuta localmente. Decisión de alcance, coherente con las
+//! rondas 6–8:
+//!
+//! - Todo tasking llega por `task_poller::TaskPoller::execute`, que audita
+//!   cada comando con su task_id y RECHAZA los tipos destructivos
+//!   (exfil/encrypt/wipe/destroy/sabotage — deny-list de la ronda 6).
+//! - `execute_command*` ejecuta `sh -c` y captura salida con límite de 1 MB
+//!   (saturación del arena); `ExecSession`/`WsShell` dan shell interactivo
+//!   por sesión con stop-flag.
+//! - Sin persistencia, sin keylogging, sin exfiltración: solo ejecución y
+//!   captura, como cualquier shell de gestión remota.
+
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;

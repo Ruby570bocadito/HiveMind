@@ -10,6 +10,7 @@ members = [
     "beekeeper",
     "buzz",
     "c2",
+    "loom-model",
 ]
 
 # stinger embeds release binaries (include_bytes! on target/release/*),

@@ -63,7 +63,6 @@ impl FragmentLocation {
     }
 }
 
-
 // ── Phoenix ──────────────────────────────────────────────────────────────────
 
 pub struct Phoenix;
@@ -175,5 +174,4 @@ impl Phoenix {
         }
         serde_json::from_slice(&data).map_err(|e| e.to_string())
     }
-
 }

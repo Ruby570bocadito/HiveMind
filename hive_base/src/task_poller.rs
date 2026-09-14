@@ -89,7 +89,9 @@ impl TaskPoller {
             &c2,
             agent_id,
             agent_role,
-            std::env::var("HIVE_C2_API_KEY").ok().filter(|k| !k.is_empty()),
+            std::env::var("HIVE_C2_API_KEY")
+                .ok()
+                .filter(|k| !k.is_empty()),
         ))
     }
 
@@ -118,10 +120,7 @@ impl TaskPoller {
                 }
             },
             Ok(resp) => {
-                warn!(
-                    "TASK_POLLER: C2 respondió {} en GET /task",
-                    resp.status()
-                );
+                warn!("TASK_POLLER: C2 respondió {} en GET /task", resp.status());
                 Vec::new()
             }
             Err(e) => {

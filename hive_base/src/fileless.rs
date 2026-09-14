@@ -38,11 +38,9 @@ impl MemfdBinary {
         }
 
         let mut file = unsafe { std::fs::File::from_raw_fd(fd) };
-        if let Err(e) = file.write_all(binary_data) {
-            // The File owns the fd and closes it on drop; no manual close here
-            // (a second close could release an fd reused by another thread).
-            return Err(e);
-        }
+        // The File owns the fd and closes it on drop; no manual close here
+        // (a second close could release an fd reused by another thread).
+        file.write_all(binary_data)?;
 
         let raw_fd = file.into_raw_fd();
 

@@ -292,7 +292,6 @@ impl ScoutAgent {
 
     /// Run system profile scan (recon de solo lectura, ronda 6).
     /// El ciclo de sabotaje fue eliminado junto con el módulo saboteur.
-
     async fn run(&mut self) {
         info!(
             "Hive Worker starting | ID: {} | Forest model active",
@@ -395,7 +394,9 @@ mod tests {
         let edr_like = [
             150.0, 30.0, 45.0, 80.0, 300.0, 1.0, 0.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0,
         ];
-        let (c, p) = rf.predict_proba(&edr_like).expect("clasifica muestra EDR-like");
+        let (c, p) = rf
+            .predict_proba(&edr_like)
+            .expect("clasifica muestra EDR-like");
         assert!(c < 3 && p > 0.0);
     }
 

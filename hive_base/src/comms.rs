@@ -50,15 +50,17 @@ impl HiveChamber {
         }
 
         let id_bytes = identity.id().as_bytes().to_owned();
-        let slot_idx = arena::find_or_claim_agent_slot(ptr, id_bytes).ok_or_else(|| {
-            std::io::Error::new(
-                std::io::ErrorKind::AddrInUse,
-                "Arena full - no agent slots available",
-            )
-        })?;
-
-        arena::set_agent_role(ptr, slot_idx, role_u8);
-        arena::set_verifying_key(ptr, slot_idx, identity.verifying_key_bytes());
+        // Ronda 9: role/verifying_key forman parte del claim — se escriben
+        // con el slot aún RESERVED y se publican atómicamente con ACTIVE.
+        // (Antes se escribían tras publicar, en carrera con enumerate.)
+        let slot_idx =
+            arena::find_or_claim_agent_slot(ptr, id_bytes, role_u8, identity.verifying_key_bytes())
+                .ok_or_else(|| {
+                    std::io::Error::new(
+                        std::io::ErrorKind::AddrInUse,
+                        "Arena full - no agent slots available",
+                    )
+                })?;
 
         let now = crate::utils::timestamp_now();
         arena::update_heartbeat(ptr, slot_idx, now);
@@ -293,7 +295,6 @@ impl HiveChamber {
             }
         }
     }
-
 
     // ── execute_command (D-6: remote shell via arena) ───────────────────────
 
