@@ -155,7 +155,9 @@ threshold = 0.66
 | `HIVE_C2_API_KEY` | — | Clave si el C2 exige `x-api-key` (TaskPoller) |
 | `HIVE_POLL_SECS` | `10` | Intervalo del TaskPoller (mín. 2 s) |
 | `HIVE_LAB_AUTHORIZED` | — | `1` habilita ejecución fileless en lab autorizado |
-| `HIVE_LAB_MODE` | `0` | Modo laboratorio (1=simulado) |
+| `HIVE_LAB_MODE` | `0` | Modo laboratorio (1=simulado). Sin esta variable, todos los clientes TLS del enjambre verifican certificados estrictamente (ronda 5) |
+| `HIVE_MASTER_KEY` | — | Clave de colmena (32B derivadas) para trails stigmergy y cifrado de fragmentos phoenix. En producción real, genera una única por despliegue (p. ej. `openssl rand -base64 32`); si falta, se usa una clave por defecto documentada (solo compatibilidad) |
+| `HIVE_PERSISTENCE_DRY_RUN` | — | `1` = la remediación de persistencia (`honeycomb::uninstall_persistence`) no toca el host; solo registra lo que haría (ronda 5) |
 | `HIVE_TELEMETRY_DIR` | `/tmp/hive_telemetry` | Directorio de telemetría |
 | `HIVE_EXEC_TIMEOUT` | `30` | Timeout para comandos (s) |
 | `RUST_LOG` | `info` | Nivel de logging |

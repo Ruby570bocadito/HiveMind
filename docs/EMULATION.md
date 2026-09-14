@@ -30,6 +30,7 @@ referencia autorizada de qué es qué.
 | `exfil` | SIMULADO | `dns_exfiltrate`/`http_exfiltrate` no emiten tráfico. `dns_encode` y `ExfilScheduler` (planificación pura) se conservan para detección. |
 | `lateral` | HÍBRIDO | `discover_hosts()` real (ping sweep de lab). `harvest_credentials`/`exec_ssh`/`deploy_agent_ssh` simulados, con gate BRAIN intacto. |
 | `phoenix` | HÍBRIDO | Genoma y fragmentación **en memoria** reales; `hide`/`hide_fragment`/`install_persistence`/`rebuild_from_genome` simulados (cero escrituras). |
+| `honeycomb` | EMULADO (ronda 5) | `install_persistence`/`install_uefi_bootkit`/`generate_bootkit_stub` simulados (cero escrituras en crontab/systemd/bashrc/EFI). `uefi_bootkit_feasible`/`bootkit_installed` reales (solo lectura). `uninstall_persistence`/`remove_uefi_bootkit` reales pero estrictamente de remediación (solo borran artefactos con marker `HIVE_PERSISTENCE_MARKER`/`.hive_bak`; sin `crontab -r`) y respetan `HIVE_PERSISTENCE_DRY_RUN=1`. |
 | `saboteur` | HÍBRIDO | `scan_for_targets()` real (solo lectura). `execute_order()` simulado. |
 | `anti_forensics` | SIMULADO | Sin borrado ni timestomping; documenta rutas consideradas. |
 | `kerberos` / `smb` | SIMULADO | Sin tráfico hacia DC/hosts; resultados estructurados simulados. |

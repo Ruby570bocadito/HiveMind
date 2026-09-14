@@ -482,3 +482,11 @@ safe_ips = ["192.168.1.100", "192.168.1.1"]
 | ML | Random Forest embebido en runtime; DQN/PPO en training/ (export a runtime pendiente, ver ROADMAP) |
 | Evasión | 10 capas (IPC fileless, syscalls, anti-debug, ...) |
 | Target | Linux x86_64, Windows x86_64 (cross-compile) |
+
+> **Nota ronda 5 (2026-09-14):** integrado PR #1 (`audit-improvements`): licencia
+> MIT, TLS sin `danger_accept_invalid_certs` salvo en `HIVE_LAB_MODE`, fix de
+> doble `close()` de fd en `fileless`, `colony_key()` (`HIVE_MASTER_KEY`) para
+> stigmergy/phoenix, `default-members` para el orden de build de stinger.
+> `honeycomb` pasa a EMULADO: persistencia y EFI sin escrituras; desinstalación
+> quirúrgica de remediación (sin `crontab -r`) que respeta
+> `HIVE_PERSISTENCE_DRY_RUN=1`.
