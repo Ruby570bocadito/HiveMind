@@ -35,9 +35,11 @@ Prioritized list of known gaps and planned work. Items marked ✅ are done.
   seer, channel_rotator, death_dance, swarm worm agent, C2 /collect loot
   endpoint, syscalls::windows). `reactive_llm::reactive_cycle` and
   `io_uring_ops` ABI remain as P1 cleanup items.
-- [ ] **ML model converter**: script that converts the `training/` exports
-  (`.onnx` / `.joblib` / `.json`) into the runtime `.bin` format consumed by
-  `hive_base::ml::RandomForest::from_binary`, plus a test on roundtrip parity.
+- ✅ ML model converter (ronda 7): `training/export_bin.py` converts a sklearn
+  RandomForest (`.joblib`) into the runtime `.bin` format consumed by
+  `hive_base::ml::RandomForest::from_binary`; wired into `train_classifier.py`
+  with a validation step that replicates the Rust evaluation in NumPy and
+  checks parity against sklearn (byte-exact layout, leaf sentinels -1).
 - [ ] **Fix or delete the remaining dead paths**: `reactive_llm::reactive_cycle`
   compiles a never-declared `variant.rs`, and `io_uring_ops` has an incorrect
   ABI with no callers. Each one: implement honestly or delete.

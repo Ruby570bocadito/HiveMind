@@ -479,8 +479,8 @@ safe_ips = ["192.168.1.100", "192.168.1.1"]
 | C2 | HTTP(S), DNS Tunnel, ICMP Tunnel, Dead Drop |
 | Failover | Priority → Race → RoundRobin |
 | Consenso | HiveMind (voting, 66% threshold) |
-| ML | Random Forest embebido en runtime; DQN/PPO en training/ (export a runtime pendiente, ver ROADMAP) |
-| Evasión | 10 capas (IPC fileless, syscalls, anti-debug, ...) |
+| ML | Random Forest embebido en runtime; pipeline reproducible (dataset → train → `training/export_bin.py` → `.bin`); DQN/PPO en training/ |
+| Evasión | ELIMINADA (ronda 6–7); solo queda opsec timing y transporte TLS |
 | Target | Linux x86_64, Windows x86_64 (cross-compile) |
 
 > **Nota ronda 5 (2026-09-14):** integrado PR #1 (`audit-improvements`): licencia
@@ -499,3 +499,11 @@ safe_ips = ["192.168.1.100", "192.168.1.1"]
 > endpoint `POST /collect` del C2. Podas: privesc (solo scan), lateral (solo
 > discover_hosts), phoenix (solo genoma en memoria), swarming (solo decisión).
 > TaskPoller: tareas destructivas → `rejected`. Matriz: `docs/CAPABILITIES.md`.
+
+> **Nota ronda 7 (2026-09-14):** purga de dead-paths de evasión (código real
+> sin consumidores que sobrevivió a las rondas previas): `reactive_llm`
+> (ofuscador polimórfico vía Ollama + mutación de binarios) y `io_uring_ops`
+> (E/S encubierta estilo RingReaper). Pipeline ML ahora reproducible
+> end-to-end: `training/export_bin.py` convierte el RF de sklearn al formato
+> `.bin` de `hive_base::ml` con validación de paridad contra sklearn;
+> `train_classifier.py` lo invoca automáticamente. Tests: 275 (226 unit).

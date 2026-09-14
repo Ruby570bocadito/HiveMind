@@ -14,7 +14,7 @@
   <img src="https://img.shields.io/badge/rust-stable%201.82%2B-000000?style=flat-square&logo=rust" alt="Rust"/>
   <img src="https://img.shields.io/badge/version-3.0.0-6C63FF?style=flat-square" alt="Version"/>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-6C63FF?style=flat-square" alt="MIT License"/></a>
-  <img src="https://img.shields.io/badge/tests-278%20passing-73d0a0?style=flat-square" alt="Tests"/>
+  <img src="https://img.shields.io/badge/tests-275%20passing-73d0a0?style=flat-square" alt="Tests"/>
   <img src="https://img.shields.io/badge/platform-linux%20x86__64%20%7C%20windows%20(partial)-0d1117?style=flat-square&logo=linux" alt="Platform"/>
 </p>
 
@@ -46,8 +46,8 @@
 - **LLM optional, not required.** The Queen can consult a local Ollama model
   for strategy, and the whole colony degrades gracefully to heuristic mode
   when no model is present.
-- **Tested like a library, not a script.** 278 tests across five suites
-  (229 unit · 9 integration · 34 lab/e2e · 6 c2-server), two criterion benches,
+- **Tested like a library, not a script.** 275 tests across five suites
+  (226 unit · 9 integration · 34 lab/e2e · 6 c2-server), two criterion benches,
   and cargo-fuzz targets on the IPC and ring-buffer paths.
 
 ## Architecture
@@ -118,7 +118,7 @@ Every agent:
 
 | Area | Status |
 |------|--------|
-| Tests | **278 passing** — 229 unit + 43 integration (phase-A scenarios, arena regressions, lab/e2e) + 6 c2-server (auth, rate limiter) |
+| Tests | **275 passing** — 226 unit + 43 integration (phase-A scenarios, arena regressions, lab/e2e) + 6 c2-server (auth, rate limiter) |
 | CI | GitHub Actions: `cargo fmt --check`, `cargo clippy -D warnings`, full workspace build, release artifacts |
 | Fuzzing | `cargo-fuzz` targets: IPC contract validation, ring-buffer ops |
 | Benches | criterion: HTL throughput, IPC validation |
@@ -129,13 +129,13 @@ Repository layout:
 
 ```
 hive_base/    shared library: arena IPC, LdC protocol, consensus, telemetry,
-              config (45 modules)
+              config (43 modules)
 agents/       queen · worker · drone · honeybee
 c2/           Rust C2 server (axum + SQLite, :8444)
 beekeeper/    operator TUI (ratatui + Lua scripting)
 stinger/      launcher: fileless agent execution via memfd (lab-gated)
 buzz/         dev harness: boots a local colony, tears it down
-training/     Python ML: dataset gen, RF classifier, DQN/PPO experiments
+training/     Python ML: dataset gen, RF classifier, .bin exporter, DQN/PPO experiments
 tests/        end-to-end lab scripts + Python reference C2
 deploy/       Helm chart · docker compose labs
 ```
@@ -158,9 +158,10 @@ deploy/       Helm chart · docker compose labs
 Kept public on purpose — a portfolio should know what it isn't:
 
 - The Windows agent paths compile but have no CI coverage or tested artifacts.
-- `training/` ML scripts are real (sklearn/torch), but the converter from
-  their export format to the runtime `.bin` model is pending — the shipped
-  model is a pre-trained fixture.
+- The scout `.bin` model shipped in `agents/worker/models/` is a pre-trained
+  fixture; the full regeneration path is now reproducible end-to-end:
+  `generate_dataset.py` → `train_classifier.py` → `export_bin.py` (validated
+  against sklearn predictions before build.rs embeds it).
 - `rlua` is archived upstream; migration to `mlua` is tracked in the roadmap.
 - Destructive/offensive capabilities **do not exist** in this codebase
   (ronda 6): exploits, exfiltration, sabotage, credential harvesting,

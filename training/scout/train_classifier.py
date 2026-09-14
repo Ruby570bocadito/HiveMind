@@ -1,9 +1,14 @@
 """
-Train Scout classifier model and export to ONNX format.
+Train Scout classifier model and export ONNX + compact .bin formats.
+
+The .bin (hive_base::ml custom format) is what the Rust worker actually
+parses; ONNX remains only as an interop artifact. See ../export_bin.py.
+
 Usage: python train_classifier.py
 """
 
 import os
+import subprocess
 import sys
 
 def main():
@@ -15,7 +20,7 @@ def main():
         import joblib
     except ImportError:
         print("Required packages not installed.")
-        print("Run: pip install pandas scikit-learn joblib onnx onnxruntime skl2onnx")
+        print("Run: pip install pandas scikit-learn joblib onnx onnxruntime skl2onnx numpy")
         sys.exit(1)
 
     script_dir = os.path.dirname(os.path.abspath(__file__))
@@ -58,6 +63,11 @@ def main():
     joblib.dump(best_model, model_path)
     print(f"Model saved to {model_path}")
 
+    # Always persist the RandomForest too: the .bin format consumed by
+    # hive_base::ml (see training/export_bin.py) can only represent RF trees.
+    rf_path = os.path.join(model_dir, "scout_classifier_rf.joblib")
+    joblib.dump(rf, rf_path)
+
     try:
         from skl2onnx import convert_sklearn
         from skl2onnx.common.data_types import FloatTensorType
@@ -70,6 +80,23 @@ def main():
     except ImportError:
         print("skl2onnx not installed. Skipping ONNX export.")
         print("Run: pip install skl2onnx")
+
+    # Export the compact .bin format that hive_base::ml::RandomForest::
+    # from_binary parses (pure Rust, no ONNX Runtime). worker/build.rs
+    # prefers this file over the ONNX automatically.
+    export_script = os.path.join(script_dir, "..", "export_bin.py")
+    bin_path = os.path.join(model_dir, "scout_classifier.bin")
+    dataset_path_validate = dataset_path if os.path.exists(dataset_path) else None
+    cmd = [sys.executable, os.path.abspath(export_script), os.path.abspath(rf_path),
+           os.path.abspath(bin_path)]
+    if dataset_path_validate:
+        cmd += ["--validate", os.path.abspath(dataset_path_validate)]
+    print("\nExporting compact .bin (hive_base::ml format)...")
+    if subprocess.call(cmd) != 0:
+        print("WARNING: .bin export failed; worker will fall back to ONNX "
+              "(which hive_base::ml cannot parse) and scout degrades to heuristics.")
+    else:
+        print(f"Compact .bin saved to {bin_path}")
 
     feature_names_path = os.path.join(model_dir, "feature_names.txt")
     with open(feature_names_path, "w") as f:

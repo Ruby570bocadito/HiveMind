@@ -33,6 +33,18 @@ reales no era una opción; se eliminaron).
 | C2 `POST /collect` | Recepción y almacenamiento de exfiltración (loot) |
 | C2 python `/jndi` | Callback Log4Shell |
 
+## Eliminado en ronda 7 (dead-paths de evasión sin consumidores)
+
+Detectados en la auditoría de ronda 7: código de evasión **real** que había
+sobrevivido a las rondas previas por no tener ningún consumidor (dead code,
+no simulación). Se eliminan bajo el mismo mandato.
+
+| Módulo (antes) | Qué hacía al eliminarse |
+|----------------|--------------------------|
+| `reactive_llm` | Ofuscador polimórfico vía Ollama: reescritura de código con nombres cambiados, dead-code inyectado y strings ofuscados; `llm_mutate_binary` mutaba bytes de binarios (XOR) para variar el hash (evasión AV) |
+| `io_uring_ops` | E/S encubierta vía io_uring (Linux 5.1+) para saltarse hooks de libc y la visibilidad de los EDR (estilo RingReaper), con syscalls reales x86_64 |
+| `training/train_model.py` | Script legacy (8 features) que exportaba a ONNX un formato que el runtime no puede parsear; sustituido por el pipeline scout + `export_bin.py` |
+
 ## Lo que queda (REAL)
 
 | Componente | Estado | Detalle |
