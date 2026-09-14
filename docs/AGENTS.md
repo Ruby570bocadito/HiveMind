@@ -31,7 +31,7 @@
 | [Queen](#queen--overmind) | ◇ | Overmind — estrategia LLM + C2 bridge | `agents/queen/` |
 | [Worker](#worker--scout) | ◈ | Scout — reconocimiento + EDR detection | `agents/worker/` |
 | [Drone](#drone--shaper) | ◆ | Shaper — decisiones + movimiento lateral | `agents/drone/` |
-| [Honeybee](#honeybee--hoarder) | ◉ | Hoarder — ejecución final + exfiltración | `agents/honeybee/` |
+| [Honeybee](#honeybee--hoarder) | ◉ | Hoarder — ejecución final **solo simulación** (destructivo deshabilitado) | `agents/honeybee/` |
 | [Weaver](#weaver--morph) | ✦ | Morph — ofuscación polimórfica | `agents/weaver/` |
 | [Swarm](#swarm--worm) | ⬡ | Worm — auto-propagación autónoma | `agents/swarm/` |
 
@@ -87,8 +87,8 @@
 | Comando | Traducción LdC | Efecto |
 |---------|----------------|--------|
 | `scan` | `Request("scan")` | Worker escanea |
-| `exfiltrate` | `Desire("exfiltrate", 0.9)` | Honeybee exfiltra |
-| `encrypt` | `Desire("encrypt", 0.8)` | Honeybee cifra |
+| `exfiltrate` | `Desire("exfiltrate", 0.9)` | Honeybee **simula** la exfiltración (egress deshabilitado) |
+| `encrypt` | `Desire("encrypt", 0.8)` | Honeybee **simula** el cifrado (destructivo deshabilitado) |
 | `kill` | `StatusEvent("kill_switch")` | Todos se destruyen |
 | `inject_belief` | `Belief(asset, value, 1.0)` | Inyecta creencia |
 
@@ -276,50 +276,52 @@ max_concurrent_infections = 5
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│  HONEYBEE                                                       │
+│  HONEYBEE (build solo-simulación, 2026-09-14)                   │
 │                                                                 │
 │  ┌──────────────┐    ┌──────────────┐    ┌──────────────┐     │
-│  │ Busca        │───▶│ Cifra        │───▶│ Exfiltra     │     │
-│  │ targets:     │    │ AES-256-GCM  │    │ vía HTTP C2  │     │
-│  │ Documentos   │    │ 3-pass wipe  │    │ ┌──────────┐ │     │
-│  │ .ssh, .aws   │    │              │    │ │ C2 Queue │ │     │
-│  │ .config      │    │              │    │ └──────────┘ │     │
+│  │ Recibe       │───▶│ SIMULA       │───▶│ SIMULA       │     │
+│  │ proposals    │    │ encrypt      │    │ exfil/destroy│     │
+│  │ del enjambre │    │ (no-op +     │    │ (no-op +     │     │
+│  │              │    │  telemetry)  │    │  telemetry)  │     │
 │  └──────────────┘    └──────────────┘    └──────────────┘     │
 │                                                                 │
+│  Ningún archivo se lee, cifra, envía ni borra.                  │
 │  Solo ejecuta con consenso ≥80% (HiveMind)                      │
 │  Soporta: privesc (SUID, sudo, Docker, PwnKit)                  │
-│           cloud pivot (AWS, GCP, Azure)                         │
+│           remote shell, cloud pivot (AWS, GCP, Azure)           │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
 **Archivo:** `agents/honeybee/src/main.rs`
-**Rol:** Action execution, encryption, exfiltration
+**Rol:** Action execution (simulation-only), remote shell, privesc
+
+> ⚠️ **Deshabilitado por diseño:** las rutas destructivas (cifrado
+> AES-256-GCM de archivos, borrado seguro, exfiltración por C2 y las
+> cápsulas Chrononaut asociadas) fueron eliminadas del binario el
+> 2026-09-14 a petición del propietario. Independiente de `safe_mode`:
+> las acciones se registran como simuladas y publican telemetría
+> honesta (`"simulated (destructive actions disabled)"`).
 
 ### Capacidades
 
 | Capacidad | Detalle |
 |-----------|---------|
-| File encryption | AES-256-GCM con key/nonce aleatorio por archivo |
-| Secure deletion | 3-pass overwrite (random + zeros + unlink) |
-| HTTP exfiltration | POST chunks a C2 endpoint |
-| Consensus-gated | Requiere 80% de aprobación HiveMind |
-| Target discovery | Documents, Desktop, Downloads, .ssh, .aws, .config |
+| Acciones destructivas | **Solo simulación** — no-op + log + belief `simulated` |
+| Consensus-gated | Requiere 80% de aprobación HiveMind (el flujo de votación se conserva) |
+| Remote shell | Shell interactivo WebSocket bajo demanda del C2 |
 | Privesc | SUID, sudo, LD_PRELOAD, Docker, PwnKit, DirtyPipe |
 | Cloud pivot | AWS STS/EC2/S3, GCP Compute/IAM, Azure VM/KeyVault |
+| Target discovery | Solo para métricas de simulación (conteo de rutas) |
 
-### Encryption Format
+### Acciones simuladas (formato de telemetría)
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│  ARCHIVO CIFRADO                                                │
+│  RESULTADO DE ACCIÓN (belief publicado al enjambre)             │
 │                                                                 │
-│  ┌──────────────────────────────┬────────────────────────────┐  │
-│  │  Nonce (12 bytes)           │  AES-256-GCM ciphertext    │  │
-│  │  (aleatorio por archivo)    │  + authentication tag      │  │
-│  └──────────────────────────────┴────────────────────────────┘  │
-│                                                                 │
-│  La key existe SOLO en memoria del agente.                      │
-│  Sin key → datos irrecuperables.                                │
+│  encrypt_result : "simulated (destructive actions disabled)"    │
+│  exfil_result   : 0 bytes (egress deshabilitado)                │
+│  destroy_result : log "destroy simulated" (no-op)               │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
@@ -336,11 +338,15 @@ threshold = 0.8
 
 ### MITRE ATT&CK
 
-| Técnica | ID | Descripción |
-|---------|----|-------------|
-| Data Destruction | T1485 | 3-pass wipe |
-| Exfiltration Over HTTP | T1048.002 | POST a C2 |
-| Data from Local System | T1005 | Documentos, .ssh, .aws |
+Técnicas que este agente **simulaba** (conservadas como referencia
+formativa para detectarlos en un entorno real; el binario ya no las
+implementa):
+
+| Técnica | ID | Descripción (ya no ejecutada) |
+|---------|----|-------------------------------|
+| Data Destruction | T1485 | 3-pass wipe (eliminado) |
+| Exfiltration Over HTTP | T1048.002 | POST a C2 (eliminado) |
+| Data from Local System | T1005 | Documentos, .ssh, .aws (eliminado) |
 
 ---
 

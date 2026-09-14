@@ -230,11 +230,21 @@ impl Default for SwarmConfig {
 impl HiveConfig {
     /// Load config from hive.toml (legacy name: colmena.toml), falling back to defaults.
     ///
+    /// See [`Self::load_with_source`] for the search order and error policy.
+    pub fn load() -> Self {
+        Self::load_with_source().0
+    }
+
+    /// Like [`Self::load`], but also reports which file the config came from.
+    ///
+    /// Returns `(config, source)` where `source` is `None` when no config
+    /// file was found (defaults were used).
+    ///
     /// Search order: `./hive.toml` (repo root, the file shipped with the
     /// project), then `colmena.toml` (legacy), then system/user config dirs.
     /// A config file that exists but fails to parse is reported loudly
     /// instead of being silently ignored.
-    pub fn load() -> Self {
+    pub fn load_with_source() -> (Self, Option<String>) {
         let paths = [
             "hive.toml",
             "colmena.toml",
@@ -253,10 +263,10 @@ impl HiveConfig {
         for path in &paths {
             if Path::new(path).exists() {
                 match std::fs::read_to_string(path) {
-                    Ok(content) => match toml::from_str::<HiveConfig>(&content) {
+                    Ok(content) => match parse_config(&content) {
                         Ok(cfg) => {
                             tracing::info!("Loaded config from {}", path);
-                            return cfg;
+                            return (cfg, Some((*path).to_string()));
                         }
                         Err(e) => {
                             tracing::warn!(
@@ -274,7 +284,7 @@ impl HiveConfig {
         }
 
         tracing::info!("No config file found, using defaults");
-        Self::default()
+        (Self::default(), None)
     }
 
     /// Load from embedded bytes (dropper scenario).
@@ -282,6 +292,14 @@ impl HiveConfig {
         let s = std::str::from_utf8(data).ok()?;
         toml::from_str(s).ok()
     }
+}
+
+/// Parse a `hive.toml` string into a [`HiveConfig`].
+///
+/// The error is a human-readable rendering of the TOML error, suitable for
+/// showing directly to an operator (used by `beekeeper config-check`).
+pub fn parse_config(content: &str) -> Result<HiveConfig, String> {
+    toml::from_str(content).map_err(|e| e.to_string())
 }
 
 /// Generate default colmena.toml for operator customization.
@@ -309,5 +327,33 @@ mod tests {
         let loaded: HiveConfig = toml::from_str(&toml_str).unwrap();
         assert_eq!(cfg.consensus.threshold, loaded.consensus.threshold);
         assert_eq!(cfg.agents.edr_processes, loaded.agents.edr_processes);
+    }
+
+    #[test]
+    fn test_parse_config_accepts_defaults() {
+        let toml_str = toml::to_string_pretty(&HiveConfig::default()).unwrap();
+        let cfg = parse_config(&toml_str).expect("generated default config must parse");
+        assert!(cfg.exploits.safe_mode, "safe_mode must default to true");
+        assert!(!cfg.exploits.enabled, "exploits must default to disabled");
+    }
+
+    #[test]
+    fn test_parse_config_rejects_broken_section_header() {
+        // Regression: a broken section header (missing the opening bracket)
+        // must produce an error, not a silent fallback to defaults.
+        let broken = "eartbeat]\ninterval_secs = 10\ntimeout_secs = 30\n";
+        assert!(parse_config(broken).is_err());
+    }
+
+    #[test]
+    fn test_parse_config_reports_missing_required_section() {
+        // A config missing required tables must fail loudly. serde names the
+        // FIRST missing field (here inside the `arena` table), not the last.
+        let missing = "[arena]\nname_prefix = \"swarm_\"\n";
+        let err = parse_config(missing).expect_err("incomplete config must fail");
+        assert!(
+            err.contains("missing field"),
+            "error should name the missing field: {err}"
+        );
     }
 }

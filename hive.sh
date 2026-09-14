@@ -11,6 +11,7 @@
 #   ./hive.sh colony         Start the full stack via docker compose
 #   ./hive.sh lab            Start the SSH lab targets via docker compose
 #   ./hive.sh status         Quick health check of the C2 API
+#   ./hive.sh doctor         Environment + config sanity check
 #   ./hive.sh clean          Remove build artifacts
 # ─────────────────────────────────────────────────────────────────────────────
 set -euo pipefail
@@ -66,6 +67,50 @@ status() {
     echo
 }
 
+doctor() {
+    banner "environment doctor"
+    local ok=0 fail=0
+    pass() { printf '  \033[92m✓\033[0m %s\n' "$1"; ok=$((ok+1)); }
+    miss() { printf '  \033[91m✗\033[0m %s\n' "$1"; fail=$((fail+1)); }
+
+    if command -v cargo >/dev/null 2>&1; then
+        pass "cargo: $(cargo --version 2>/dev/null || echo 'present')"
+    else
+        miss "cargo not found — install Rust: https://rustup.rs"
+    fi
+
+    if command -v docker >/dev/null 2>&1; then
+        pass "docker: $(docker --version 2>/dev/null | cut -d, -f1 || echo present)"
+        if docker compose version >/dev/null 2>&1; then
+            pass "docker compose plugin available"
+        else
+            miss "docker compose plugin not available (needed by ./hive.sh colony|lab)"
+        fi
+    else
+        miss "docker not found — only local cargo workflows will work"
+    fi
+
+    if [ -f ./hive.toml ]; then
+        if cargo run -q -p beekeeper -- config-check 2>&1; then
+            pass "hive.toml parses correctly"
+        else
+            miss "hive.toml FAILED validation (see output above)"
+        fi
+    else
+        miss "no hive.toml in this directory — agents will use compiled-in defaults"
+    fi
+
+    if curl -fsS "http://${C2_HOST}:${C2_PORT}/health" >/dev/null 2>&1; then
+        pass "C2 responding on ${C2_HOST}:${C2_PORT}"
+    else
+        printf '  \033[33m•\033[0m C2 not running on %s:%s (start with ./hive.sh c2)\n' "${C2_HOST}" "${C2_PORT}"
+    fi
+
+    echo
+    printf '  doctor summary: %d passed, %d missing\n' "${ok}" "${fail}"
+    [ "${fail}" -eq 0 ]
+}
+
 clean() {
     need_cargo
     banner "cleaning build artifacts"
@@ -81,6 +126,7 @@ case "${1:-help}" in
     colony) shift; start_colony "$@" ;;
     lab)    shift; start_lab "$@" ;;
     status) shift; status "$@" ;;
+    doctor) shift; doctor "$@" ;;
     clean)  shift; clean "$@" ;;
     help|*)
         sed -n '2,15p' "$0"

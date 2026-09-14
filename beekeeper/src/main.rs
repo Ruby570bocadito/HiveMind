@@ -37,6 +37,15 @@ enum Commands {
         confirm: bool,
     },
     Validate,
+    /// Validate the hive.toml config file and print the key safety values.
+    ///
+    /// Exit code 0 = valid config, 1 = parse error or unreadable file.
+    ConfigCheck {
+        /// Validate an explicit file instead of the standard search path
+        /// (./hive.toml, ./colmena.toml, /etc/swarm/...).
+        #[arg(short, long)]
+        path: Option<String>,
+    },
     Reputation,
     HiveMind,
     Tournament,
@@ -90,6 +99,7 @@ async fn main() {
         }) => cmd_inject(arena_name, &asset, &value, confidence).await,
         Some(Commands::KillSwitch { confirm }) => cmd_killswitch(arena_name, confirm).await,
         Some(Commands::Validate) => cmd_validate().await,
+        Some(Commands::ConfigCheck { path }) => cmd_config_check(path.as_deref()),
         Some(Commands::Reputation) => cmd_reputation().await,
         Some(Commands::HiveMind) => cmd_hivemind().await,
         Some(Commands::Tournament) => cmd_tournament().await,
@@ -283,6 +293,79 @@ async fn cmd_validate() {
         }
     }
     println!("\n  Resultado: {}/{} checks pasaron", passed, checks.len());
+}
+
+/// Validate the operator config file and print the safety-relevant values.
+///
+/// Sync (no await points): runs to completion and exits the process with
+/// a meaningful status code so `hive.sh doctor` and CI can use it.
+fn cmd_config_check(path: Option<&str>) {
+    println!("\n  ── Hive config check ──");
+
+    if let Some(path) = path {
+        match std::fs::read_to_string(path) {
+            Ok(content) => match hive_base::config::parse_config(&content) {
+                Ok(cfg) => {
+                    println!("  ✓ {} parsed correctly", path);
+                    print_config_summary(&cfg, path);
+                }
+                Err(e) => {
+                    eprintln!("  ✗ {} FAILED to parse:\n\n{}\n", path, e);
+                    std::process::exit(1);
+                }
+            },
+            Err(e) => {
+                eprintln!("  ✗ cannot read {}: {}", path, e);
+                std::process::exit(1);
+            }
+        }
+        return;
+    }
+
+    // Standard search order: report which file actually won.
+    let (cfg, source) = hive_base::config::HiveConfig::load_with_source();
+    match &source {
+        Some(src) => println!("  ✓ config loaded from {}", src),
+        None => println!("  • no config file found — compiled-in defaults in use"),
+    }
+    print_config_summary(&cfg, source.as_deref().unwrap_or("<defaults>"));
+}
+
+fn print_config_summary(cfg: &hive_base::config::HiveConfig, source: &str) {
+    let flag = |on: bool| {
+        if on {
+            "\x1b[93mON\x1b[0m"
+        } else {
+            "\x1b[92mOFF\x1b[0m"
+        }
+    };
+    println!("  ─────────────────────────────────────────────");
+    println!("  source: {}", source);
+    println!("  exploits.enabled        : {}", flag(cfg.exploits.enabled));
+    println!("  exploits.safe_mode      : {}", flag(cfg.exploits.safe_mode));
+    println!(
+        "  exploits.operator_approved : {}",
+        flag(cfg.exploits.operator_approved)
+    );
+    println!("  colony.aggressive       : {}", flag(cfg.colony.aggressive));
+    println!("  c2.url                  : {}", cfg.c2.url);
+    println!(
+        "  c2.api_key              : {}",
+        if cfg.c2.api_key.is_empty() {
+            "(empty)"
+        } else {
+            "(configured)"
+        }
+    );
+    println!("  consensus.threshold     : {}", cfg.consensus.threshold);
+    println!("  arena.max_agents        : {}", cfg.arena.max_agents);
+    println!("  ─────────────────────────────────────────────");
+    println!("  Safe defaults: exploits disabled + safe_mode ON = lab-ready.");
+    if cfg.exploits.enabled {
+        println!(
+            "  \x1b[93m[!] exploits module is ENABLED — make sure this is intentional and documented in docs/DEPLOYMENT.md\x1b[0m"
+        );
+    }
 }
 
 async fn cmd_reputation() {

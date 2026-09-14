@@ -97,7 +97,7 @@ cargo run -p beekeeper
 | **Queen** | Overmind | HiveMind directive consensus, reputation ledger, Ollama LLM bridge, failover decisions |
 | **Worker** | Scout | System profiling, EDR/backup process detection (8 signatures on Linux, 34 on Windows), embedded Random-Forest classifier with heuristic fallback |
 | **Drone** | Shaper | Belief-driven decisions, host discovery, SSH propagation to lab targets, dead-agent regeneration |
-| **Honeybee** | Hoarder | AES-256-GCM staging, exfil scheduling, timestamp-embedded time capsules, privesc module |
+| **Honeybee** | Hoarder | Simulation-only action executor (encrypt/exfil/destroy are hard-disabled by design), remote shell, privesc module |
 | **Weaver** | Morph | Binary mutation engine: XOR, NOP insertion, section shuffle, junk code |
 | **Swarm** | Worm | Self-limiting spread: max hops, rate cap, TTL self-destruct, kill-switch aware |
 
@@ -113,7 +113,7 @@ Every agent:
 
 | Area | Status |
 |------|--------|
-| Tests | **360 passing** — 319 unit + 41 integration (phase-A scenarios, arena regressions, no-TCP-port invariant) |
+| Tests | **366 passing** — 325 unit + 41 integration (phase-A scenarios, arena regressions, no-TCP-port invariant; +6 new: C2 api-key auth, config parse regressions) |
 | CI | GitHub Actions: `cargo fmt --check`, `cargo clippy -D warnings`, full workspace build, release artifacts |
 | Fuzzing | `cargo-fuzz` targets: IPC contract validation, ring-buffer ops |
 | Benches | criterion: HTL throughput, IPC validation |
@@ -159,6 +159,9 @@ Kept public on purpose — a portfolio should know what it isn't:
   their export format to the runtime `.bin` model is pending — the shipped
   model is a pre-trained fixture.
 - `rlua` is archived upstream; migration to `mlua` is tracked in the roadmap.
+- Destructive actions are **hard-disabled**: honeybee's encrypt/exfiltrate/destroy
+  paths only simulate (independent of `safe_mode`), and the overmind
+  ransom-decision training dataset was removed from `training/` (2026-09-14).
 
 ## Security & ethics
 
