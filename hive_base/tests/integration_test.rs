@@ -124,14 +124,9 @@ fn test_config_default_loads() {
     assert_eq!(cfg.consensus.threshold, 0.66);
 }
 
-/// Test 7: Obfuscate string at compile time.
-#[test]
-fn test_obfuscate_string() {
-    let s: String = hive_base::obf!("127.0.0.1:4242");
-    assert!(s.contains("127.0.0.1"));
-    assert!(s.contains("4242"));
-}
-
+/// Test 7 (ronda 12): el macro de ofuscación XOR (`obfstr::obf!`) fue
+/// ELIMINADO — era código de evasión sin ningún consumidor en producción
+/// (solo este test lo usaba, lo que lo mantenía "vivo" artificialmente).
 /// Test 8 (ronda 6): el scheduler de exfiltración fue eliminado junto con el
 /// módulo `exfil`; se conserva la prueba de roundtrip de estigmergia.
 #[test]

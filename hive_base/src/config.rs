@@ -2,6 +2,7 @@
 // Operators customize behavior without recompiling.
 // Config can be embedded encrypted in the dropper or loaded from disk.
 
+#![cfg_attr(not(test), deny(clippy::unwrap_used))]
 use crate::panal::HoneycombConfig;
 use serde::{Deserialize, Serialize};
 use std::path::Path;

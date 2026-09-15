@@ -1,4 +1,5 @@
 use hive_base::{AgentIdentity, ConsensusEngine, HiveChamber, Message, Payload, Role, Value};
+use std::collections::HashMap;
 use std::time::Duration;
 use tokio::time;
 use tracing::{info, warn};
@@ -140,6 +141,11 @@ struct ScoutAgent {
     heartbeat_interval: Duration,
     /// Propuestas ya votadas (ronda 11: un voto por propuesta, acotado).
     voted: Vec<Uuid>,
+    /// Ronda 12: proposal_id → acción, para ejecutar la directiva si la
+    /// colonia la aprueba (solo se ejecutan las propuestas que votamos).
+    known_actions: HashMap<Uuid, String>,
+    /// Ronda 12: directivas ya ejecutadas (idempotencia ante re-broadcast).
+    executed_directives: Vec<Uuid>,
 }
 
 impl ScoutAgent {
@@ -172,6 +178,8 @@ impl ScoutAgent {
             scan_interval: Duration::from_secs(cfg.timing.scan_interval_secs),
             heartbeat_interval: Duration::from_secs(cfg.timing.heartbeat_interval_secs),
             voted: Vec::new(),
+            known_actions: HashMap::new(),
+            executed_directives: Vec::new(),
         }
     }
 
@@ -273,6 +281,12 @@ impl ScoutAgent {
                         self.voted.clear(); // acotado: memoria plana
                     }
                     self.voted.push(*proposal_id);
+                    // Ronda 12: recordar qué acción corresponde a cada
+                    // propuesta — si la colonia la aprueba, se ejecuta.
+                    if self.known_actions.len() >= 128 {
+                        self.known_actions.clear(); // acotado: memoria plana
+                    }
+                    self.known_actions.insert(*proposal_id, action.to_string());
                     let decision = hive_base::hivemind::HiveMind::vote_decision_for(action);
                     info!(
                         "Voting {:?} on proposal '{}' from {}",
@@ -301,10 +315,86 @@ impl ScoutAgent {
                     event_type,
                     subject_id,
                     ..
-                } if event_type == "agent_dead" => {
-                    warn!("Agent {} reported DEAD", subject_id);
+                } => {
+                    if event_type == "agent_dead" {
+                        warn!("Agent {} reported DEAD", subject_id);
+                    } else if event_type == "hive_directive_approved" {
+                        // Ronda 12: ciclo completo del consenso — ejecutar.
+                        self.execute_directive_if_known(*subject_id).await;
+                    }
                 }
                 _ => {}
+            }
+        }
+    }
+
+    /// Ronda 12: ejecutor de directivas aprobadas — cierra el ciclo
+    /// propuesta → voto → aprobación → EJECUCIÓN que la ronda 11 dejó a
+    /// medio camino (la aprobación se broadcasteaba y nadie reaccionaba).
+    /// La política vive en `HiveMind::execution_plan_for_env` (allow-list +
+    /// gates de lab); aquí solo el efecto real: barrido de solo lectura del
+    /// segmento y publicación del resultado como belief `hosts:<segmento>`
+    /// + `StatusEvent directive_executed` observables por el TUI.
+    async fn execute_directive_if_known(&mut self, directive_id: Uuid) {
+        if self.executed_directives.contains(&directive_id) {
+            return; // idempotente ante re-broadcasts de la aprobación
+        }
+        let Some(action) = self.known_actions.get(&directive_id).cloned() else {
+            return; // propuesta desconocida para este agente: no la ejecuta
+        };
+        if self.executed_directives.len() >= 128 {
+            self.executed_directives.clear(); // acotado: memoria plana
+        }
+        self.executed_directives.push(directive_id);
+
+        match hive_base::hivemind::HiveMind::execution_plan_for_env(&action) {
+            hive_base::hivemind::ExecutionPlan::SegmentScan { segment, subnet } => {
+                info!(
+                    "Directive {directive_id} '{action}': scanning {subnet}.x (lab-only, read-only)"
+                );
+                // spawn_blocking: el barrido lanza pings; el runtime del
+                // agente (heartbeats, task poller) sigue vivo mientras tanto.
+                let net = subnet.clone();
+                let alive =
+                    tokio::task::spawn_blocking(move || hive_base::lateral::discover_hosts(&net))
+                        .await
+                        .unwrap_or_default();
+                info!(
+                    "Directive {directive_id}: {} host(s) alive in {subnet}.x",
+                    alive.len()
+                );
+                let belief = Message::belief(
+                    self.identity.id(),
+                    Role::Worker,
+                    format!("hosts:{segment}"),
+                    Value::String(format!("{} alive: {}", alive.len(), alive.join(","))),
+                    0.9,
+                );
+                self.comms.publish(belief).await;
+                let done = Message::status_event(
+                    self.identity.id(),
+                    Role::Worker,
+                    "directive_executed",
+                    directive_id,
+                    Role::Worker,
+                    &format!(
+                        "{action} → discover_hosts({subnet}): {} host(s) alive",
+                        alive.len()
+                    ),
+                );
+                self.comms.publish(done).await;
+            }
+            hive_base::hivemind::ExecutionPlan::Acknowledge { reason } => {
+                info!("Directive {directive_id} '{action}' acknowledged: {reason}");
+                let ack = Message::status_event(
+                    self.identity.id(),
+                    Role::Worker,
+                    "directive_execution_skipped",
+                    directive_id,
+                    Role::Worker,
+                    &format!("{action}: {reason}"),
+                );
+                self.comms.publish(ack).await;
             }
         }
     }

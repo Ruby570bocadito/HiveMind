@@ -1,3 +1,4 @@
+#![cfg_attr(not(test), deny(clippy::unwrap_used))]
 use crate::ldc::{Decision, Message, Payload, Role, Value};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -13,6 +14,20 @@ pub struct HiveDirective {
     pub approved: bool,
     pub executed: bool,
     pub votes: HashMap<Uuid, Decision>,
+}
+
+/// Plan de ejecución de una directiva aprobada (ronda 12).
+///
+/// La ronda 11 dejó el ciclo de consenso a medias: la aprobación se
+/// broadcasteaba pero ningún agente ejecutaba nada. Este plan lo cierra
+/// con una allow-list explícita y gates de laboratorio.
+#[derive(Debug, Clone, PartialEq)]
+pub enum ExecutionPlan {
+    /// Barrido de alcanzabilidad de solo lectura (`lateral::discover_hosts`)
+    /// contra la subred declarada por el operador, SOLO en lab.
+    SegmentScan { segment: String, subnet: String },
+    /// Sin ejecutor disponible en este entorno: acuse con el motivo real.
+    Acknowledge { reason: String },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -57,6 +72,23 @@ impl HiveMind {
         params: HashMap<String, String>,
     ) -> Uuid {
         let directive_id = Uuid::new_v4();
+        self.propose_directive_with_id(proposer_id, action, params, directive_id)
+    }
+
+    /// Como `propose_directive` pero con id EXTERNO (ronda 12).
+    ///
+    /// El path de arena DEBE usar este: los votos viajan con el
+    /// `proposal_id` del wire; si la directiva interna se registra con otro
+    /// id, `cast_vote` no la encuentra y la reina jamás tallya — el
+    /// "consenso real" de la ronda 11 seguía roto en el último eslabón
+    /// (destapado por el test de regresión `test_vote_path_returns_real_action_not_literal`).
+    pub fn propose_directive_with_id(
+        &mut self,
+        proposer_id: Uuid,
+        action: String,
+        params: HashMap<String, String>,
+        directive_id: Uuid,
+    ) -> Uuid {
         self.directives.push(HiveDirective {
             directive_id,
             proposer_id,
@@ -193,6 +225,50 @@ impl HiveMind {
         }
     }
 
+    /// Plan de ejecución para una directiva aprobada (ronda 12 — pureza
+    /// testeable: las env vars se leen solo en el wrapper `for_env`).
+    ///
+    /// Allow-list de ejecución, contraparte de la deny-list de voto:
+    /// solo las acciones de la colonia (`prop_to_*`) tienen ejecutor real.
+    /// `prop_to_<segmento>` significa "atención de la colonia al segmento
+    /// <segmento>" y su ejecutor es un barrido de alcanzabilidad de solo
+    /// lectura (`lateral::discover_hosts`) que SOLO corre en laboratorio
+    /// (`lab_mode`) y solo contra la subred declarada por el operador
+    /// (`subnet`) — nunca contra la lista segura de `panal` ni fuera de
+    /// lab. Cualquier otra acción, o entorno sin lab configurado, produce
+    /// `Acknowledge` con el motivo explícito: honesto, no teatro.
+    pub fn execution_plan_for(action: &str, lab_mode: bool, subnet: Option<&str>) -> ExecutionPlan {
+        let a = action.to_ascii_lowercase();
+        if let Some(segment) = a.strip_prefix("prop_to_") {
+            if !lab_mode {
+                return ExecutionPlan::Acknowledge {
+                    reason: "requires HIVE_LAB_MODE=1 (segment scan is lab-only)".into(),
+                };
+            }
+            match subnet.map(str::trim).filter(|s| !s.is_empty()) {
+                Some(net) => ExecutionPlan::SegmentScan {
+                    segment: segment.to_string(),
+                    subnet: net.to_string(),
+                },
+                None => ExecutionPlan::Acknowledge {
+                    reason: "HIVE_LAB_SUBNET not set — no segment to scan".into(),
+                },
+            }
+        } else {
+            ExecutionPlan::Acknowledge {
+                reason: "no executor for this action (allow-list: prop_to_*)".into(),
+            }
+        }
+    }
+
+    /// Igual que `execution_plan_for` leyendo el entorno de lab real:
+    /// `HIVE_LAB_MODE=1` y `HIVE_LAB_SUBNET` (p. ej. "192.168.1").
+    pub fn execution_plan_for_env(action: &str) -> ExecutionPlan {
+        let lab_mode = std::env::var("HIVE_LAB_MODE").is_ok_and(|v| v == "1");
+        let subnet = std::env::var("HIVE_LAB_SUBNET").ok();
+        Self::execution_plan_for(action, lab_mode, subnet.as_deref())
+    }
+
     pub fn propose_from_operator(
         &mut self,
         operator_id: Uuid,
@@ -217,12 +293,20 @@ impl HiveMind {
         let payload = msg.payload.clone();
         match payload {
             Payload::Proposal {
-                action, argument, ..
+                action,
+                argument,
+                proposal_id,
             } => {
-                let did = self.propose_directive(
+                // Ronda 12 FIX: registrar la directiva con el proposal_id
+                // del WIRE — antes se generaba un id interno nuevo y los
+                // votos (que referencian el proposal_id original) no
+                // encontraban la directiva: cast_vote devolvía false y la
+                // reina jamás aprobaba propuestas del arena.
+                let did = self.propose_directive_with_id(
                     agent_id,
                     action.clone(),
                     [("argument".into(), argument)].into(),
+                    proposal_id,
                 );
                 Some((did, action, "proposed"))
             }
@@ -234,10 +318,20 @@ impl HiveMind {
                 let dec = decision;
                 if self.cast_vote(proposal_id, agent_id, dec) {
                     let approved = self.tally_votes(proposal_id, reputation);
+                    // Ronda 12: el segundo elemento es la ACCIÓN real de la
+                    // directiva (antes se devolvía el literal "approved"/
+                    // "voted" en su posición y los logs de la reina
+                    // mostraban "directive <id> 'approved'").
+                    let action = self
+                        .directives
+                        .iter()
+                        .find(|d| d.directive_id == proposal_id)
+                        .map(|d| d.action.clone())
+                        .unwrap_or_default();
                     if approved {
-                        Some((proposal_id, "approved".into(), "approved"))
+                        Some((proposal_id, action, "approved"))
                     } else {
-                        Some((proposal_id, "voted".into(), "voted"))
+                        Some((proposal_id, action, "voted"))
                     }
                 } else {
                     None
@@ -480,5 +574,82 @@ mod tests {
         assert!(loaded.get_reputation(&agent) > 2.0);
 
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // ── Ronda 12: plan de ejecución de directivas ───────────────────────────
+
+    #[test]
+    fn test_execution_plan_segment_scan_in_lab() {
+        let plan = HiveMind::execution_plan_for("prop_to_backup_server", true, Some("192.168.1"));
+        assert_eq!(
+            plan,
+            ExecutionPlan::SegmentScan {
+                segment: "backup_server".into(),
+                subnet: "192.168.1".into(),
+            }
+        );
+    }
+
+    #[test]
+    fn test_execution_plan_requires_lab_mode() {
+        let plan = HiveMind::execution_plan_for("prop_to_network_segment", false, Some("10.0.0"));
+        match plan {
+            ExecutionPlan::Acknowledge { reason } => {
+                assert!(reason.contains("HIVE_LAB_MODE"));
+            }
+            other => panic!("expected Acknowledge, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_execution_plan_requires_subnet() {
+        let plan = HiveMind::execution_plan_for("prop_to_network_segment", true, None);
+        match plan {
+            ExecutionPlan::Acknowledge { reason } => {
+                assert!(reason.contains("HIVE_LAB_SUBNET"));
+            }
+            other => panic!("expected Acknowledge, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_execution_plan_empty_subnet_is_ack() {
+        // Una subred en blanco no es configuración: acuse, no barrido.
+        let plan = HiveMind::execution_plan_for("prop_to_x", true, Some("   "));
+        assert!(matches!(plan, ExecutionPlan::Acknowledge { .. }));
+    }
+
+    #[test]
+    fn test_execution_plan_no_executor_for_unknown_actions() {
+        for action in ["scan_target", "collect_stats", "exfil_data", "prop_x"] {
+            let plan = HiveMind::execution_plan_for(action, true, Some("10.0.0"));
+            match plan {
+                ExecutionPlan::Acknowledge { reason } => {
+                    assert!(reason.contains("no executor"), "action: {action}");
+                }
+                other => panic!("expected Acknowledge for {action}, got {other:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn test_vote_path_returns_real_action_not_literal() {
+        // Regresión ronda 12: en el path de voto, el segundo elemento era el
+        // literal "approved"/"voted" en lugar de la acción de la directiva.
+        let mut hive = HiveMind::new();
+        hive.enabled = true;
+        let proposer = Uuid::new_v4();
+        let voter = Uuid::new_v4();
+        let (proposal, proposal_id) =
+            Message::proposal(proposer, Role::Drone, "prop_to_lab".into(), "lab".into());
+        let rep = HashMap::new();
+        hive.process_arena_message(&proposal, &rep);
+        let vote = Message::vote(voter, Role::Worker, proposal_id, Decision::Support, 1.0);
+        let mut rep = HashMap::new();
+        rep.insert(voter, 1.0);
+        let out = hive.process_arena_message(&vote, &rep);
+        // Con un solo votante (peso 1.0/1.0 = 1.0 >= 0.66) se aprueba y la
+        // acción devuelta es la REAL.
+        assert!(matches!(out, Some((_, action, "approved")) if action == "prop_to_lab"));
     }
 }

@@ -3,6 +3,7 @@
 // deobfuscated in memory at runtime. Keys exist only in the binary.
 // Supports ChaCha20 for stronger encryption when needed.
 
+#![cfg_attr(not(test), deny(clippy::unwrap_used))]
 use chacha20::cipher::{KeyIvInit, StreamCipher};
 use chacha20::ChaCha20;
 use rand::Rng;
@@ -66,7 +67,9 @@ pub fn decrypt_chacha20(encrypted: &[u8], key: &[u8; 32]) -> Option<Vec<u8>> {
     if encrypted.len() < 12 {
         return None;
     }
-    let nonce: [u8; 12] = encrypted[..12].try_into().unwrap();
+    // El length-check previo (len >= 12) hace el try_into infalible; se
+    // usa .ok()? para respetar deny(unwrap_used) (ronda 12).
+    let nonce: [u8; 12] = encrypted[..12].try_into().ok()?;
     let mut ciphertext = encrypted[12..].to_vec();
 
     let mut cipher = ChaCha::new(key.into(), (&nonce).into());

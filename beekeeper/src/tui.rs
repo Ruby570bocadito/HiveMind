@@ -196,6 +196,34 @@ impl AppData {
                     self.log(format!("[dir] '{}' APPROVED", action));
                 }
             }
+            // Ronda 12: cierre del ciclo — los agentes ejecutan (o acusan
+            // por qué no) las directivas aprobadas; el TUI lo refleja.
+            Payload::StatusEvent {
+                event_type,
+                subject_id,
+                detail,
+                ..
+            } if event_type == "directive_executed"
+                || event_type == "directive_execution_skipped" =>
+            {
+                let marked = self.directive_state.get_mut(subject_id).map(|dir| {
+                    dir.executed = true;
+                    dir.action.clone()
+                });
+                if let Some(action) = marked {
+                    let kind = if event_type == "directive_executed" {
+                        "EXECUTED"
+                    } else {
+                        "SKIPPED"
+                    };
+                    self.log(format!(
+                        "[dir] '{}' {} — {}",
+                        action,
+                        kind,
+                        detail.chars().take(60).collect::<String>()
+                    ));
+                }
+            }
             Payload::Belief { asset, value, .. } if asset.starts_with("directive:") => {
                 if let Ok(did) = uuid::Uuid::parse_str(asset.trim_start_matches("directive:")) {
                     if let Value::String(meta) = value {
@@ -751,15 +779,14 @@ fn render_consensus(f: &mut Frame, area: Rect, data: &Arc<Mutex<AppData>>) {
         .take(50)
         .filter_map(|id| d.directive_state.get(id))
         .map(|dir| {
-            let status = if dir.approved {
-                "✓ approved"
+            // Ronda 12: el ciclo completo ahora es visible — pending →
+            // approved → executed.
+            let (status, status_style) = if dir.executed {
+                ("▶ executed", Style::default().fg(Color::Cyan))
+            } else if dir.approved {
+                ("✓ approved", Style::default().fg(Color::Green))
             } else {
-                "⏳ pending"
-            };
-            let status_style = if dir.approved {
-                Style::default().fg(Color::Green)
-            } else {
-                Style::default().fg(Color::Yellow)
+                ("⏳ pending", Style::default().fg(Color::Yellow))
             };
             let cells = vec![
                 Cell::from(short_uuid(&dir.directive_id)),

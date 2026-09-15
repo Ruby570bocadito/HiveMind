@@ -175,9 +175,9 @@ threshold = 0.66
 | `HIVE_C2_API_KEY` | — | Clave si el C2 exige `x-api-key` (TaskPoller) |
 | `HIVE_POLL_SECS` | `10` | Intervalo del TaskPoller (mín. 2 s) |
 | `HIVE_LAB_AUTHORIZED` | — | `1` habilita ejecución fileless en lab autorizado |
+| `HIVE_LAB_SUBNET` | — | Subred del laboratorio (p. ej. `192.168.1`) que el ejecutor de directivas (`prop_to_*`) puede barrer con `discover_hosts`; exige además `HIVE_LAB_MODE=1` (ronda 12) |
 | `HIVE_LAB_MODE` | `0` | Modo laboratorio (1=simulado). Sin esta variable, todos los clientes TLS del enjambre verifican certificados estrictamente (ronda 5) |
 | `HIVE_MASTER_KEY` | — | Clave de colmena (32B derivadas) para trails stigmergy y cifrado de fragmentos phoenix. En producción real, genera una única por despliegue (p. ej. `openssl rand -base64 32`); si falta, se usa una clave por defecto documentada (solo compatibilidad) |
-| `HIVE_PERSISTENCE_DRY_RUN` | — | `1` = la remediación de persistencia (`honeycomb::uninstall_persistence`) no toca el host; solo registra lo que haría (ronda 5) |
 | `HIVE_TUI_LOG` | `/tmp/hive_tui_<arena>.log` | Fichero del log de operador del TUI (post-mortems). `<ruta>` redirige; `off` lo desactiva (ronda 11) |
 | `HIVE_TELEMETRY_DIR` | `/tmp/hive_telemetry` | Directorio de telemetría |
 | `HIVE_EXEC_TIMEOUT` | `30` | Timeout para comandos (s) |
@@ -275,8 +275,8 @@ pgrep -a worker
 # 2. Compilar queen
 cargo build --release --target x86_64-pc-windows-gnu -p queen
 
-# 3. Compilar todos los agentes
-for p in queen worker drone honeybee swarm c2-server; do
+# 3. Compilar todos los agentes (4 agentes reales — swarm fue eliminado en la ronda 6)
+for p in queen worker drone honeybee c2-server; do
     cargo build --release --target x86_64-pc-windows-gnu -p "$p"
 done
 
@@ -285,17 +285,21 @@ done
 #    docker compose (ver DEPLOYMENT.md).
 ```
 
-### Módulos Windows disponibles
+### Módulos disponibles (build actual, ronda 12)
+
+Los módulos ofensivos de Windows (syscalls directas, stack spoofing,
+robo de credenciales, anti-análisis, persistencia en registro) fueron
+ELIMINADOS del repositorio en las rondas 6-12; lo que queda es
+infraestructura de colonia y enumeración de solo lectura:
 
 | Módulo | Archivo | Capacidad |
 |--------|---------|-----------|
-| Syscalls | `syscalls.rs` | Hell's Gate + Halo's Gate + Hades Gate |
-| Stack spoof | `stack_spoof.rs` | Ret-spoofing + RBP chain sintética |
-| Fileless | `fileless.rs` | NtCreateSection + NtMapViewOfSection |
-| Credentials | `leech.rs` | LSASS (syscalls), SAM, DPAPI |
-| Anti-analysis | `anti_analysis.rs` | PEB BeingDebugged, sandbox detection |
-| EDR detection | `system_info.rs` | 30+ firmas (Defender, CrowdStrike...) |
-| Persistence | `phoenix.rs` | Registry Run, Startup, SchTasks, WMI |
+| Detección EDR/backup | `system_info.rs` | 30+ firmas (Defender, CrowdStrike...), solo lectura |
+| Enumeración de escalada | `privesc.rs` | SUID/sudo/caps/cron/docker/NFS, solo lectura |
+| Descubrimiento de segmento | `lateral.rs` | ping sweep del lab (paralelo, ronda 12), solo lectura |
+| Fileless | `fileless.rs` | `memfd_create` benigno; `spawn()` exige `HIVE_LAB_AUTHORIZED=1` |
+| Genoma en memoria | `phoenix.rs` | modelado/fragmentación/reensamblado, sin escrituras |
+| Shell del C2 | `remote_shell.rs` | función operadora auditada con deny-list |
 
 ---
 

@@ -3,6 +3,7 @@
 // Votes are weighted by reputation; consensus threshold is based on
 // the accumulated weight of supporting votes vs total.
 
+#![cfg_attr(not(test), deny(clippy::unwrap_used))]
 use crate::ldc::{Decision, Message, Payload};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;

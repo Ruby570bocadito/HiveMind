@@ -14,7 +14,6 @@ services:
       - HIVE_LAB_MODE=1
       - HIVE_TELEMETRY_DIR=/tmp/hive_telemetry
       - HIVE_C2_URL=http://c2-server:8444
-      - HIVE_C2_DNS_DOMAIN=tunnel.example.com
       - RUST_LOG=info
     volumes:
       - hive_arena:/dev/shm
@@ -42,7 +41,6 @@ services:
       - HIVE_LAB_MODE=1
       - HIVE_TELEMETRY_DIR=/tmp/hive_telemetry
       - HIVE_C2_URL=http://c2-server:8444
-      - HIVE_C2_DNS_DOMAIN=tunnel.example.com
       - HIVE_EXEC_TIMEOUT=30
       - RUST_LOG=info
     volumes:

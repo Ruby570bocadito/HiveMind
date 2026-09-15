@@ -21,6 +21,11 @@ struct DroneAgent {
     decision_interval: Duration,
     /// Propuestas ya votadas (ronda 11: un voto por propuesta, acotado).
     voted: Vec<Uuid>,
+    /// Ronda 12: proposal_id → acción (propias y ajenas) para ejecutar
+    /// la directiva si la colonia la aprueba.
+    known_actions: HashMap<Uuid, String>,
+    /// Ronda 12: directivas ya ejecutadas (idempotencia ante re-broadcast).
+    executed_directives: Vec<Uuid>,
 }
 
 impl DroneAgent {
@@ -60,6 +65,8 @@ impl DroneAgent {
             heartbeat_interval: Duration::from_secs(cfg.heartbeat.interval_secs),
             decision_interval: Duration::from_secs(cfg.agents.shaper_decision_interval_secs),
             voted: Vec::new(),
+            known_actions: HashMap::new(),
+            executed_directives: Vec::new(),
         }
     }
 
@@ -100,6 +107,12 @@ impl DroneAgent {
                         self.voted.clear();
                     }
                     self.voted.push(*proposal_id);
+                    // Ronda 12: recordar la acción asociada (ajena) para el
+                    // ejecutor de directivas aprobadas.
+                    if self.known_actions.len() >= 128 {
+                        self.known_actions.clear(); // acotado: memoria plana
+                    }
+                    self.known_actions.insert(*proposal_id, action.to_string());
                     let decision = hive_base::hivemind::HiveMind::vote_decision_for(action);
                     info!("Voting {:?} on proposal '{}'", decision, action);
                     let vote =
@@ -118,6 +131,9 @@ impl DroneAgent {
             {
                 if event_type == "agent_dead" && !self.dead_agents.contains(subject_id) {
                     self.dead_agents.push(*subject_id);
+                } else if event_type == "hive_directive_approved" {
+                    // Ronda 12: ciclo completo del consenso — ejecutar.
+                    self.execute_directive_if_known(*subject_id).await;
                 }
             }
         }
@@ -128,18 +144,87 @@ impl DroneAgent {
         self.comms.publish(msg).await;
     }
 
+    /// Ronda 12: ejecutor de directivas aprobadas (mismo contrato que el
+    /// worker: allow-list + gates de lab en `HiveMind::execution_plan_for_env`,
+    /// barrido de solo lectura, resultado real publicado como belief
+    /// `hosts:<segmento>` + `StatusEvent directive_executed`).
+    async fn execute_directive_if_known(&mut self, directive_id: Uuid) {
+        if self.executed_directives.contains(&directive_id) {
+            return; // idempotente ante re-broadcasts de la aprobación
+        }
+        let Some(action) = self.known_actions.get(&directive_id).cloned() else {
+            return; // propuesta desconocida para este agente: no la ejecuta
+        };
+        if self.executed_directives.len() >= 128 {
+            self.executed_directives.clear(); // acotado: memoria plana
+        }
+        self.executed_directives.push(directive_id);
+
+        match hive_base::hivemind::HiveMind::execution_plan_for_env(&action) {
+            hive_base::hivemind::ExecutionPlan::SegmentScan { segment, subnet } => {
+                info!(
+                    "Directive {directive_id} '{action}': scanning {subnet}.x (lab-only, read-only)"
+                );
+                let net = subnet.clone();
+                let alive =
+                    tokio::task::spawn_blocking(move || hive_base::lateral::discover_hosts(&net))
+                        .await
+                        .unwrap_or_default();
+                info!(
+                    "Directive {directive_id}: {} host(s) alive in {subnet}.x",
+                    alive.len()
+                );
+                let belief = Message::belief(
+                    self.identity.id(),
+                    Role::Drone,
+                    format!("hosts:{segment}"),
+                    Value::String(format!("{} alive: {}", alive.len(), alive.join(","))),
+                    0.9,
+                );
+                self.publish(belief).await;
+                let done = Message::status_event(
+                    self.identity.id(),
+                    Role::Drone,
+                    "directive_executed",
+                    directive_id,
+                    Role::Drone,
+                    &format!(
+                        "{action} → discover_hosts({subnet}): {} host(s) alive",
+                        alive.len()
+                    ),
+                );
+                self.publish(done).await;
+            }
+            hive_base::hivemind::ExecutionPlan::Acknowledge { reason } => {
+                info!("Directive {directive_id} '{action}' acknowledged: {reason}");
+                let ack = Message::status_event(
+                    self.identity.id(),
+                    Role::Drone,
+                    "directive_execution_skipped",
+                    directive_id,
+                    Role::Drone,
+                    &format!("{action}: {reason}"),
+                );
+                self.publish(ack).await;
+            }
+        }
+    }
+
     async fn make_decision(&mut self, beliefs: &HashMap<String, Value>) {
         // Ronda 6: sin módulos ofensivos ni Seer (eliminados). El drone
         // participa en el consenso de la colonia con propuestas operativas.
         match self.select_action(beliefs) {
             ShaperAction::PropagateTo(t) => {
                 info!("Drone proposal: prop_to_{}", t);
-                let (msg, _) = Message::proposal(
-                    self.identity.id(),
-                    Role::Drone,
-                    format!("prop_to_{}", t),
-                    t.clone(),
-                );
+                let action = format!("prop_to_{}", t);
+                let (msg, proposal_id) =
+                    Message::proposal(self.identity.id(), Role::Drone, action.clone(), t.clone());
+                // Ronda 12: la propuesta PROPIA también se registra — el
+                // drone ejecuta la directiva si la colonia la aprueba.
+                if self.known_actions.len() >= 128 {
+                    self.known_actions.clear(); // acotado: memoria plana
+                }
+                self.known_actions.insert(proposal_id, action);
                 self.publish(msg).await;
             }
             ShaperAction::Wait => info!("Drone: waiting (EDR detected)"),

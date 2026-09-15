@@ -30,7 +30,7 @@
 |--------|---------|-----|---------|
 | [Queen](#queen--overmind) | ◇ | Overmind — estrategia LLM + C2 bridge | `agents/queen/` |
 | [Worker](#worker--scout) | ◈ | Scout — reconocimiento + EDR detection | `agents/worker/` |
-| [Drone](#drone--shaper) | ◆ | Shaper — decisiones + movimiento lateral | `agents/drone/` |
+| [Drone](#drone--shaper) | ◆ | Shaper — decisiones operativas + regeneración de agentes | `agents/drone/` |
 | [Honeybee](#honeybee--hoarder) | ◉ | Hoarder — tareas del operador; acciones destructivas ELIMINADAS (ronda 6) | `agents/honeybee/` |
 | ~~Swarm~~ | ⬡ | Worm — ELIMINADO en ronda 6 (ver `docs/CAPABILITIES.md`) | *(sin código)* |
 
@@ -501,3 +501,27 @@ la ronda 6. Matriz de capacidades vigente: `docs/CAPABILITIES.md`.
 > parseable y des-escalado (ver `deploy/charts/hive/README.md`).
 > Deps Python: torch/onnxruntime/protobuf/skl2onnx fuera de requirements
 > (sin importador). Tests: 290 (241 unit).
+
+> **Nota ronda 12 (2026-09-15):** (1) el consenso de la ronda 11 seguía
+> roto en el último eslabón — `process_arena_message` registraba la
+> directiva con un id interno nuevo y los votos (con el `proposal_id` del
+> wire) no la encontraban: `cast_vote` devolvía false y la reina jamás
+> aprobaba nada del arena. FIX: la directiva se registra con el id del
+> wire (`propose_directive_with_id`) + test de regresión end-to-end.
+> (2) Ciclo completo: los agentes EJECUTAN directivas aprobadas
+> (allow-list `prop_to_*` + gates `HIVE_LAB_MODE`/`HIVE_LAB_SUBNET`,
+> barrido de solo lectura con `discover_hosts` ahora paralelo) y publican
+> `directive_executed`/`directive_execution_skipped` — visibles en el
+> Consensus tab del TUI. (3) Eliminados 13 módulos muertos (~2.460
+> líneas): did, federation, hive_scale, homomorphic, marl_online,
+> c2_bridge (traductores Sliver/Cobalt Strike), pheromone, waggle_dance,
+> obfstr, syscalls, guardian, hibernation, swarming — la nota de ronda 6
+> que decía "swarming (solo decisión)" sobrevivía era incorrecta: no tenía
+> NINGÚN consumidor. (4) Masquerade residual fuera: `opsec::fire_decoys`
+> enviaba peticiones REALES a terceros con UAs suplantados en cada
+> heartbeat; c2_channels sin DomainFront/DeadDrop/DNS/ICMP. (5) C2:
+> `GET /admin/metrics` con contadores reales de la BD. (6) CI: triggers
+> extendidos a `[master, main]` (ya eran válidos desde la ronda 9 — una
+> trampa de renderizado de la herramienta de auditoría los hizo leer como
+> "aster]" durante esta ronda; verificado byte-a-byte y documentado en el
+> workflow). Tests: 285 (ver desglose en CAPABILITIES/ROADMAP).

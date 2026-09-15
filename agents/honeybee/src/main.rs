@@ -22,6 +22,10 @@ struct HoarderAgent {
     whispernet: hive_base::whispernet::WhisperNet,
     state: HoarderState,
     active_proposals: Vec<Uuid>,
+    /// Ronda 12: proposal_id → acción para el ejecutor de directivas.
+    known_actions: HashMap<Uuid, String>,
+    /// Ronda 12: directivas ya ejecutadas (idempotencia).
+    executed_directives: Vec<Uuid>,
     heartbeat_interval: Duration,
     interactive_shell: Option<hive_base::remote_shell::WsShell>,
 }
@@ -56,6 +60,8 @@ impl HoarderAgent {
             whispernet,
             state: HoarderState::Idle,
             active_proposals: Vec::new(),
+            known_actions: HashMap::new(),
+            executed_directives: Vec::new(),
             heartbeat_interval: Duration::from_secs(cfg.timing.heartbeat_interval_secs),
             interactive_shell: None,
         };
@@ -117,6 +123,72 @@ impl HoarderAgent {
         self.comms.publish(msg).await;
     }
 
+    /// Ronda 12: ejecutor de directivas aprobadas (mismo contrato que
+    /// worker/drone: allow-list + gates de lab en
+    /// `HiveMind::execution_plan_for_env`, barrido de solo lectura,
+    /// resultado real publicado como belief `hosts:<segmento>`).
+    async fn execute_directive_if_known(&mut self, directive_id: Uuid) {
+        if self.executed_directives.contains(&directive_id) {
+            return; // idempotente ante re-broadcasts de la aprobación
+        }
+        let Some(action) = self.known_actions.get(&directive_id).cloned() else {
+            return; // propuesta desconocida para este agente: no la ejecuta
+        };
+        if self.executed_directives.len() >= 128 {
+            self.executed_directives.clear(); // acotado: memoria plana
+        }
+        self.executed_directives.push(directive_id);
+
+        match hive_base::hivemind::HiveMind::execution_plan_for_env(&action) {
+            hive_base::hivemind::ExecutionPlan::SegmentScan { segment, subnet } => {
+                info!(
+                    "Directive {directive_id} '{action}': scanning {subnet}.x (lab-only, read-only)"
+                );
+                let net = subnet.clone();
+                let alive =
+                    tokio::task::spawn_blocking(move || hive_base::lateral::discover_hosts(&net))
+                        .await
+                        .unwrap_or_default();
+                info!(
+                    "Directive {directive_id}: {} host(s) alive in {subnet}.x",
+                    alive.len()
+                );
+                let belief = Message::belief(
+                    self.identity.id(),
+                    Role::Honeybee,
+                    format!("hosts:{segment}"),
+                    hive_base::Value::String(format!("{} alive: {}", alive.len(), alive.join(","))),
+                    0.9,
+                );
+                self.publish_msg(belief).await;
+                let done = Message::status_event(
+                    self.identity.id(),
+                    Role::Honeybee,
+                    "directive_executed",
+                    directive_id,
+                    Role::Honeybee,
+                    &format!(
+                        "{action} → discover_hosts({subnet}): {} host(s) alive",
+                        alive.len()
+                    ),
+                );
+                self.publish_msg(done).await;
+            }
+            hive_base::hivemind::ExecutionPlan::Acknowledge { reason } => {
+                info!("Directive {directive_id} '{action}' acknowledged: {reason}");
+                let ack = Message::status_event(
+                    self.identity.id(),
+                    Role::Honeybee,
+                    "directive_execution_skipped",
+                    directive_id,
+                    Role::Honeybee,
+                    &format!("{action}: {reason}"),
+                );
+                self.publish_msg(ack).await;
+            }
+        }
+    }
+
     async fn send_heartbeat(&self) {
         self.comms.send_heartbeat().await;
     }
@@ -159,6 +231,12 @@ impl HoarderAgent {
                         }
                         self.active_proposals.push(*proposal_id);
                     }
+                    // Ronda 12: recordar la acción para el ejecutor de
+                    // directivas aprobadas.
+                    if self.known_actions.len() >= 128 {
+                        self.known_actions.clear(); // acotado: memoria plana
+                    }
+                    self.known_actions.insert(*proposal_id, action.to_string());
                     let vote = Message::vote(
                         self.identity.id(),
                         Role::Honeybee,
@@ -180,8 +258,13 @@ impl HoarderAgent {
                     event_type,
                     subject_id,
                     ..
-                } if event_type == "agent_dead" => {
-                    warn!("Agent {} reported DEAD", subject_id);
+                } => {
+                    if event_type == "agent_dead" {
+                        warn!("Agent {} reported DEAD", subject_id);
+                    } else if event_type == "hive_directive_approved" {
+                        // Ronda 12: ciclo completo del consenso — ejecutar.
+                        self.execute_directive_if_known(*subject_id).await;
+                    }
                 }
                 Payload::Request { service, payload } if service == "exec" => {
                     if let Ok(cmd_data) = serde_json::from_slice::<serde_json::Value>(payload) {

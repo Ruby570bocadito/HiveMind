@@ -1,17 +1,19 @@
 name: Hive CI
 
-# Ronda 9: the triggers are FIXED for real. History: this block read
-# `branches: aster]` (a typo from the original scaffold) — syntactically
-# valid YAML, semantically a branch that does not exist, so this workflow
-# could never have run. Ronda 8 modernized the jobs but its diff never
-# touched the `on:` block; the fix landed here.
+# Ronda 12: triggers extendidos a [master, main] (ambas ramas existen).
+# Nota de auditoria ronda 12: los triggers ya eran validos desde la
+# ronda 9 ("branches: [master]"); una trampa de renderizado en la
+# herramienta de auditoria (un filtro que elimina subcadenas tipo
+# escape ANSI "[...m" del texto mostrado) hizo que esta ronda los
+# leyera como "aster]" y los diera por rotos durante 3 rondas. La
+# leccion queda documentada: verificar los ficheros de CI a nivel de
+# bytes/YAML, nunca solo a traves del renderizado de texto.
 on:
   push:
-    branches: [master]
+    branches: [master, main]
   pull_request:
-    branches: [master]
+    branches: [master, main]
 
-env:
   CARGO_TERM_COLOR: always
 
 jobs:

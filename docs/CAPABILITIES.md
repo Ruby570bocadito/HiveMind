@@ -176,3 +176,66 @@ pipe en `execute_command_with_timeout` (>64 KB → falso TIMEOUT con pérdida de
 salida); lint progresivo `deny(clippy::unwrap_used)` en
 comms/shared_arena/telemetry/ldc; `launch_colony.sh` reescrito (era
 inejecutable desde la ronda 6) y `PLAYBOOK.md` reescrito de cero.
+
+## Ronda 12 — ejecución de directivas, barrido dual-use completo y limpieza profunda (2026-09-15)
+
+**El consenso gana un ejecutor (y se descubre que seguía roto en el último
+eslabón):** un test de regresión nuevo destapó que la ronda 11 dejaba el
+ciclo a medias por un bug de identidad: `process_arena_message` registraba
+la directiva con un `Uuid::new_v4()` INTERNO mientras los votos viajan con
+el `proposal_id` del wire — `cast_vote` nunca encontraba la directiva, el
+tally nunca se ejecutaba y la reina jamás aprobaba una propuesta del arena.
+FIX: `propose_directive_with_id` registra la directiva con el id del wire.
+Además el path de voto devolvía el literal `"approved"` en la posición de la
+acción (logs de la reina confusos); ahora devuelve la acción real.
+
+**Ciclo completo propose → vote → approve → EXECUTE:** worker/drone/honeybee
+registran `proposal_id → action` al votar; al recibir
+`hive_directive_approved` consultan la allow-list de ejecución
+(`HiveMind::execution_plan_for`: solo `prop_to_*`, gates `HIVE_LAB_MODE=1` +
+`HIVE_LAB_SUBNET` — nunca contra la lista segura de `panal`) y ejecutan un
+barrido de alcanzabilidad de solo lectura (`lateral::discover_hosts`,
+AHORA PARALELO: pool de 32 sondas, de ~4 min a ~8 s worst-case). El
+resultado REAL se publica como belief `hosts:<segmento>` + `StatusEvent
+directive_executed` (o `directive_execution_skipped` con el motivo — sin
+entorno de lab, acuse honesto, no teatro). El TUI (Consensus tab) marca el
+estado `executed`. C2: nuevo `GET /admin/metrics` con contadores REALES de
+la BD (agentes registrados, beacons, tasks pending/claimed/completed).
+
+**Barrido dual-use completo (el resto de la era ofensiva que la ronda 11
+dejó fuera):**
+- `opsec::DecoyProfile::fire_decoys` enviaba peticiones HTTP REALES a
+  terceros (crl.microsoft.com, ocsp.digicert.com, cdn.cloudflare.net,
+  settings-win/vortex-win.data.microsoft.com, api-global.netflix.com) con
+  User-Agents suplantados en cada ciclo de heartbeat (probabilidad 0.3) —
+  la misma clase de masquerade eliminada de smoke_signals en la ronda 11.
+  ELIMINADO: el OPSEC queda reducido a timing (jitter determinista +
+  calendario horario); sin red, sin mimicry de UAs, sin anti-análisis
+  (`evasion_check` sandbox/debugger/EDR fuera del gate de `should_act` —
+  CAPABILITIES ya declaraba "sin anti-análisis" y ahora el código lo
+  cumple; `platform_layer::runtime` queda sin primitivas de evasión).
+- `c2_channels` sin familia encubierta: `DomainFront` (fronting por CDN con
+  UA suplantado y ruta `/collect`), `DeadDrop` (pastebin/S3/Gist),
+  `DnsTunnel` (beacon como labels DNS) e `IcmpTunnel` (payloads en echo
+  ICMP) ELIMINADOS junto a sus env vars de registro en comms
+  (`HIVE_C2_DNS_DOMAIN`, `HIVE_C2_ICMP_TARGET`, `HIVE_C2_DEAD_DROP_TOKEN` —
+  leídas pero documentadas en NINGÚN sitio). El FailoverDirector conserva
+  su maquinaria real (prioridad/race/round-robin, cooldown, stats) sobre
+  el canal Http (entrega directa al C2 + sink de lab, ronda 11).
+- `docker-compose.yml` deja de inyectar `HIVE_C2_DNS_DOMAIN=tunnel.example.com`.
+
+**Limpieza profunda (13 módulos muertos, ~2.460 líneas):** `did.rs`,
+`federation.rs` (covert channels + "bypass techniques" inter-hive),
+`hive_scale.rs`, `homomorphic.rs`, `marl_online.rs` ("rewards from real
+attacks"), `c2_bridge.rs` (traductores LdC → Sliver gRPC / Cobalt Strike
+Beacon SMB), `pheromone.rs`, `waggle_dance.rs`, `obfstr.rs` (macro XOR de
+ofuscación), `syscalls.rs` (syscalls directas anti-hook), `guardian.rs`
+(honeypot detection "before attacking"), `hibernation.rs` (supervivencia
+ante IR vía "honeycomb persistence" — eliminada en ronda 6) y
+`swarming.rs` — TODOS sin un solo consumidor en el workspace (verificado
+con rg sobre use/llamadas/re-exports/tests). Varios además traían carga
+ofensiva. El macro `obf!` solo tenía un test como consumidor: test fuera
+con el módulo. Lint progresivo escalón 2: `deny(clippy::unwrap_used)`
+(_fuera_ de tests) extendido a crypto/consensus/config/hivemind/opsec/
+identity/task_poller/panal/lateral; único `unwrap` de producción del grupo
+(crypto `try_into` tras length-check) convertido en `.ok()?` infalible.

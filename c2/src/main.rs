@@ -240,6 +240,7 @@ async fn main() {
         .route("/shell/:session_id", get(shell_handler))
         .route("/admin/sessions", get(admin_sessions_handler))
         .route("/admin/agents", get(admin_agents_handler))
+        .route("/admin/metrics", get(admin_metrics_handler))
         .layer(middleware::from_fn_with_state(
             state.clone(),
             auth_middleware,
@@ -377,6 +378,7 @@ h1{color:#73d0a0}a{color:#5ccfe6}
 <a href=/logs>/logs</a> — Recent activity<br>
 <a href=/admin/agents>/admin/agents</a> — Registered agents<br>
 <a href=/admin/sessions>/admin/sessions</a> — Shell sessions<br>
+<a href=/admin/metrics>/admin/metrics</a> — Operational metrics (ronda 12)<br>
 </div>
 <p style=color:#5c6773>Hive Colony v3.0 — Rust C2</p>
 </body></html>"#,
@@ -490,6 +492,13 @@ async fn admin_sessions_handler(State(state): State<AppState>) -> Json<Vec<shell
 async fn admin_agents_handler(State(state): State<AppState>) -> Json<serde_json::Value> {
     let db = state.db.lock().await;
     Json(db.agent_summary())
+}
+
+/// Ronda 12: métricas operativas REALES (contadores de la BD) para
+/// operador/monitoring. Mismo scope protegido que el resto de /admin/*.
+async fn admin_metrics_handler(State(state): State<AppState>) -> Json<serde_json::Value> {
+    let db = state.db.lock().await;
+    Json(db.metrics())
 }
 
 #[cfg(test)]

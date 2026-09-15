@@ -6,7 +6,7 @@
 
 <p align="center">
   <strong>A multi-agent autonomous swarm framework in Rust</strong><br/>
-  <sub>6 specialized agents · lock-free shared-memory IPC · zero TCP ports between agents · LLM-driven strategy</sub>
+  <sub>4 specialized agents · lock-free shared-memory IPC · zero TCP ports between agents · colony-consensus directives</sub>
 </p>
 
 <p align="center">
@@ -14,7 +14,7 @@
   <img src="https://img.shields.io/badge/rust-stable%201.82%2B-000000?style=flat-square&logo=rust" alt="Rust"/>
   <img src="https://img.shields.io/badge/version-3.0.0-6C63FF?style=flat-square" alt="Version"/>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-6C63FF?style=flat-square" alt="MIT License"/></a>
-  <img src="https://img.shields.io/badge/tests-298%20passing-73d0a0?style=flat-square" alt="Tests"/>
+  <img src="https://img.shields.io/badge/tests-273%20passing-73d0a0?style=flat-square" alt="Tests"/>
   <img src="https://img.shields.io/badge/platform-linux%20x86__64%20%7C%20windows%20(partial)-0d1117?style=flat-square&logo=linux" alt="Platform"/>
 </p>
 
@@ -46,10 +46,11 @@
 - **LLM optional, not required.** The Queen can consult a local Ollama model
   for strategy, and the whole colony degrades gracefully to heuristic mode
   when no model is present.
-- **Tested like a library, not a script.** 298 tests across five suites
-  (241 unit incl. loom concurrency models · 9 integration · 34 lab/e2e ·
-  6 c2-server), two criterion benches, and cargo-fuzz targets on the IPC and
-  ring-buffer paths.
+- **Tested like a library, not a script.** 273 tests across unit,
+  integration, lab/e2e and c2 suites (incl. loom concurrency models,
+  directive-execution policy, wire-id regression, parallel
+  discover_hosts), two criterion benches, and cargo-fuzz targets on the
+  IPC and ring-buffer paths.
 
 ## Architecture
 
@@ -68,7 +69,7 @@ git clone https://github.com/Ruby570bocadito/HiveMind
 cd HiveMind
 
 ./hive.sh build          # build all 9 crates
-./hive.sh test           # run the full workspace test suite (298 tests)
+./hive.sh test           # run the full workspace test suite (273 tests)
 
 ./hive.sh c2             # C2 server on http://localhost:8444
 ./hive.sh tui            # Beekeeper operator TUI (in another terminal)
@@ -119,7 +120,7 @@ Every agent:
 
 | Area | Status |
 |------|--------|
-| Tests | **298 passing** — 247 unit (incl. loom models over the arena, observer-cursor telemetry reads, embedded-ML roundtrip, C2-URL normalization, colony vote policy, shipped-config regression) + 43 integration (phase-A scenarios, arena regressions, lab/e2e) + 8 c2-server (auth, rate limiter, beacon retention, per-agent task claims) |
+| Tests | **273 passing** — unit (incl. loom models over the arena, directive-execution policy + wire-id regression, parallel discover_hosts, embedded-ML roundtrip, C2-URL normalization, colony vote policy, shipped-config regression) + integration (phase-A scenarios, arena regressions, lab/e2e) + c2-server (auth, rate limiter, beacon retention, per-agent task claims, /admin/metrics) |
 | CI | GitHub Actions: `cargo fmt --check` + `cargo clippy -D warnings` (blocking), full workspace tests, loom job over `shared_arena.rs`, end-to-end ML pipeline (train → export → parity gate), release artifacts uploaded |
 | Fuzzing | `cargo-fuzz` targets: IPC contract validation, ring-buffer ops |
 | Benches | criterion: HTL throughput, IPC validation |
@@ -130,7 +131,7 @@ Repository layout:
 
 ```
 hive_base/    shared library: arena IPC, LdC protocol, consensus, telemetry,
-              config (43 modules)
+              config (35 modules)
 agents/       queen · worker · drone · honeybee
 c2/           Rust C2 server (axum + SQLite, :8444)
 beekeeper/    operator TUI (ratatui + Lua scripting)

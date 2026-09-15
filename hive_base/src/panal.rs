@@ -4,6 +4,7 @@
 // Every offensive action checks `Brain::is_safe_target()` first.
 // If it returns true, the target is SKIPPED.
 
+#![cfg_attr(not(test), deny(clippy::unwrap_used))]
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

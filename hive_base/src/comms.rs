@@ -154,6 +154,12 @@ impl HiveChamber {
     }
 
     /// Initialize the FailoverDirector lazily from env vars.
+    ///
+    /// Ronda 12: SOLO el canal Http real (HIVE_C2_URL) más el respaldo
+    /// local. Los registros de DnsTunnel (HIVE_C2_DNS_DOMAIN), IcmpTunnel
+    /// (HIVE_C2_ICMP_TARGET) y DeadDrop (HIVE_C2_DEAD_DROP_TOKEN) fueron
+    /// eliminados junto con las implementaciones de esos túneles — eran
+    /// transportes encubiertos sin documentar (véase c2_channels.rs).
     async fn ensure_failover(&self) -> tokio::sync::MutexGuard<'_, Option<FailoverDirector>> {
         let mut guard = self.failover.lock().await;
         if guard.is_none() {
@@ -169,41 +175,6 @@ impl HiveChamber {
                 });
             }
 
-            // DNS tunnel channel
-            if let Ok(domain) = std::env::var("HIVE_C2_DNS_DOMAIN") {
-                director.add_channel(C2ChannelConfig {
-                    name: "dns_tunnel".into(),
-                    kind: ChannelKind::DnsTunnel,
-                    priority: 10,
-                    endpoint: domain,
-                    ..Default::default()
-                });
-            }
-
-            // ICMP tunnel channel
-            if let Ok(target) = std::env::var("HIVE_C2_ICMP_TARGET") {
-                director.add_channel(C2ChannelConfig {
-                    name: "icmp_tunnel".into(),
-                    kind: ChannelKind::IcmpTunnel,
-                    priority: 20,
-                    endpoint: target,
-                    ..Default::default()
-                });
-            }
-
-            // Dead drop channel
-            if let Ok(token) = std::env::var("HIVE_C2_DEAD_DROP_TOKEN") {
-                let mut extra = std::collections::HashMap::new();
-                extra.insert("token".into(), token);
-                director.add_channel(C2ChannelConfig {
-                    name: "dead_drop".into(),
-                    kind: ChannelKind::DeadDrop,
-                    priority: 30,
-                    extra,
-                    ..Default::default()
-                });
-            }
-
             // Always add at least a local HTTP fallback
             if director.channels.is_empty() {
                 director.add_channel(C2ChannelConfig {
@@ -215,7 +186,7 @@ impl HiveChamber {
             }
 
             info!(
-                "FailoverDirector: {} channels configured",
+                "FailoverDirector: {} channel(s) configured (http only — covert transports removed in ronda 12)",
                 director.channels.len()
             );
             *guard = Some(director);
@@ -247,19 +218,16 @@ impl HiveChamber {
             t.emit(EventType::HeartbeatSent, vec![], None);
         }
 
-        // Run OPSEC cycle (decoys, schedule check)
+        // Run OPSEC cycle (schedule check + timing only — ronda 12: sin
+        // decoys de red; el ciclo nunca genera tráfico)
         let opsec_delay_ms = {
             let mut guard = self.ensure_opsec();
             if let Some(ref mut engine) = *guard {
                 if !engine.should_act() {
-                    info!("OPSEC: heartbeat suppressed (schedule/evasion)");
+                    info!("OPSEC: heartbeat suppressed (schedule)");
                     return;
                 }
-                let decoy_count = engine.decoys_fired;
                 let delay = engine.cycle();
-                if engine.decoys_fired > decoy_count {
-                    info!("OPSEC: decoy traffic fired");
-                }
                 delay.as_millis() as u64
             } else {
                 0
@@ -599,9 +567,10 @@ mod tests {
 
     #[test]
     fn test_opsec_initialization() {
-        // Verify OPSEC engine can be created without panic
+        // Verify OPSEC engine can be created without panic (ronda 12:
+        // timing-only — sin contador de decoys)
         let engine = OpsecEngine::new(b"test-agent");
-        assert_eq!(engine.decoys_fired, 0);
+        assert_eq!(engine.cycles_completed, 0);
     }
 
     #[test]

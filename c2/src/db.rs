@@ -219,6 +219,34 @@ impl Db {
         serde_json::json!({ "agents": agents })
     }
 
+    /// Métricas operativas REALES de la BD (ronda 12): contadores del
+    /// estado del despliegue para operador/monitoring vía `GET
+    /// /admin/metrics`. Nada simulado: todo sale de SQL sobre las tablas
+    /// que alimentan los handlers existentes.
+    pub fn metrics(&self) -> serde_json::Value {
+        let count = |sql: &str| -> u64 {
+            self.conn
+                .query_row(sql, [], |r| r.get::<_, i64>(0))
+                .unwrap_or(0) as u64
+        };
+        let agents_registered = count("SELECT COUNT(DISTINCT agent_id) FROM beacons");
+        let beacons_total = count("SELECT COUNT(*) FROM beacons");
+        let tasks_total = count("SELECT COUNT(*) FROM tasks");
+        let tasks_pending = count("SELECT COUNT(*) FROM tasks WHERE claimed = 0");
+        let tasks_claimed = count("SELECT COUNT(*) FROM tasks WHERE claimed = 1");
+        let tasks_completed = count("SELECT COUNT(*) FROM tasks WHERE completed = 1");
+        serde_json::json!({
+            "agents_registered": agents_registered,
+            "beacons_total": beacons_total,
+            "tasks": {
+                "total": tasks_total,
+                "pending": tasks_pending,
+                "claimed": tasks_claimed,
+                "completed": tasks_completed,
+            },
+        })
+    }
+
     fn format_ts(ts: i64) -> String {
         let dt: chrono::DateTime<chrono::Utc> =
             chrono::DateTime::from_timestamp(ts, 0).unwrap_or_default();
@@ -303,5 +331,51 @@ mod tests {
             1,
             "la tarea de agent-b sigue pendiente (claim scoped por agent_id)"
         );
+    }
+
+    #[test]
+    fn metrics_reflect_real_db_state() {
+        // Ronda 12: /admin/metrics debe reflejar el estado REAL de la BD —
+        // contadores coherentes con lo insertado, no valores fijos.
+        let db = Db::with_conn(Connection::open_in_memory().unwrap());
+        db.record_beacon(
+            "agent-a",
+            "worker",
+            "h",
+            "u",
+            "os",
+            "v",
+            &serde_json::json!({}),
+        );
+        db.record_beacon(
+            "agent-a",
+            "worker",
+            "h",
+            "u",
+            "os",
+            "v",
+            &serde_json::json!({}),
+        );
+        db.record_beacon(
+            "agent-b",
+            "drone",
+            "h",
+            "u",
+            "os",
+            "v",
+            &serde_json::json!({}),
+        );
+        db.push_task("agent-a", "t1", "shell_exec", &serde_json::json!({}));
+        db.push_task("agent-a", "t2", "shell_exec", &serde_json::json!({}));
+        let _ = db.pending_tasks("agent-a"); // reclama t1 y t2
+        db.push_task("agent-b", "t3", "shell_exec", &serde_json::json!({}));
+
+        let m = db.metrics();
+        assert_eq!(m["agents_registered"], 2);
+        assert_eq!(m["beacons_total"], 3);
+        assert_eq!(m["tasks"]["total"], 3);
+        assert_eq!(m["tasks"]["claimed"], 2);
+        assert_eq!(m["tasks"]["pending"], 1);
+        assert_eq!(m["tasks"]["completed"], 0);
     }
 }

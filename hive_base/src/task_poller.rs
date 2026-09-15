@@ -23,6 +23,7 @@
 //! - `exfil` y cualquier comando destructivo: RECHAZADO (`rejected`) — la
 //!   capacidad no existe en el enjambre.
 //! - Resto: `unsupported`.
+#![cfg_attr(not(test), deny(clippy::unwrap_used))]
 use serde::{Deserialize, Serialize};
 use tracing::{info, warn};
 use uuid::Uuid;

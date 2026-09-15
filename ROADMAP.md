@@ -148,3 +148,50 @@ Prioritized list of known gaps and planned work. Items marked ✅ are done.
   (ronda 10 added `read_from` with lapped-reader clamping + unit tests; a
   commit-marker per entry would also remove the writer-reserve/reader-decode
   race on unwritten slots — tracked here).
+- [x] **End-to-end directive execution** (ronda 12): the ronda-11 consensus
+  was still broken at the last link — `process_arena_message` registered the
+  directive with a fresh internal UUID while votes carry the wire
+  `proposal_id`, so `cast_vote` never matched and the Queen could never
+  approve an arena proposal (caught by a new regression test). Fixed via
+  `propose_directive_with_id`. Agents now EXECUTE approved directives
+  (allow-list `prop_to_*`, lab gates `HIVE_LAB_MODE` + `HIVE_LAB_SUBNET`,
+  read-only segment scan) and publish `directive_executed` /
+  `directive_execution_skipped` events; the TUI Consensus tab shows the
+  full pending → approved → executed lifecycle. `discover_hosts` is now
+  parallel (32-probe pool, ~4 min → ~8 s worst case).
+- [x] **Dual-use sweep completed** (ronda 12): `opsec::fire_decoys` sent
+  REAL HTTP requests to third-party hosts (Microsoft/DigiCert/Cloudflare/
+  Netflix telemetry endpoints) with spoofed User-Agents on every heartbeat —
+  the same masquerade class ronda 11 removed from smoke_signals; deleted,
+  along with the anti-analysis gate (`evasion_check`) in `should_act`.
+  `c2_channels` lost DomainFront / DeadDrop (pastebin/S3/Gist) / DnsTunnel /
+  IcmpTunnel and their undocumented env hooks (`HIVE_C2_DNS_DOMAIN`,
+  `HIVE_C2_ICMP_TARGET`, `HIVE_C2_DEAD_DROP_TOKEN`); compose no longer sets
+  a DNS tunnel domain. The failover director keeps its real
+  priority/race/round-robin machinery over the honest Http channel.
+- [x] **Deep dead-code purge** (ronda 12): 13 modules with ZERO consumers
+  deleted (~2.4k lines), several offensive-era: `c2_bridge` (Sliver /
+  Cobalt Strike translators), `federation`, `guardian`, `hibernation`,
+  `syscalls` (direct-syscall evasion), `obfstr` (XOR string obfuscation),
+  `marl_online`, `swarming`, `did`, `homomorphic`, `hive_scale`,
+  `pheromone`, `waggle_dance`. Lint tier 2: `deny(clippy::unwrap_used)`
+  extended to 9 more core modules; the single production unwrap
+  (crypto `try_into` behind a length check) became an infallible `.ok()?`.
+- [x] **C2 `/admin/metrics`** (ronda 12): real DB counters (registered
+  agents, beacons, tasks pending/claimed/completed) in the protected
+  scope, next to `/admin/agents` and `/admin/sessions`.
+- [ ] Progressive lint tier 3: extend `deny(clippy::unwrap_used)` to the
+  transport modules (`whispernet` has ~27 production unwraps — the largest
+  remaining cluster), `remote_shell`, `fileless`, `smoke_signals`,
+  `ml`, `tournament`, `arena_mgr`, `c2_channels`, `smoke_signals`.
+- [ ] Fuzz the telemetry ring buffer with concurrent writers/readers
+  (ronda 10 added `read_from` with lapped-reader clamping + unit tests; a
+  commit-marker per entry would also remove the writer-reserve/reader-decode
+  race on unwritten slots — tracked here).
+- [ ] Windows CI job + cross-compile artifacts (`setup_cross.sh` already
+  installs the toolchains). CI triggers verified byte-level in ronda 12
+  (`[master, main]`): a rendering quirk of the audit tooling (ANSI-shaped
+  `[...m` substrings filtered from displayed text) had made this round's
+  first pass misread the valid ronda-9 triggers as the historical
+  `aster]` typo — byte/YAML verification is now the documented protocol
+  for bracket-heavy files.
