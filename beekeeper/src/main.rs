@@ -67,17 +67,17 @@ pub fn role_icon(role: &Role) -> &str {
     }
 }
 
-pub fn role_color(role: &Role) -> &str {
+pub fn role_color(role: &Role) -> &'static str {
     match role {
-        Role::Worker => "\x1b[92m",
-        Role::Drone => "\x1b[96m",
-        Role::Honeybee => "\x1b[93m",
-        Role::Weaver => "\x1b[95m",
-        Role::Queen => "\x1b[93m",
-        _ => "\x1b[0m",
+        Role::Worker => "\u{1b}[36m",   // cyan
+        Role::Drone => "\u{1b}[35m",    // magenta
+        Role::Honeybee => "\u{1b}[33m", // yellow
+        Role::Weaver => "\u{1b}[90m",   // bright black (legacy role, protocol compat)
+        Role::Queen => "\u{1b}[95m",    // bright magenta
+        _ => "\u{1b}[0m",
     }
 }
-const RESET: &str = "\x1b[0m";
+const RESET: &str = "\u{1b}[0m";
 
 #[tokio::main]
 async fn main() {
@@ -174,9 +174,8 @@ async fn cmd_status(arena: &str, watch: bool, interval: u64) {
             }
         }
 
-        println!("\n  ── Modules Online ──");
-        println!("  ◈ Saboteur  ◆ Seer  ◉ Phoenix  ✦ Tournament");
-        println!("  ◇ HiveMind  ⬡ WhisperNet  📡 Stigmergy");
+        println!("\n  ── Core systems (hive_base) ──");
+        println!("  ◇ HiveMind  ✦ Tournament  ⬡ WhisperNet  ⌘ Stigmergy  ⏱ Opsec");
         println!("  ────────────────────────────────────────────");
 
         if let Some(last) = msgs.last() {

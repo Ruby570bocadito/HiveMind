@@ -91,8 +91,23 @@ curl http://localhost:8444/health
 ```
 
 > Ronda 4: las herramientas de armado de payloads (`deploy.sh`,
-> `build_payload.sh`, `obfuscate_pe.py`) fueron retiradas. Las tácticas se
-> ejecutan en modo emulación — ver `docs/CAPABILITIES.md`.
+> `build_payload.sh`, `obfuscate_pe.py`) fueron retiradas. Desde la ronda 6
+> los módulos ofensivos están ELIMINADOS (no emulados) — ver
+> `docs/CAPABILITIES.md`.
+
+### TUI del operador (ronda 10)
+
+| Tecla | Pestaña | Qué muestra (datos reales del arena) |
+|-------|---------|--------------------------------------|
+| `1` | Topology | agentes registrados, rol, uptime y estado |
+| `2` | HTL Events | telemetría HTL en vivo (attach shm + cursor local del observador) |
+| `3` | Consensus | directivas observadas: proposals, votos y aprobaciones |
+| `4` | Lua Console | consola de scripting local (`LuaEngine`) |
+| `5` | Log | log de operador: joins/leaves, transiciones de directivas, laps de telemetría |
+
+El TUI es solo observación y scripting local: no ejecuta directivas ni
+tareas. En modo standalone (sin colonia) muestra el estado vacío de forma
+honesta en cada pestaña.
 
 ---
 

@@ -15,7 +15,7 @@ BORN = time.time()
 LOG_DIRS = ['/tmp', '/var/log']
 ARENA_PATH = '/dev/shm'
 
-AGENT_ROLES = ['queen', 'worker', 'drone', 'honeybee', 'swarm']
+AGENT_ROLES = ['queen', 'worker', 'drone', 'honeybee']
 
 # ── Data ──────────────────────────────────────────────────────────────────────
 
@@ -164,8 +164,8 @@ td{padding:5px 10px;border-bottom:1px solid var(--border)}
 .hive-banner{font-size:10px;color:var(--text2);text-align:center;margin-bottom:10px;opacity:0.6}
 """
 
-ROLE_ICONS = {'worker':'◈','drone':'◆','honeybee':'◉','queen':'◇','swarm':'⬡'}
-ROLE_COLORS = {'worker':'green','drone':'cyan','honeybee':'orange','queen':'gold','swarm':'red'}
+ROLE_ICONS = {'worker':'◈','drone':'◆','honeybee':'◉','queen':'◇'}
+ROLE_COLORS = {'worker':'green','drone':'cyan','honeybee':'orange','queen':'gold'}
 
 # ── HTML ──────────────────────────────────────────────────────────────────────
 
@@ -249,7 +249,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             dot_class, status_text, tag, tag_class = 'live', 'BOOTSTRAPPING', 'PARTIAL', 'warn'
 
         # Agent rows
-        role_order = ['queen','worker','drone','honeybee','swarm']
+        role_order = ['queen','worker','drone','honeybee']
         rows = ''
         agent_names = []
         for a in sorted(s['agents'], key=lambda x: role_order.index(x['role']) if x['role'] in role_order else 99):

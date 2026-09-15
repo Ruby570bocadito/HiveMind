@@ -54,10 +54,30 @@ Flujo operativo del ejercicio:
 2. Conecta el TUI del operador (`./hive.sh tui`) o el shell interactivo del
    C2 (`GET /shell/:session_id` por WebSocket).
 3. Crea tareas con `POST /task/:agent_id`; los agentes las recogen con el
-   **TaskPoller** (ronda 4) y devuelven resultados vía `POST /beacon`.
-4. Las tácticas se ejecutan en **modo emulación**: la enumeración real es de
-   solo lectura y los efectos (exfil, sabotaje, persistencia, escalada)
-   se simulan con telemetría etiquetada — ver `docs/CAPABILITIES.md`.
+   **TaskPoller** (ronda 4) y devuelven resultados vía `POST /beacon`;
+   las tareas destructivas/exfil se rechazan (`rejected`, ronda 6).
+4. No existe modo emulación desde la ronda 6: los módulos ofensivos fueron
+   ELIMINADOS. Lo que queda es enumeración de solo lectura, transporte y
+   observabilidad — ver `docs/CAPABILITIES.md` (matriz vigente).
+5. Observa la colonia desde el TUI: las pestañas Consensus y Log muestran
+   directivas y eventos reales del arena (ronda 10).
+
+### Helm chart (laboratorio en Kubernetes)
+
+El chart de `deploy/charts/hive/` despliega C2 + agentes sobre un segmento
+shm node-local (topología de lab; todos los pods en el mismo nodo):
+
+```bash
+docker build -t hive-colony:latest .          # imagen (build/tag flow en
+                                              # deploy/charts/hive/README.md)
+helm install hive deploy/charts/hive          # defaults des-escalados
+```
+
+Defaults de seguridad (ronda 10): `privileged: false`, `runAsNonRoot: true`,
+sin `hostPID`/`hostNetwork`, RBAC solo ServiceAccount, y `__HIVE_ARENA`
+con nombre shm válido (`hive_arena`) montado desde `/dev/shm` (hostPath).
+El chart ya no referencia el agente `swarm` (eliminado en ronda 6) ni
+volúmenes `loot`.
 
 ## 3. Variables de entorno
 

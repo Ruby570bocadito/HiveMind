@@ -11,7 +11,11 @@ COPY . .
 
 # Build everything the runtime image needs (agents + c2 + tui)
 RUN cargo build --release -p c2-server \
-    -p beekeeper
+    -p beekeeper \
+    -p queen \
+    -p worker \
+    -p drone \
+    -p honeybee
 
 # ── Runtime stage ─────────────────────────────────────────────────────────
 FROM ubuntu:24.04
@@ -30,7 +34,6 @@ COPY --from=builder /opt/hive/target/release/queen      /hive/bin/
 COPY --from=builder /opt/hive/target/release/worker     /hive/bin/
 COPY --from=builder /opt/hive/target/release/drone      /hive/bin/
 COPY --from=builder /opt/hive/target/release/honeybee   /hive/bin/
-COPY --from=builder /opt/hive/target/release/swarm      /hive/bin/
 COPY --from=builder /opt/hive/target/release/beekeeper  /hive/bin/
 
 COPY tests/ /hive/tests/
@@ -38,4 +41,4 @@ COPY scripts/ /hive/scripts/
 COPY hive.toml /hive/hive.toml
 
 EXPOSE 8080 8444
-CMD ["/hive/bin/c2-server", "--port", "8444", "--loot-dir", "/hive/loot", "--db-path", "/hive/c2.db"]
+CMD ["/hive/bin/c2-server", "--port", "8444", "--db-path", "/hive/c2.db"]

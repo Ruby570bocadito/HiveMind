@@ -1,11 +1,14 @@
 apiVersion: v2
 name: hive-colony
-description: Hive Colony — Multi-Agent Autonomous Red Team Framework
+description: >-
+  Hive Colony — multi-agent swarm framework for isolated lab environments
+  (shared-memory IPC, signed message protocol, reputation-weighted consensus,
+  operator C2). Contains no offensive modules since ronda 6.
 type: application
 version: 3.0.0
 appVersion: 3.0.0
 keywords:
-  - security
-  - red-team
+  - multi-agent
   - rust
-  - c2
+  - swarm
+  - lab

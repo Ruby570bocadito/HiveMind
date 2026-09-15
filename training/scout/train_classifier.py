@@ -20,7 +20,7 @@ def main():
         import joblib
     except ImportError:
         print("Required packages not installed.")
-        print("Run: pip install pandas scikit-learn joblib onnx onnxruntime skl2onnx numpy")
+        print("Run: pip install pandas scikit-learn joblib numpy")
         sys.exit(1)
 
     script_dir = os.path.dirname(os.path.abspath(__file__))

@@ -102,3 +102,31 @@ pero semánticamente inválido — la CI nunca pudo dispararse), `cargo fmt
 job ML end-to-end (dataset → train → export → validación de paridad;
 `train_classifier.py` ahora falla de verdad si el export falla) y artifacts
 de release subidos.
+
+## Ronda 10 — observador del TUI real + despliegue reparable (2026-09-15)
+
+**TUI del operador:** la pestaña HTL Events estaba muerta por diseño — el
+TUI montaba el buffer de telemetría sobre una arena PRIVADA (`alloc_zeroed`)
+en vez de adjuntarse al segmento shm de la colonia, y además re-apilaba con
+`peek` el mismo lote de eventos en cada frame. Ahora: attach real vía
+`arena_mgr::connect_to_arena()` y lectura con cursor LOCAL mediante el nuevo
+`TelemetryBuffer::read_from(pos, max)` (no toca el cursor compartido: no roba
+eventos a los drenadores de los agentes; clamp anti-lap documentado y
+testeado). Las pestañas Consensus y Log — sin productor desde su creación —
+muestran ahora estado real: directivas observadas del flujo de mensajes
+(Proposal/Vote/StatusEvent/Belief) y log de operador (joins/leaves,
+transiciones de directivas, laps del anillo). La pestaña es SOLO OBSERVACIÓN:
+el TUI no ejecuta directivas ni tareas.
+
+**Higiene dual-use del despliegue (restos de la era ofensiva):** eliminados
+el servicio worm `swarm` y el servicio `victim` (siembra de credenciales
+falsas para exfil, sin consumidor desde la ronda 6) de docker-compose.yml;
+`--loot-dir` (flag del C2 retirada en la ronda 6) fuera del Dockerfile CMD y
+de los compose — el C2 volvía a crashear al arrancar; `docker/lab/` compose
+(roto: `networks: ive-net]` en todos los servicios, worm swarm, comentarios
+de propagación/exfiltración) y `Dockerfile.lab` eliminados;
+`scripts/lab_setup.sh` reescrito sin la ceremonia de claves para "harvesting"
+(Leech fue eliminado en ronda 6) y sin exigir el binario swarm.
+`deploy/charts/hive`: parseable de nuevo (values.yaml tenía un error YAML),
+sin agente swarm, sin volumen loot, securityContext des-escalado (non-root,
+sin privilegios, RBAC solo ServiceAccount) y nombre de arena shm válido.

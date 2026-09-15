@@ -307,21 +307,24 @@ impl TelemetryBuffer {
         true
     }
 
-    /// Read up to `max_entries` events from the buffer.
-    /// Advances the read cursor.
-    pub fn drain(&self, max_entries: usize) -> Vec<Event> {
+    /// Decode up to `max_entries` length-prefixed entries from `pos` until
+    /// `write_pos`. Shared-mutation free: callers decide what to do with the
+    /// returned resume position (drain stores it in the shared cursor;
+    /// peek/read_from keep it local). Corrupted entries are skipped 4 bytes
+    /// at a time (the length prefix is the only trusted structure).
+    ///
+    /// SAFETY invariant: `pos` must be <= `write_pos`. Callers clamp first
+    /// (a lapped reader would otherwise decode garbage).
+    fn decode_range(&self, mut pos: u64, max_entries: usize, write_pos: u64) -> (Vec<Event>, u64) {
         let mut events = Vec::with_capacity(max_entries.min(256));
+        let data_area = self.data_ptr_const();
 
         for _ in 0..max_entries {
-            let read_pos = self.read_cursor().load(Ordering::Acquire);
-            let write_pos = self.write_cursor().load(Ordering::Acquire);
-
-            if read_pos == write_pos {
-                break; // Empty
+            if pos >= write_pos {
+                break; // Caught up
             }
 
-            let read_idx = (read_pos as usize) % self.capacity;
-            let data_area = self.data_ptr_const();
+            let read_idx = (pos as usize) % self.capacity;
 
             // Read length prefix (unaligned)
             let entry_len: u32 = unsafe {
@@ -332,7 +335,7 @@ impl TelemetryBuffer {
 
             if entry_len == 0 || entry_len as usize > self.capacity {
                 // Corrupted entry, advance past it
-                self.read_cursor().store(read_pos + 4, Ordering::Release);
+                pos += 4;
                 continue;
             }
 
@@ -364,9 +367,7 @@ impl TelemetryBuffer {
                 }
             }
 
-            // Advance read cursor past this entry
-            let new_read = read_pos + 4 + entry_len as u64;
-            self.read_cursor().store(new_read, Ordering::Release);
+            pos += 4 + entry_len as u64;
 
             // Deserialize
             if let Ok(event) = rmp_serde::from_slice::<Event>(&bytes) {
@@ -374,7 +375,58 @@ impl TelemetryBuffer {
             }
         }
 
+        (events, pos)
+    }
+
+    /// Oldest byte position that can still hold an intact entry: writers
+    /// advance the write cursor unboundedly, so anything further than one
+    /// capacity behind it has been overwritten ("lapped").
+    fn oldest_readable_pos(&self, write_pos: u64) -> u64 {
+        write_pos.saturating_sub(self.capacity as u64)
+    }
+
+    /// Read up to `max_entries` events from the buffer.
+    /// Advances the read cursor.
+    pub fn drain(&self, max_entries: usize) -> Vec<Event> {
+        let read_pos = self.read_cursor().load(Ordering::Acquire);
+        let write_pos = self.write_cursor().load(Ordering::Acquire);
+
+        // Anti-lap clamp: if a stalled reader was overtaken by the writers
+        // (occupancy > capacity), decoding from its position would yield
+        // garbage. Jump to the oldest intact position and make the skip
+        // durable for everyone sharing the cursor.
+        let pos = read_pos.max(self.oldest_readable_pos(write_pos));
+
+        let (events, new_read) = self.decode_range(pos, max_entries, write_pos);
+        self.read_cursor().store(new_read, Ordering::Release);
         events
+    }
+
+    /// Observer read: decode up to `max_entries` events starting at the
+    /// CALLER-OWNED position `from_pos`, without touching the shared read
+    /// cursor. Returns `(events, next_pos, skipped_bytes)`:
+    /// - `next_pos` is where the caller should resume next call;
+    /// - `skipped_bytes > 0` means the writers lapped `from_pos` and that
+    ///   much ring content was permanently lost (the resume point jumped to
+    ///   the oldest intact position).
+    ///
+    /// Rationale: `drain`/`peek` operate on ONE shared cursor — only one
+    /// drainer may consume an arena. Detached observers (the operator TUI)
+    /// keep a private cursor instead: they see every event without stealing
+    /// them from the drainers and without the duplication a non-consuming
+    /// `peek` per frame would produce.
+    pub fn read_from(&self, from_pos: u64, max_entries: usize) -> (Vec<Event>, u64, u64) {
+        let write_pos = self.write_cursor().load(Ordering::Acquire);
+
+        // Clamp a lapped (or arena-reinitialized, i.e. ahead-of-write)
+        // caller position into the readable window.
+        let pos = from_pos
+            .max(self.oldest_readable_pos(write_pos))
+            .min(write_pos);
+        let skipped = pos.saturating_sub(from_pos);
+
+        let (events, next_pos) = self.decode_range(pos, max_entries, write_pos);
+        (events, next_pos, skipped)
     }
 
     /// Return buffer occupancy ratio (0.0 – 1.0)
@@ -387,9 +439,10 @@ impl TelemetryBuffer {
 
     /// Read without advancing cursor (peek)
     pub fn peek(&self, max_entries: usize) -> Vec<Event> {
-        let saved = self.read_cursor().load(Ordering::Acquire);
-        let events = self.drain(max_entries);
-        self.read_cursor().store(saved, Ordering::Release);
+        let read_pos = self.read_cursor().load(Ordering::Acquire);
+        let write_pos = self.write_cursor().load(Ordering::Acquire);
+        let pos = read_pos.max(self.oldest_readable_pos(write_pos));
+        let (events, _) = self.decode_range(pos, max_entries, write_pos);
         events
     }
 }
@@ -1159,6 +1212,140 @@ mod tests {
         assert_eq!(peeked.len(), 1);
         let drained = buf.drain(10);
         assert_eq!(drained.len(), 1, "peek should not advance cursor");
+        unsafe {
+            destroy_test_buffer(&buf);
+        }
+    }
+
+    #[test]
+    fn test_read_from_leaves_shared_cursor_intact() {
+        let buf = create_test_buffer();
+        for seq in 0..5u64 {
+            assert!(buf.write_event(&Event::root_event(
+                test_agent_id(),
+                seq,
+                EventType::HeartbeatSent
+            )));
+        }
+
+        let (events, next_pos, skipped) = buf.read_from(0, 10);
+        assert_eq!(events.len(), 5, "observer sees every event");
+        assert_eq!(skipped, 0, "nothing lapped");
+        assert!(next_pos > 0, "resume position advanced");
+
+        // The shared cursor was NOT touched: the drainer still sees all 5.
+        let drained = buf.drain(10);
+        assert_eq!(drained.len(), 5, "drainer unaffected by observer read");
+        unsafe {
+            destroy_test_buffer(&buf);
+        }
+    }
+
+    #[test]
+    fn test_read_from_resumes_without_duplicates() {
+        let buf = create_test_buffer();
+        for seq in 0..5u64 {
+            assert!(buf.write_event(&Event::root_event(
+                test_agent_id(),
+                seq,
+                EventType::HeartbeatSent
+            )));
+        }
+
+        let (first, pos, _) = buf.read_from(0, 2);
+        assert_eq!(first.len(), 2);
+        let (second, pos2, skipped) = buf.read_from(pos, 10);
+        assert_eq!(second.len(), 3, "resume picks up exactly the rest");
+        assert_eq!(skipped, 0);
+
+        let mut seqs: Vec<u64> = first
+            .iter()
+            .chain(second.iter())
+            .map(|e| e.id.seq)
+            .collect();
+        seqs.sort_unstable();
+        assert_eq!(seqs, vec![0, 1, 2, 3, 4], "no duplicates, no gaps");
+        let _ = pos2;
+        unsafe {
+            destroy_test_buffer(&buf);
+        }
+    }
+
+    #[test]
+    fn test_read_from_jumps_when_lapped() {
+        let buf = create_test_buffer();
+        // Write far past capacity so the writers lap position 0. The exact
+        // entry size depends on the msgpack encoding; 300k heartbeats exceed
+        // the 4 MiB telemetry ring under either representation.
+        for seq in 0..300_000u64 {
+            assert!(buf.write_event(&Event::root_event(
+                test_agent_id(),
+                seq,
+                EventType::HeartbeatSent
+            )));
+        }
+
+        let (events, mut pos, skipped) = buf.read_from(0, 10);
+        assert!(skipped > 0, "writers must have lapped position 0");
+        assert!(
+            events
+                .iter()
+                .all(|e| e.event_type == EventType::HeartbeatSent),
+            "every decoded event is a real event, never garbage"
+        );
+
+        // The observer recovers and keeps streaming valid events.
+        let mut valid = events.len();
+        for _ in 0..10 {
+            let (more, next, skip) = buf.read_from(pos, 50);
+            assert!(skip == 0, "no further lap within the window");
+            assert!(more
+                .iter()
+                .all(|e| e.event_type == EventType::HeartbeatSent));
+            valid += more.len();
+            pos = next;
+        }
+        assert!(valid >= 25, "observer recovers after the jump");
+
+        // The shared drainer is still functional (its own anti-lap clamp).
+        // NOTE: the oldest readable byte can straddle an overwritten entry
+        // boundary, so the first decode may spend one iteration on the
+        // corrupt-skip path — assert on validity and recovery, not on an
+        // exact count for that first call.
+        let drained = buf.drain(10);
+        assert!(
+            drained.len() >= 8,
+            "drain recovers after the lap (got {})",
+            drained.len()
+        );
+        assert!(drained
+            .iter()
+            .all(|e| e.event_type == EventType::HeartbeatSent));
+        let drained2 = buf.drain(10);
+        assert_eq!(drained2.len(), 10, "aligned after the first call");
+        unsafe {
+            destroy_test_buffer(&buf);
+        }
+    }
+
+    #[test]
+    fn test_read_from_stale_position_after_reinit() {
+        let buf = create_test_buffer();
+        for seq in 0..3u64 {
+            assert!(buf.write_event(&Event::root_event(
+                test_agent_id(),
+                seq,
+                EventType::HeartbeatSent
+            )));
+        }
+        let (_, pos, _) = buf.read_from(0, 10);
+
+        // Arena reinitialized under our feet (cursors reset to zero).
+        buf.init();
+        let (events, next, skipped) = buf.read_from(pos, 10);
+        assert!(events.is_empty());
+        assert_eq!(skipped, 0, "no forward skip when the cursor is ahead");
+        assert_eq!(next, 0, "resume position re-anchored to the new arena");
         unsafe {
             destroy_test_buffer(&buf);
         }

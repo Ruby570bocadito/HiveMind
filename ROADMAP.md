@@ -101,11 +101,32 @@ Prioritized list of known gaps and planned work. Items marked ✅ are done.
 - [ ] Deduplicate: two arena implementations (`arena_mgr` vs
   `platform_layer::ipc`), three C2-channel-selection systems, agent
   boilerplate (`new`/`run`/`publish_msg` per binary).
-- [ ] Beekeeper TUI: wire the Log/Consensus tabs to real data sources or
-  remove them; Lua input per-tab key handling.
-- [ ] Helm chart: documented image build/tag flow, de-escalated
-  securityContext defaults, remove unused ConfigMap keys.
+- [x] **Beekeeper TUI: wire the Log/Consensus tabs to real data sources**
+  (ronda 10): the Consensus tab now maintains observer-side directive state
+  from the live arena message stream (`Payload::Proposal` → pending entry,
+  `Payload::Vote` → vote count, `Payload::StatusEvent`/
+  `directive:` belief → approved) and the Log tab records real operator
+  events (agent joins/leaves, directive transitions, connection state,
+  telemetry ring laps). Both tabs were permanently empty before — no
+  producer existed. HTL Events also fixed: the TUI now attaches to the real
+  shm arena and reads with a PRIVATE cursor (`TelemetryBuffer::read_from`)
+  instead of re-peeking the same shared batch every frame.
+- [x] **Helm chart: parseable values, de-escalated securityContext, unused
+  keys removed, image build/tag flow documented** (ronda 10): `values.yaml`
+  had a YAML syntax error (chart could not parse at all) and deployed the
+  removed `swarm` agent; the template mounted a `loot` volume, forced
+  `privileged: true` + `runAsUser: 0` + `hostPID`/`hostNetwork`, granted a
+  k8s ClusterRole no binary uses, and passed a file path as a `shm_open`
+  name (EINVAL — agents could never attach). Defaults now: non-root,
+  unprivileged, ServiceAccount-only RBAC, shm name `hive_arena` via a
+  node-local `/dev/shm` hostPath. See `deploy/charts/hive/README.md`.
+- [ ] Docker/lab stack follow-ups: the removed `docker/lab/` compose (broken
+  YAML + worm service) and `Dockerfile.lab` are gone; remaining work is a
+  Windows CI job and composing the lab docs into one walkthrough.
 - [ ] Progressive lint tightening: `#![deny(clippy::unwrap_used)]` for the
   core modules (`comms`, `shared_arena`, `telemetry`, `ldc`). Baseline
   `clippy -D warnings` + `fmt --check` are CI gates since ronda 9.
-- [ ] Fuzz the telemetry ring buffer with concurrent writers/readers.
+- [ ] Fuzz the telemetry ring buffer with concurrent writers/readers
+  (ronda 10 added `read_from` with lapped-reader clamping + unit tests; a
+  commit-marker per entry would also remove the writer-reserve/reader-decode
+  race on unwritten slots — tracked here).

@@ -1,18 +1,30 @@
+# Hive Colony v3.0 — Helm values (lab-oriented)
+#
+# The colony is a node-local lab topology: agents share a POSIX shm segment
+# that lives in the node's /dev/shm (shm_open). All pods in this chart MUST
+# run on the same node (use nodeSelector/affinity) because /dev/shm is
+# node-scoped.
+
 replicaCount: 1
 
 image:
   repository: hive-colony
   tag: latest
   pullPolicy: IfNotPresent
+  # Build/tag flow (see deploy/charts/hive/README.md):
+  #   docker build -t hive-colony:latest .
+  #   (optionally push to your registry and set repository/tag here)
 
 arena:
-  storageClass: "standard"
-  size: 64Mi
+  # POSIX shm segment name created inside /dev/shm (shm_open semantics).
+  # Must be a valid shm name: a single leading slash, no other slashes.
+  name: hive_arena
+  # Node path mounted at /dev/shm in every pod so the shm segment is shared.
+  hostPath: /dev/shm
 
 c2:
   url: "http://hive-c2:8444/beacon"
   dnsDomain: "tunnel.example.com"
-  icmpTarget: "8.8.8.8"
   deadDropToken: ""
 
 agents:
@@ -39,20 +51,26 @@ agents:
     replicas: 1
     resources:
       limits: { cpu: 500m, memory: 256Mi }
-      requests: { cpu: 100m, memory: 64Mi }  swarm:
-    enabled: true
-    replicas: 1
-    resources:
-      limits: { cpu: 500m, memory: 256Mi }
       requests: { cpu: 100m, memory: 64Mi }
 
 serviceAccount:
   create: true
   name: ""
 
+# De-escalated defaults (ronda 10). memfd_create, shm_open and the read-only
+# scans all work unprivileged; flip these only if your lab explicitly needs
+# kernel-level access and you accept the risk.
 securityContext:
-  runAsNonRoot: false
-  privileged: true
+  privileged: false
+  runAsNonRoot: true
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop: ["ALL"]
+
+podSecurity:
+  # Node-level integrations the old chart forced on. Off by default.
+  hostPID: false
+  hostNetwork: false
 
 nodeSelector: {}
 tolerations: []

@@ -31,8 +31,8 @@
 | [Queen](#queen--overmind) | ◇ | Overmind — estrategia LLM + C2 bridge | `agents/queen/` |
 | [Worker](#worker--scout) | ◈ | Scout — reconocimiento + EDR detection | `agents/worker/` |
 | [Drone](#drone--shaper) | ◆ | Shaper — decisiones + movimiento lateral | `agents/drone/` |
-| [Honeybee](#honeybee--hoarder) | ◉ | Hoarder — ejecución final **solo simulación** (destructivo deshabilitado) | `agents/honeybee/` |
-| [Swarm](#swarm--worm) | ⬡ | Worm — auto-propagación autónoma | `agents/swarm/` |
+| [Honeybee](#honeybee--hoarder) | ◉ | Hoarder — tareas del operador; acciones destructivas ELIMINADAS (ronda 6) | `agents/honeybee/` |
+| ~~Swarm~~ | ⬡ | Worm — ELIMINADO en ronda 6 (ver `docs/CAPABILITIES.md`) | *(sin código)* |
 
 ---
 
@@ -352,78 +352,16 @@ implementa):
 
 ---
 
-## Swarm ⬡ — Worm
+## Swarm ⬡ — ELIMINADO (ronda 6)
 
-```
-┌─────────────────────────────────────────────────────────────────┐
-│  SWARM                                                          │
-│                                                                 │
-│  ┌──────────────┐    ┌──────────────┐    ┌──────────────┐     │
-│  │ Lee          │───▶│ Selecciona   │───▶│ Se propaga   │     │
-│  │ creencias    │    │ targets via  │    │ vía SSH + SCP│     │
-│  │ de Worker   │    │ MARL policy  │    │              │     │
-│  └──────────────┘    └──────────────┘    └──────────────┘     │
-│                                                                 │
-│  Auto-limitante:                                                │
-│    • Max 10 hops → self-destruct                                │
-│    • Max 2 infecciones/min                                      │
-│    • Self-destruct después de 1h                                │
-│    • Evita hosts con EDR (lee creencias de Worker)             │
-│    • No requiere consenso — propaga autónomamente              │
-└─────────────────────────────────────────────────────────────────┘
-```
+El agente worm autónomo (`agents/swarm/`: propagación SSH/SCP, scoring de
+targets con Q-values heurísticos, auto-límites de hops/velocidad) fue
+**eliminado del repositorio** en la ronda 6 por decisión del propietario
+("hazlo real o elimínalo"). No queda código ni binario; las referencias que
+quedaban en compose/Helm/scripts de despliegue se retiraron en la ronda 10.
 
-**Archivo:** `agents/swarm/src/main.rs`
-**Rol:** Autonomous propagation, no-consensus spreading
-
-### Capacidades
-
-| Capacidad | Detalle |
-|-----------|---------|
-| Autónomo | Propaga sin esperar consenso HiveMind |
-| Target scoring (Q-values heurísticos sobre el clasificador scout; RL real es trabajo pendiente, ver ROADMAP) | Prioriza hosts de alto valor y bajo EDR |
-| SSH key auth | Prueba todas las claves cosechadas |
-| SCP deploy | Copia binario y ejecuta remoto |
-| Auto-limitante | 10 hops, 2/min, 1h de vida |
-| EDR avoidance | Lee creencias de Worker |
-
-### Ciclo de vida
-
-```
-NACE ────────────────────────────────────────────────────────── MUERE
-  │                                                              │
-  ▼                                                              ▼
-┌──────────┐    ┌──────────┐    ┌──────────┐    ┌──────────┐
-│ Spawnea  │───▶│ Escanea  │───▶│ Infecta  │───▶│ Salta a  │
-│ target 1  │    │ target 2 │    │ target 3 │    │ target 4 │
-└──────────┘    └──────────┘    └──────────┘    └──────────┘
-                                                     │
-                                                     ▼    (hop ≥ 10
-                                                  ┌──────────┐  o 1h
-                                                  │ SELF-    │  pasado)
-                                                  │ DESTRUCT │
-                                                  └──────────┘
-```
-
-### Configuración
-
-```toml
-[agents]
-swarm_max_hops = 10
-swarm_max_infections_per_minute = 2
-swarm_self_destruct_secs = 3600
-
-[brain]
-safe_ips = ["192.168.1.100", "192.168.1.1"]
-```
-
-### MITRE ATT&CK
-
-| Técnica | ID | Descripción |
-|---------|----|-------------|
-| SSH Remote Services | T1021.004 | Propagación |
-| Lateral Tool Transfer | T1570 | SCP de binarios |
-| System Checks | T1497.001 | Evita hosts con EDR |
+Historial: descrito como agente en las rondas 1–5 (emulación), eliminado en
+la ronda 6. Matriz de capacidades vigente: `docs/CAPABILITIES.md`.
 
 ---
 
@@ -538,3 +476,23 @@ safe_ips = ["192.168.1.100", "192.168.1.1"]
 > de release subidos. Higiene dual-use: `PrivEscResult` muerto eliminado,
 > cabeceras de decisión en `privesc.rs` (solo lectura) y `remote_shell.rs`
 > (núcleo C2 tras auditoría del poller). Tests: 286 (237 unit).
+
+> **Nota ronda 10 (2026-09-15):** TUI del operador reparado y completado —
+> (1) el buffer de telemetría del TUI se adjunta AHORA al segmento shm real
+> (`arena_mgr::connect_to_arena`, misma vía que los agentes; antes montaba
+> una arena privada en heap y la pestaña HTL Events jamás mostraba nada);
+> (2) nuevo `TelemetryBuffer::read_from(pos, max)` con cursor LOCAL del
+> observador: sin robar eventos a los drenadores de los agentes y sin los
+> duplicados del `peek` por frame (+4 tests, incluye lap del anillo y
+> re-anclaje tras re-init); (3) pestañas Consensus y Log con datos reales
+> (estado de directivas observado desde Proposal/Vote/StatusEvent/Belief;
+> log de operador con joins/leaves, transiciones de directivas y laps);
+> (4) `beekeeper status` ya no anuncia módulos eliminados (Saboteur/Seer) y
+> los colores ANSI funcionan de verdad. Despliegue reparado: Dockerfile
+> (construía menos binarios de los que COPY; swarm fuera; `--loot-dir`
+> fuera del CMD), docker-compose.yml (C2 arrancable, swarm/victim fuera),
+> `docker/lab/` y `Dockerfile.lab` eliminados (roto + era ofensiva),
+> `lab_setup.sh` reescrito contra el compose lab de la raíz, chart Helm
+> parseable y des-escalado (ver `deploy/charts/hive/README.md`).
+> Deps Python: torch/onnxruntime/protobuf/skl2onnx fuera de requirements
+> (sin importador). Tests: 290 (241 unit).

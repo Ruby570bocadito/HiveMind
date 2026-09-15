@@ -14,7 +14,7 @@
   <img src="https://img.shields.io/badge/rust-stable%201.82%2B-000000?style=flat-square&logo=rust" alt="Rust"/>
   <img src="https://img.shields.io/badge/version-3.0.0-6C63FF?style=flat-square" alt="Version"/>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-6C63FF?style=flat-square" alt="MIT License"/></a>
-  <img src="https://img.shields.io/badge/tests-286%20passing-73d0a0?style=flat-square" alt="Tests"/>
+  <img src="https://img.shields.io/badge/tests-290%20passing-73d0a0?style=flat-square" alt="Tests"/>
   <img src="https://img.shields.io/badge/platform-linux%20x86__64%20%7C%20windows%20(partial)-0d1117?style=flat-square&logo=linux" alt="Platform"/>
 </p>
 
@@ -46,8 +46,8 @@
 - **LLM optional, not required.** The Queen can consult a local Ollama model
   for strategy, and the whole colony degrades gracefully to heuristic mode
   when no model is present.
-- **Tested like a library, not a script.** 286 tests across five suites
-  (237 unit incl. loom concurrency models · 9 integration · 34 lab/e2e ·
+- **Tested like a library, not a script.** 290 tests across five suites
+  (241 unit incl. loom concurrency models · 9 integration · 34 lab/e2e ·
   6 c2-server), two criterion benches, and cargo-fuzz targets on the IPC and
   ring-buffer paths.
 
@@ -74,7 +74,7 @@ cd HiveMind
 ./hive.sh tui            # Beekeeper operator TUI (in another terminal)
 ```
 
-Full lab via Docker (C2 + six agents + SSH targets + dashboard):
+Full lab via Docker (C2 + four agents + SSH targets + monitoring):
 
 ```bash
 ./hive.sh colony         # main stack
@@ -119,7 +119,7 @@ Every agent:
 
 | Area | Status |
 |------|--------|
-| Tests | **286 passing** — 237 unit (incl. loom models over the arena, Lua console + embedded-ML roundtrip) + 43 integration (phase-A scenarios, arena regressions, lab/e2e) + 6 c2-server (auth, rate limiter) |
+| Tests | **290 passing** — 241 unit (incl. loom models over the arena, observer-cursor telemetry reads, Lua console + embedded-ML roundtrip) + 43 integration (phase-A scenarios, arena regressions, lab/e2e) + 6 c2-server (auth, rate limiter) |
 | CI | GitHub Actions: `cargo fmt --check` + `cargo clippy -D warnings` (blocking), full workspace tests, loom job over `shared_arena.rs`, end-to-end ML pipeline (train → export → parity gate), release artifacts uploaded |
 | Fuzzing | `cargo-fuzz` targets: IPC contract validation, ring-buffer ops |
 | Benches | criterion: HTL throughput, IPC validation |
@@ -152,6 +152,7 @@ deploy/       Helm chart · docker compose labs
 | [docs/CAPABILITIES.md](docs/CAPABILITIES.md) | capability matrix: what is real, what is gated |
 | [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) | build, test, conventions |
 | [docs/NAMING.md](docs/NAMING.md) | old ↔ current name mapping (Scout→Worker, …) |
+| [deploy/charts/hive/README.md](deploy/charts/hive/README.md) | Helm chart: image build/tag flow, security defaults |
 | [ROADMAP.md](ROADMAP.md) | known gaps and planned work |
 
 ## Honest limitations
@@ -163,7 +164,6 @@ Kept public on purpose — a portfolio should know what it isn't:
   fixture; the full regeneration path is now reproducible end-to-end:
   `generate_dataset.py` → `train_classifier.py` → `export_bin.py` (validated
   against sklearn predictions before build.rs embeds it).
-- `rlua` is archived upstream; migration to `mlua` is tracked in the roadmap.
 - Destructive/offensive capabilities **do not exist** in this codebase
   (ronda 6): exploits, exfiltration, sabotage, credential harvesting,
   persistence, evasion and anti-forensics were **deleted**, not emulated

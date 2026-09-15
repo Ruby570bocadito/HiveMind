@@ -1,19 +1,10 @@
-# Hive Colony - ML Training Dependencies
+# Hive Colony — ML Training Dependencies
 # pip install -r requirements-ml.txt
-# Required only for training scout classifier and shaper RL policy models
+# Required only for the shaper RL experiments (training/shaper/).
+# The scout classifier needs just the core set in requirements.txt.
 
-# ML libraries
-scikit-learn>=1.3
-pandas>=2.0
-numpy>=1.24
-joblib>=1.3
-skl2onnx>=1.15
-onnxruntime>=1.16
+-r requirements.txt
 
-# RL training (optional, for shaper_policy.onnx)
+# RL training (shaper_policy experiments: DQN/PPO)
 gymnasium>=0.29
 stable-baselines3>=2.0
-torch>=2.0
-
-# ONNX export/conversion
-protobuf>=4.0

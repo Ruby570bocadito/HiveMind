@@ -4,6 +4,8 @@ use crossterm::terminal::{
     disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
 };
 use crossterm::ExecutableCommand;
+use hive_base::hivemind::HiveDirective;
+use hive_base::ldc::{Payload, Value};
 use hive_base::telemetry::{Event as HtlEvent, TelemetryBuffer};
 use hive_base::{AgentIdentity, HiveChamber, Message, Role};
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
@@ -13,14 +15,20 @@ use ratatui::widgets::{
     Block, BorderType, Borders, Cell, Gauge, List, ListItem, Paragraph, Row, Table, Tabs,
 };
 use ratatui::Frame;
-use std::collections::VecDeque;
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::io::stdout;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 use tokio::sync::Mutex;
 
 const MAX_EVENTS: usize = 500;
 const MAX_LOG: usize = 200;
+const MAX_DIRECTIVES: usize = 64;
+
+/// Short display form of a UUID (matches the topology table rendering).
+fn short_uuid(id: &uuid::Uuid) -> String {
+    format!("{:08x}", id.as_u128().to_le() as u32)
+}
 
 #[derive(Clone, Copy, PartialEq, Debug)]
 enum Tab {
@@ -54,16 +62,152 @@ impl Tab {
 
 struct AppData {
     active_agents: Vec<(uuid::Uuid, Role, u64)>,
-    messages: Vec<Message>,
     events: VecDeque<HtlEvent>,
     lua_output: VecDeque<String>,
     lua_input: String,
     log_lines: VecDeque<String>,
-    directives: Vec<hive_base::hivemind::HiveDirective>,
+    /// Observer-side directive state, fed by the live arena message stream
+    /// (Proposal / Vote / StatusEvent / Belief payloads).
+    directive_state: HashMap<uuid::Uuid, HiveDirective>,
+    /// Proposal arrival order, for stable display + oldest-eviction.
+    directive_order: VecDeque<uuid::Uuid>,
+    /// Agents seen since attach, so topology transitions reach the log.
+    seen_agents: HashSet<uuid::Uuid>,
     peer_count: usize,
     arena_name: String,
     connected: bool,
-    last_update: Instant,
+}
+
+impl AppData {
+    /// Append a timestamped line to the operator log (bounded).
+    fn log(&mut self, line: String) {
+        let ts = chrono::Local::now().format("%H:%M:%S");
+        self.log_lines.push_back(format!("{} {}", ts, line));
+        while self.log_lines.len() > MAX_LOG {
+            self.log_lines.pop_front();
+        }
+    }
+
+    /// Update the observer-side directive state from one arena message.
+    /// Mirrors `hivemind::HiveMind::process_arena_message` transitions that
+    /// are observable from the wire, without executing anything.
+    fn observe_message(&mut self, msg: &Message) {
+        match &msg.payload {
+            Payload::Proposal {
+                action,
+                argument,
+                proposal_id,
+            } => {
+                let did = *proposal_id;
+                let is_new = !self.directive_state.contains_key(&did);
+                if is_new {
+                    if self.directive_order.len() >= MAX_DIRECTIVES {
+                        if let Some(oldest) = self.directive_order.pop_front() {
+                            self.directive_state.remove(&oldest);
+                        }
+                    }
+                    self.directive_order.push_back(did);
+                }
+                let entry = self
+                    .directive_state
+                    .entry(did)
+                    .or_insert_with(|| HiveDirective {
+                        directive_id: did,
+                        proposer_id: msg.agent_id,
+                        action: action.clone(),
+                        params: HashMap::new(),
+                        threshold: 0.0,
+                        approved: false,
+                        executed: false,
+                        votes: HashMap::new(),
+                    });
+                if is_new {
+                    entry.params.insert("argument".into(), argument.clone());
+                    self.log(format!(
+                        "[dir] {} proposed '{}'",
+                        short_uuid(&msg.agent_id),
+                        action
+                    ));
+                }
+            }
+            Payload::Vote {
+                proposal_id,
+                decision,
+                ..
+            } => {
+                let vote_info = self.directive_state.get_mut(proposal_id).map(|dir| {
+                    dir.votes.insert(msg.agent_id, decision.clone());
+                    (dir.action.clone(), dir.votes.len())
+                });
+                if let Some((action, n)) = vote_info {
+                    self.log(format!(
+                        "[dir] {} voted {:?} on '{}' ({} votes)",
+                        short_uuid(&msg.agent_id),
+                        decision,
+                        action,
+                        n
+                    ));
+                }
+            }
+            Payload::StatusEvent {
+                event_type,
+                subject_id,
+                detail,
+                ..
+            } if event_type == "hive_directive_approved" => {
+                // The proposal may predate this TUI session — synthesize a
+                // minimal entry so the approval is still visible.
+                let newly_approved = {
+                    let dir =
+                        self.directive_state
+                            .entry(*subject_id)
+                            .or_insert_with(|| HiveDirective {
+                                directive_id: *subject_id,
+                                proposer_id: msg.agent_id,
+                                action: format!(
+                                    "(late) {}",
+                                    detail.chars().take(24).collect::<String>()
+                                ),
+                                params: HashMap::new(),
+                                threshold: 0.0,
+                                approved: false,
+                                executed: false,
+                                votes: HashMap::new(),
+                            });
+                    if !dir.approved {
+                        dir.approved = true;
+                        Some(dir.action.clone())
+                    } else {
+                        None
+                    }
+                };
+                if let Some(action) = newly_approved {
+                    self.log(format!("[dir] '{}' APPROVED", action));
+                }
+            }
+            Payload::Belief { asset, value, .. } if asset.starts_with("directive:") => {
+                if let Ok(did) = uuid::Uuid::parse_str(asset.trim_start_matches("directive:")) {
+                    if let Value::String(meta) = value {
+                        if meta.contains("approved") {
+                            let newly_approved =
+                                self.directive_state.get_mut(&did).and_then(|dir| {
+                                    if !dir.approved {
+                                        dir.approved = true;
+                                        Some(dir.action.clone())
+                                    } else {
+                                        None
+                                    }
+                                });
+                            if let Some(action) = newly_approved {
+                                self.log(format!("[dir] '{}' APPROVED (belief)", action));
+                            }
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
 }
 
 pub async fn run_tui(arena_name: &str) {
@@ -72,32 +216,60 @@ pub async fn run_tui(arena_name: &str) {
 
     let identity = AgentIdentity::new();
     let chamber = HiveChamber::connect(&identity, Role::Queen).await.ok();
-    let arena_ptr = std::env::var("__HIVE_ARENA").ok().and_then(|_| {
-        let size = hive_base::shared_arena::arena_size();
-        let layout = std::alloc::Layout::from_size_align(size, 4096).ok()?;
-        let ptr = unsafe { std::alloc::alloc_zeroed(layout) };
-        if ptr.is_null() {
-            return None;
+
+    // Attach to the SAME arena the colony uses: shm by name when the
+    // launcher sets __HIVE_ARENA (same path as every agent), memfd/heap
+    // fallback otherwise. The telemetry region lives in the arena — mounting
+    // a private zeroed buffer here (the old behavior) left the HTL Events
+    // tab permanently empty while a real colony was running.
+    //
+    // The mapping must outlive every use of `arena_ptr` (its Drop unmaps); a
+    // successful HiveChamber::connect already initialized the arena when it
+    // was the first process in, so re-init only happens if the chamber path
+    // failed but the segment exists.
+    let arena_mapping = hive_base::arena_mgr::connect_to_arena().ok();
+    let arena_ptr: Option<*mut u8> = arena_mapping.as_ref().map(|m| m.as_ptr());
+    if let Some(ptr) = arena_ptr {
+        if !hive_base::shared_arena::verify_arena(ptr) {
+            // First process in: initialize once. NEVER re-init an already
+            // initialized arena — that would reset live cursors and slots.
+            hive_base::shared_arena::init_arena(ptr);
+            TelemetryBuffer::open(ptr).init();
         }
-        hive_base::shared_arena::init_arena(ptr);
-        let tb = TelemetryBuffer::open(ptr);
-        tb.init();
-        Some(ptr)
-    });
+    }
+    // Observer-local telemetry cursor: `read_from` never touches the shared
+    // read cursor, so the TUI cannot steal events from the agents' drainers
+    // (and cannot re-read the same batch every frame either).
+    let mut local_telem_cursor: u64 = 0;
 
     let data = Arc::new(Mutex::new(AppData {
         active_agents: Vec::new(),
-        messages: Vec::new(),
         events: VecDeque::with_capacity(MAX_EVENTS),
         lua_output: VecDeque::with_capacity(MAX_LOG),
         lua_input: String::new(),
         log_lines: VecDeque::with_capacity(MAX_LOG),
-        directives: Vec::new(),
+        directive_state: HashMap::new(),
+        directive_order: VecDeque::with_capacity(MAX_DIRECTIVES),
+        seen_agents: HashSet::new(),
         peer_count: 0,
         arena_name: arena_name.to_string(),
         connected: chamber.is_some(),
-        last_update: Instant::now(),
     }));
+
+    // Seed the operator log with the attach state (real facts only).
+    {
+        let mut d = data.lock().await;
+        d.log("[hive] beekeeper operator console started".to_string());
+        d.log(format!(
+            "[hive] arena '{}' — chamber {}",
+            arena_name,
+            if chamber.is_some() {
+                "connected"
+            } else {
+                "NOT connected (start the colony first)"
+            }
+        ));
+    }
 
     // Restore the terminal even if we panic, otherwise the user is left
     // with a broken shell (no echo, alternate screen stuck).
@@ -117,7 +289,6 @@ pub async fn run_tui(arena_name: &str) {
     let data_clone = data.clone();
     let chamber_clone = chamber;
     tokio::spawn(async move {
-        let _seq: u64 = 0;
         loop {
             tokio::time::sleep(Duration::from_millis(500)).await;
             // Perform arena reads BEFORE taking the lock so the guard is
@@ -131,11 +302,35 @@ pub async fn run_tui(arena_name: &str) {
                 (Vec::new(), Vec::new())
             };
             let mut d = data_clone.lock().await;
-            d.last_update = Instant::now();
-            if !agents.is_empty() || messages.len() != d.messages.len() {
-                d.active_agents = agents;
-                d.messages = messages;
+
+            // Topology: honest table refresh + join/leave transitions in
+            // the operator log.
+            let current: HashSet<uuid::Uuid> = agents.iter().map(|(id, _, _)| *id).collect();
+            for (id, role, _hb) in &agents {
+                if d.seen_agents.insert(*id) {
+                    d.log(format!(
+                        "[hive] agent {} ({:?}) joined the arena",
+                        short_uuid(id),
+                        role
+                    ));
+                }
             }
+            for id in d
+                .seen_agents
+                .difference(&current)
+                .copied()
+                .collect::<Vec<_>>()
+            {
+                d.seen_agents.remove(&id);
+                d.log(format!("[hive] agent {} left the arena", short_uuid(&id)));
+            }
+            d.active_agents = agents;
+
+            // Directives: observer-side state fed by the live stream.
+            for msg in &messages {
+                d.observe_message(msg);
+            }
+
             // Honest peer count: number of agents actually registered in
             // the arena, not a cosmetic counter.
             d.peer_count = d.active_agents.len();
@@ -148,20 +343,27 @@ pub async fn run_tui(arena_name: &str) {
     while !should_quit {
         if let Some(ptr) = arena_ptr.as_ref() {
             let tb = TelemetryBuffer::open(*ptr);
-            let evts = tb.peek(10);
-            if !evts.is_empty() {
-                // Never blocking_lock inside the async runtime: if the
-                // poller holds the lock, defer the events to the next frame.
-                let Ok(mut d) = data.try_lock() else {
-                    continue;
-                };
-                for e in evts {
-                    if d.events.len() >= MAX_EVENTS {
-                        d.events.pop_front();
-                    }
-                    d.events.push_back(e);
-                }
+            let (evts, next_pos, skipped) = tb.read_from(local_telem_cursor, 32);
+            // Never blocking_lock inside the async runtime: if the poller
+            // holds the lock, defer the WHOLE batch to the next frame (the
+            // local cursor is only advanced once the events are stored, so
+            // nothing is lost or duplicated).
+            let Ok(mut d) = data.try_lock() else {
+                continue;
+            };
+            if skipped > 0 {
+                d.log(format!(
+                    "[hive] telemetry ring lapped: jumped forward {} bytes (older events overwritten by writers)",
+                    skipped
+                ));
             }
+            for e in evts {
+                if d.events.len() >= MAX_EVENTS {
+                    d.events.pop_front();
+                }
+                d.events.push_back(e);
+            }
+            local_telem_cursor = next_pos;
         }
 
         terminal
@@ -201,6 +403,12 @@ pub async fn run_tui(arena_name: &str) {
                             let mut d = d.lock().await;
                             d.lua_output.push_back(format!("> {}", input));
                             d.lua_output.push_back(result);
+                            // Bounded output: VecDeque::with_capacity only
+                            // preallocates — without this the console
+                            // grows unbounded over long sessions.
+                            while d.lua_output.len() > MAX_LOG {
+                                d.lua_output.pop_front();
+                            }
                             d.lua_input.clear();
                         }
                     }
@@ -221,13 +429,11 @@ pub async fn run_tui(arena_name: &str) {
 
     disable_raw_mode().unwrap();
     stdout().execute(LeaveAlternateScreen).unwrap();
-    if let Some(ptr) = arena_ptr.as_ref() {
-        let size = hive_base::shared_arena::arena_size();
-        let layout = std::alloc::Layout::from_size_align(size, 4096).unwrap();
-        unsafe {
-            std::alloc::dealloc(*ptr, layout);
-        }
-    }
+    // arena_mapping (and any private fallback memory) is released by Drop:
+    // SharedArenaMapping munmaps the shm mapping / deallocates the heap
+    // arena. The old manual dealloc here was only correct for the private
+    // heap-arena path and would have been a double-free/UAF hazard on the
+    // shm path.
 }
 
 fn render_tui(
@@ -338,7 +544,7 @@ fn render_topology(f: &mut Frame, area: Rect, data: &Arc<Mutex<AppData>>) {
             };
 
             let cells = vec![
-                Cell::from(format!("{:08x}", pid.as_u128().to_le() as u32)),
+                Cell::from(short_uuid(pid)),
                 Cell::from(format!("{} {:?}", crate::role_icon(role), role)),
                 Cell::from(uptime_str),
                 Cell::from(Span::styled("● alive", status_style)),
@@ -406,14 +612,14 @@ fn render_consensus(f: &mut Frame, area: Rect, data: &Arc<Mutex<AppData>>) {
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded);
 
-    if d.directives.is_empty() {
+    if d.directive_order.is_empty() {
         let msg = vec![
             Line::from(Span::styled(
-                "  No active directives",
+                "  No directives observed on the arena yet",
                 Style::default().fg(Color::DarkGray),
             )),
             Line::from(Span::styled(
-                "  HiveMind must be enabled by the Queen",
+                "  Proposals and votes appear here as they circulate",
                 Style::default().fg(Color::DarkGray),
             )),
         ];
@@ -427,11 +633,17 @@ fn render_consensus(f: &mut Frame, area: Rect, data: &Arc<Mutex<AppData>>) {
     let header_cells = ["ID", "Action", "Votes", "Status"]
         .iter()
         .map(|h| Cell::from(Span::styled(*h, Style::default().fg(Color::Cyan))));
-    let header = Row::new(header_cells).style(Style::default().add_modifier(Modifier::BOLD));
+    let header = Row::new(header_cells)
+        .style(Style::default().add_modifier(Modifier::BOLD))
+        .height(1);
 
+    // Newest proposals first (the order deque is insertion-ordered).
     let rows: Vec<Row> = d
-        .directives
+        .directive_order
         .iter()
+        .rev()
+        .take(50)
+        .filter_map(|id| d.directive_state.get(id))
         .map(|dir| {
             let status = if dir.approved {
                 "✓ approved"
@@ -444,9 +656,9 @@ fn render_consensus(f: &mut Frame, area: Rect, data: &Arc<Mutex<AppData>>) {
                 Style::default().fg(Color::Yellow)
             };
             let cells = vec![
-                Cell::from(format!("{:08x}", dir.directive_id.to_u128_le() as u32)),
+                Cell::from(short_uuid(&dir.directive_id)),
                 Cell::from(dir.action.chars().take(20).collect::<String>()),
-                Cell::from("-"),
+                Cell::from(dir.votes.len().to_string()),
                 Cell::from(Span::styled(status, status_style)),
             ];
             Row::new(cells).height(1)

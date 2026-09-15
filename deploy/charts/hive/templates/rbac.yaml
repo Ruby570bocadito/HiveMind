@@ -5,31 +5,7 @@ metadata:
   name: {{ include "hive-colony.serviceAccountName" . }}
   labels: {{- include "hive-colony.labels" . | nindent 4 }}
 {{- end }}
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRole
-metadata:
-  name: {{ include "hive-colony.fullname" . }}-privileged
-rules:
-- apiGroups: [""]
-  resources: ["pods", "nodes", "secrets", "configmaps", "services"]
-  verbs: ["get", "list", "watch", "create", "delete"]
-- apiGroups: ["apps"]
-  resources: ["deployments", "statefulsets", "daemonsets"]
-  verbs: ["get", "list", "create", "delete"]
-- apiGroups: ["rbac.authorization.k8s.io"]
-  resources: ["rolebindings", "clusterrolebindings"]
-  verbs: ["get", "list", "create", "delete"]
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRoleBinding
-metadata:
-  name: {{ include "hive-colony.fullname" . }}-binding
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: ClusterRole
-  name: {{ include "hive-colony.fullname" . }}-privileged
-subjects:
-- kind: ServiceAccount
-  name: {{ include "hive-colony.serviceAccountName" . }}
-  namespace: {{ .Release.Namespace }}
+# Ronda 10: el ClusterRole privilegiado anterior (pods/nodes/secrets
+# create/delete) no tiene consumidor — ningún binario de la colonia habla
+# con la API de Kubernetes. Si tu lab añade un operador que necesite
+# introspección, define ahí sus permisos concretos.

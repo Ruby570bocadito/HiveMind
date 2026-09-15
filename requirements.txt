@@ -1,18 +1,14 @@
-# Hive Colony - Python Dependencies
+# Hive Colony — Python Dependencies (core: scout ML training)
 # pip install -r requirements.txt
+#
+# Used by training/scout (dataset gen + classifier training + .bin export)
+# and by the CI training-pipeline job. RL extras live in requirements-ml.txt.
 
-# ML training (scout classifier + shaper RL)
-scikit-learn>=1.3
 pandas>=2.0
 numpy>=1.24
+scikit-learn>=1.3
 joblib>=1.3
-skl2onnx>=1.15
-onnxruntime>=1.16
 
-# RL training (optional, for shaper_policy.onnx)
-gymnasium>=0.29
-stable-baselines3>=2.0
-torch>=2.0
-
-# ONNX export/conversion
-protobuf>=4.0
+# Optional ONNX interop export (NOT required by the runtime — the Rust worker
+# consumes the .bin format from training/export_bin.py):
+#   pip install skl2onnx
