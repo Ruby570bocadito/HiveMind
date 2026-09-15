@@ -136,13 +136,12 @@ impl HoarderAgent {
                     argument: _,
                     proposal_id,
                 } => {
-                    let action_lower = action.to_lowercase();
-                    if action_lower.contains("encrypt")
-                        || action_lower.contains("exfiltrate")
-                        || action_lower.contains("destroy")
-                        || action_lower.contains("ransom")
-                    {
-                        // Ronda 6: la colonia ya no participa en propuestas
+                    // Ronda 11: política de voto compartida en hive_base
+                    // (misma deny-list de la ronda 6 que worker/drone y el
+                    // TaskPoller) en lugar de una lista local divergente.
+                    let decision = hive_base::hivemind::HiveMind::vote_decision_for(action);
+                    if decision == Decision::Reject {
+                        // La colonia ya no participa en propuestas
                         // destructivas — la capacidad no existe en el build.
                         info!(
                             "Proposal '{}' rejected: destructive capability removed (ronda 6)",
@@ -150,15 +149,22 @@ impl HoarderAgent {
                         );
                         continue;
                     }
-                    info!("Action proposal: {} (from {})", action, msg.agent_role);
-                    self.active_proposals.push(*proposal_id);
-                    let weight = self.consensus.get_reputation(&msg.agent_id);
+                    info!(
+                        "Action proposal: {} (from {}) — voting Support",
+                        action, msg.agent_role
+                    );
+                    if !self.active_proposals.contains(proposal_id) {
+                        if self.active_proposals.len() >= 128 {
+                            self.active_proposals.clear(); // acotado
+                        }
+                        self.active_proposals.push(*proposal_id);
+                    }
                     let vote = Message::vote(
                         self.identity.id(),
                         Role::Honeybee,
                         *proposal_id,
                         Decision::Support,
-                        weight,
+                        1.0,
                     );
                     self.publish_msg(vote).await;
                     self.state = HoarderState::WaitingForConsensus;

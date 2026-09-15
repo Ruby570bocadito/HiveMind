@@ -66,6 +66,10 @@ struct AppData {
     lua_output: VecDeque<String>,
     lua_input: String,
     log_lines: VecDeque<String>,
+    /// Fichero de post-mortem del log de operador (ronda 11). Se abre en
+    /// append y se escribe en cada `log()` bajo el mismo mutex. `None` si
+    /// `HIVE_TUI_LOG=off` o si no se pudo abrir (solo pantalla).
+    log_file: Option<std::fs::File>,
     /// Observer-side directive state, fed by the live arena message stream
     /// (Proposal / Vote / StatusEvent / Belief payloads).
     directive_state: HashMap<uuid::Uuid, HiveDirective>,
@@ -80,9 +84,16 @@ struct AppData {
 
 impl AppData {
     /// Append a timestamped line to the operator log (bounded).
+    /// Ronda 11: también persiste a fichero (post-mortems), si hay fichero.
     fn log(&mut self, line: String) {
         let ts = chrono::Local::now().format("%H:%M:%S");
-        self.log_lines.push_back(format!("{} {}", ts, line));
+        let full = format!("{} {}", ts, line);
+        self.log_lines.push_back(full.clone());
+        if let Some(f) = self.log_file.as_mut() {
+            use std::io::Write;
+            let _ = writeln!(f, "{}", full);
+            let _ = f.flush();
+        }
         while self.log_lines.len() > MAX_LOG {
             self.log_lines.pop_front();
         }
@@ -217,6 +228,25 @@ pub async fn run_tui(arena_name: &str) {
     let identity = AgentIdentity::new();
     let chamber = HiveChamber::connect(&identity, Role::Queen).await.ok();
 
+    // Ronda 11: log de operador persistente (backlog de la ronda 10).
+    // Por defecto: /tmp/hive_tui_<arena>.log (apéndice, post-mortems).
+    // HIVE_TUI_LOG=<ruta> redirige; HIVE_TUI_LOG=off lo desactiva.
+    let log_path = match std::env::var("HIVE_TUI_LOG") {
+        Ok(v) if v.trim().eq_ignore_ascii_case("off") => None,
+        Ok(v) if !v.trim().is_empty() => Some(std::path::PathBuf::from(v.trim().to_string())),
+        _ => Some(std::path::PathBuf::from(format!(
+            "/tmp/hive_tui_{}.log",
+            arena_name
+        ))),
+    };
+    let log_file = log_path.as_ref().and_then(|p| {
+        std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(p)
+            .ok()
+    });
+
     // Attach to the SAME arena the colony uses: shm by name when the
     // launcher sets __HIVE_ARENA (same path as every agent), memfd/heap
     // fallback otherwise. The telemetry region lives in the arena — mounting
@@ -242,12 +272,15 @@ pub async fn run_tui(arena_name: &str) {
     // (and cannot re-read the same batch every frame either).
     let mut local_telem_cursor: u64 = 0;
 
+    let log_opened = log_file.is_some();
+
     let data = Arc::new(Mutex::new(AppData {
         active_agents: Vec::new(),
         events: VecDeque::with_capacity(MAX_EVENTS),
         lua_output: VecDeque::with_capacity(MAX_LOG),
         lua_input: String::new(),
         log_lines: VecDeque::with_capacity(MAX_LOG),
+        log_file,
         directive_state: HashMap::new(),
         directive_order: VecDeque::with_capacity(MAX_DIRECTIVES),
         seen_agents: HashSet::new(),
@@ -269,6 +302,14 @@ pub async fn run_tui(arena_name: &str) {
                 "NOT connected (start the colony first)"
             }
         ));
+        match (&log_path, log_opened) {
+            (Some(p), true) => d.log(format!("[hive] operator log → {}", p.display())),
+            (Some(p), false) => d.log(format!(
+                "[hive] operator log {} could not be opened — on-screen only",
+                p.display()
+            )),
+            (None, _) => d.log("[hive] operator log disabled (HIVE_TUI_LOG=off)".to_string()),
+        }
     }
 
     // Restore the terminal even if we panic, otherwise the user is left
@@ -287,7 +328,9 @@ pub async fn run_tui(arena_name: &str) {
         ratatui::Terminal::new(ratatui::backend::CrosstermBackend::new(stdout())).unwrap();
 
     let data_clone = data.clone();
-    let chamber_clone = chamber;
+    // Ronda 11: chamber compartido (poller + atajo de kill switch).
+    let chamber_shared: Option<std::sync::Arc<HiveChamber>> = chamber.map(std::sync::Arc::new);
+    let chamber_clone = chamber_shared.clone();
     tokio::spawn(async move {
         loop {
             tokio::time::sleep(Duration::from_millis(500)).await;
@@ -339,6 +382,10 @@ pub async fn run_tui(arena_name: &str) {
 
     let mut current_tab = Tab::Topology;
     let mut should_quit = false;
+    // Ronda 11: kill switch desde el TUI (backlog de la ronda 10).
+    // Arma con K, confirma con un segundo K (los agentes reciben el evento
+    // kill_switch y salen). Cualquier otra tecla desarma.
+    let mut kill_armed = false;
 
     while !should_quit {
         if let Some(ptr) = arena_ptr.as_ref() {
@@ -377,20 +424,78 @@ pub async fn run_tui(arena_name: &str) {
                     );
                     return;
                 }
-                render_tui(f, size, &data, current_tab, &mut lua);
+                render_tui(f, size, &data, current_tab, &mut lua, kill_armed);
             })
             .unwrap();
 
         if crossterm::event::poll(Duration::from_millis(100)).unwrap() {
             match crossterm::event::read().unwrap() {
                 Event::Key(key) if key.kind == KeyEventKind::Press => match key.code {
-                    KeyCode::Char('q') | KeyCode::Esc => should_quit = true,
-                    KeyCode::Char('1') => current_tab = Tab::Topology,
-                    KeyCode::Char('2') => current_tab = Tab::Events,
-                    KeyCode::Char('3') => current_tab = Tab::Consensus,
-                    KeyCode::Char('4') => current_tab = Tab::Lua,
-                    KeyCode::Char('5') => current_tab = Tab::Log,
-                    KeyCode::Tab => {
+                    // Ronda 11: los atajos globales solo aplican FUERA de la
+                    // pestaña Lua — antes, escribir 'q' o '1'..'5' en la
+                    // consola Lua cambiaba de pestaña o salía del TUI.
+                    KeyCode::Char('q') | KeyCode::Esc if current_tab != Tab::Lua => {
+                        should_quit = true
+                    }
+                    KeyCode::Char('k') | KeyCode::Char('K') if current_tab != Tab::Lua => {
+                        if kill_armed {
+                            // Confirmado: broadcast del kill switch por el
+                            // mismo camino que `beekeeper kill-switch --confirm`
+                            // (StatusEvent kill_switch/self_destruct en la arena).
+                            if let Some(ref chamber) = chamber_shared {
+                                let msg = Message::status_event(
+                                    identity.id(),
+                                    Role::Queen,
+                                    "kill_switch",
+                                    identity.id(),
+                                    Role::Queen,
+                                    "self_destruct",
+                                );
+                                chamber.publish(msg).await;
+                                let mut d = data.lock().await;
+                                d.log(
+                                    "[hive] KILL SWITCH broadcast — agents will exit on next read"
+                                        .to_string(),
+                                );
+                            } else {
+                                let mut d = data.lock().await;
+                                d.log(
+                                    "[hive] kill switch NOT sent — chamber not connected"
+                                        .to_string(),
+                                );
+                            }
+                            kill_armed = false;
+                        } else {
+                            kill_armed = true;
+                            let mut d = data.lock().await;
+                            d.log(
+                                "[hive] kill switch ARMED — press K again to broadcast (any other key cancels)"
+                                    .to_string(),
+                            );
+                        }
+                    }
+                    KeyCode::Char('1') if current_tab != Tab::Lua => {
+                        kill_armed = false;
+                        current_tab = Tab::Topology;
+                    }
+                    KeyCode::Char('2') if current_tab != Tab::Lua => {
+                        kill_armed = false;
+                        current_tab = Tab::Events;
+                    }
+                    KeyCode::Char('3') if current_tab != Tab::Lua => {
+                        kill_armed = false;
+                        current_tab = Tab::Consensus;
+                    }
+                    KeyCode::Char('4') if current_tab != Tab::Lua => {
+                        kill_armed = false;
+                        current_tab = Tab::Lua;
+                    }
+                    KeyCode::Char('5') if current_tab != Tab::Lua => {
+                        kill_armed = false;
+                        current_tab = Tab::Log;
+                    }
+                    KeyCode::Tab if current_tab != Tab::Lua => {
+                        kill_armed = false;
                         let tabs = Tab::all();
                         let idx = tabs.iter().position(|t| *t == current_tab).unwrap_or(0);
                         current_tab = tabs[(idx + 1) % tabs.len()];
@@ -442,6 +547,7 @@ fn render_tui(
     data: &Arc<Mutex<AppData>>,
     current_tab: Tab,
     _lua: &mut LuaEngine,
+    kill_armed: bool,
 ) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
@@ -482,7 +588,7 @@ fn render_tui(
         Tab::Log => render_log(f, chunks[1], data),
     }
 
-    render_status_bar(f, chunks[2], data, current_tab);
+    render_status_bar(f, chunks[2], data, current_tab, kill_armed);
 }
 
 fn render_topology(f: &mut Frame, area: Rect, data: &Arc<Mutex<AppData>>) {
@@ -747,23 +853,41 @@ fn render_log(f: &mut Frame, area: Rect, data: &Arc<Mutex<AppData>>) {
     f.render_widget(list, area);
 }
 
-fn render_status_bar(f: &mut Frame, area: Rect, data: &Arc<Mutex<AppData>>, _tab: Tab) {
+fn render_status_bar(
+    f: &mut Frame,
+    area: Rect,
+    data: &Arc<Mutex<AppData>>,
+    _tab: Tab,
+    kill_armed: bool,
+) {
     // Skip this frame if the data lock is contended — rendering must
     // never block (blocking_lock panics inside the tokio runtime).
     let Ok(d) = data.try_lock() else {
         return;
     };
+    // Ronda 11: indicador visible cuando el kill switch está armado.
+    let kill_hint = if kill_armed {
+        " | [K] AGAIN = KILL SWITCH"
+    } else {
+        " | [k] Kill"
+    };
     let status = format!(
-        " Arena: {} | Agents: {} | Events: {} | Peers: {} | Connected: {} | [1-5] Tab [q] Quit",
+        " Arena: {} | Agents: {} | Events: {} | Peers: {} | Connected: {}{} | [1-5] Tab [q] Quit",
         d.arena_name,
         d.active_agents.len(),
         d.events.len(),
         d.peer_count,
         if d.connected { "✓" } else { "✗" },
+        kill_hint,
     );
     let gauge = Gauge::default()
         .block(Block::default().borders(Borders::ALL).title(" Status "))
         .label(status)
-        .ratio(if d.connected { 1.0 } else { 0.3 });
+        .ratio(if d.connected { 1.0 } else { 0.3 })
+        .gauge_style(if kill_armed {
+            ratatui::style::Style::default().fg(Color::Red)
+        } else {
+            ratatui::style::Style::default()
+        });
     f.render_widget(gauge, area);
 }

@@ -1,21 +1,28 @@
-# Hive Colony v3.0 — Guía de Operador
+# Hive Colony v3.0 — Playbook de Operador
+
+> Ronda 11: reescrito de cero. La versión anterior era un fósil de la era
+> ofensiva (playbooks de sabotaje de datos, evasión EDR y persistencia —
+> capacidades ELIMINADAS en la ronda 6), con puertos, tests y servicios que
+> ya no existen. Este playbook describe SOLO lo que el build actual hace.
 
 ## Arquitectura
 
 ```
 ┌─────────────────────────────────────────────────────┐
-│                   BEEKEEPER (CLI)                    │
-│  status | inject | validate | kill-switch           │
+│                 BEEKEEPER (CLI + TUI)                │
+│  status | inject | kill-switch | tui | config-check │
 ├─────────────────────────────────────────────────────┤
-│                 SHARED MEMORY ARENA                  │
-│  ┌──────┐  ┌──────┐  ┌────────┐  ┌──────┐  ┌─────┐ │
-│  │Worker│  │Drone │  │Honeybee│  │Queen│ │
-│  └──────┘  └──────┘  └────────┘  └──────┘  └─────┘ │
-│  Saboteur    Seer     HiveMind                      │
-│  Stigmergy  Phoenix  WhisperNet           Tournament│
+│              SHARED MEMORY ARENA (shm)               │
+│  ┌────────┐  ┌───────┐  ┌──────────┐  ┌───────────┐ │
+│  │ Worker │  │ Drone │  │ Honeybee │  │   Queen   │ │
+│  └────────┘  └───────┘  └──────────┘  └───────────┘ │
+│  perfil del sistema (solo lectura) | propuestas RL   │
+│  votos de consenso | Tournament | HiveMind           │
+│  WhisperNet (mesh interna) | Stigmergy | Phoenix     │
 ├─────────────────────────────────────────────────────┤
-│                    C2 SERVER (8443)                  │
-│              DASHBOARD WEB (8080)               │
+│              C2 SERVER (Rust, :8444)                 │
+│  /beacon  /task/:id  /shell/:id (WS)  /health  /logs │
+│  DASHBOARD WEB (:8080, tests/dashboard.py)           │
 └─────────────────────────────────────────────────────┘
 ```
 
@@ -24,145 +31,127 @@
 ```bash
 git clone https://github.com/Ruby570bocadito/HiveMind
 cd HiveMind
-./hive.sh build
-cargo build --release --workspace
+./hive.sh build            # workspace completo (debug)
+./hive.sh test             # suite completa del workspace
 ```
 
 ## Uso Rápido — Laboratorio Local
 
 ```bash
-# 1. Iniciar C2 + dashboard
-python3 tests/c2_server.py --port 8443 &
-python3 tests/dashboard.py --port 8080 &
+# 1. C2 server (Rust)
+./hive.sh c2 &
 
-# 2. Definir arena
+# 2. Arena compartida
 export __HIVE_ARENA=hive_lab
 
-# 3. Lanzar agentes (orden recomendado)
+# 3. C2 base para el TaskPoller de los agentes (BASE, sin /beacon)
+export HIVE_C2_URL=http://127.0.0.1:8444
+
+# 4. Lanzar agentes (los 4 binarios del build)
 ./target/release/worker &
 ./target/release/drone &
 ./target/release/honeybee &
 ./target/release/queen &
 
-# 4. Monitorear
-./target/release/beekeeper status --watch
+# 5. Monitorear — TUI del operador
+./target/release/beekeeper tui
 
-# 5. Campaña completa
-./scripts/scenario.sh --quick
+# 6. Alternativa en Docker: C2 + agentes + dashboard
+./hive.sh colony
+# o bare metal sin Docker:
+./scripts/launch_colony.sh --release
 ```
 
-## Módulos por Agente
+## Módulos por Agente (reales, post-ronda 6)
 
-| Agente | Módulos | Función |
-|--------|---------|---------|
-| **Worker** | Saboteur, Seer, Stigmergy | Escaneo, mutación de datos, telemetría |
-| **Drone** | Seer, Phoenix, Stigmergy | Decisiones RL, regeneración, predicción |
-| **Honeybee** | WhisperNet | Acciones encrypt/exfil/destroy **solo simuladas** (deshabilitadas 2026-09-14), relay P2P |
-| **Queen** | Tournament, HiveMind, WhisperNet | Torneos darwinianos, consenso, broadcast P2P |
+| Agente | Sistemas activos | Función |
+|--------|------------------|---------|
+| **Worker** | perfil del sistema, ML scout, TaskPoller | Recoge SOLO lectura (OS, CPU, EDR/backup presentes), publica beliefs, clasifica con RandomForest embebido, vota propuestas |
+| **Drone** | propuestas operativas, Phoenix (memoria), regeneración del worker | Propone acciones, vota, re-lanza el worker si muere |
+| **Honeybee** | WhisperNet relay, votos, TaskPoller | Relay P2P interno, participa en consenso |
+| **Queen** | HiveMind (tally), Tournament, WhisperNet | Procesa votos con reputaciones reales, aprueba directivas por consenso, torneos darwinianos |
 
-## Playbooks
+## Playbook 1: Ver el consenso de punta a punta (ronda 11)
 
-### 🎯 Playbook 1: Prueba de Integridad (Saboteur)
 ```bash
-# 1. Preparar datos financieros simulados
-echo 'account,balance,date
-1001,1250000,2024-01-15' > /tmp/ledger.csv
+# 1. Arranca la colonia (ver "Uso Rápido") y abre el TUI
+./target/release/beekeeper tui
 
-# 2. Lanzar Worker (activa Saboteur automáticamente)
-export __HIVE_ARENA=test_arena
-./target/release/worker &
+# 2. Pestaña 3 (Consensus): el drone propone ("prop_to_network_segment"),
+#    worker/drone/honeybee votan con la política de la colonia
+#    (deny-list ronda 6: exfil/encrypt/wipe/destroy/sabotage/ransom → Reject),
+#    la Queen tally con reputaciones reales (umbral 0.66) y broadcast:
+#    StatusEvent "hive_directive_approved" + belief "directive:<id>".
 
-# 3. Verificar mutación
-cat /tmp/ledger.csv  # Datos alterados
-./target/release/beekeeper status
+# 3. Comprueba el flujo sin TUI:
+./target/release/beekeeper hive-mind
 ```
 
-### 🎯 Playbook 2: Evasión EDR
+## Playbook 2: Verificación honesta del build
+
 ```bash
-# Verificar que Hive es indetectable
 ./target/release/beekeeper validate
+# Salida esperada (checks REALES, sin anti-debug/anti-sandbox — eliminados):
+#   ✓ TCP ports     — ningún puerto TCP del enjambre escuchando
+#   ✓ ONNX sigs     — modelo cifrado (XOR), sin ONNX legible en el binario
+#   ✓ Bus addr      — sin IPs hardcodeadas en el tráfico
+#   ✓ Memfd         — memfd_create disponible (gate: HIVE_LAB_AUTHORIZED=1)
+#   ✓ Agent names   — nombres antiguos no presentes en el binario
 
-# Salida esperada:
-#   ✓ TCP ports     — Ningún puerto TCP escuchando
-#   ✓ ONNX sigs     — Sin firmas ONNX
-#   ✓ Debugger      — Anti-debug activo
-#   ✓ Sandbox       — Anti-sandbox activo
-#   ✓ Memfd         — Fileless exec disponible
-#   ✓ Agent names   — Nombres ofuscados
+# Config:
+./target/release/beekeeper config-check   # exit 1 si hive.toml no parsea
+./hive.sh doctor                          # entorno + config + C2 health
 ```
 
-### 🎯 Playbook 3: Campaña APT Completa
-```bash
-# 5 fases, 1 comando:
-./scripts/scenario.sh --quick --report
+## Playbook 3: Tasking del operador (C2 + shell auditado)
 
-# O paso a paso con docker:
-docker compose up -d
-docker compose logs -f monitor
+```bash
+# Tarea individual (el agente la recoge por GET /task/:id; los comandos
+# destructivos/exfil los RECHAZA el TaskPoller — deny-list ronda 6):
+curl -s -X POST http://127.0.0.1:8444/task/<agent_id> \
+  -H 'Content-Type: application/json' \
+  -d '{"id":"t-1","command":"shell_exec","payload":{"cmd":"uptime"}}'
+
+# Shell interactivo por WebSocket (misma política):
+#   ws://127.0.0.1:8444/shell/<session_id>  →  {"agent_id": "..."}
+
+# Ajuste fino del ciclo:
+export HIVE_POLL_SECS=5       # intervalo de sondeo (mín. 2)
+export HIVE_C2_API_KEY=...    # si el C2 arrancó con --api-key
 ```
 
-### 🎯 Playbook 4: Persistencia (Phoenix)
-```bash
-# El Drone regenera Workers caídos automáticamente
-# Verificar fragmentos de genoma:
-ls -la /dev/shm/.hive_genome/
-# Reconstruir desde fragmentos:
-./target/release/beekeeper hivemind
-```
+## Playbook 4: Apagado limpio (kill switch)
 
-### 🎯 Playbook 5: Cápsulas del Tiempo (Chrononaut) — *ELIMINADO*
 ```bash
-# Honeybee ya NO planta cápsulas: el planting se eliminó del binario
-# el 2026-09-14 junto con la exfiltración real. El módulo `chrononaut`
-# se ELIMINÓ de hive_base el 2026-09-14 (ronda 3): era persistencia
-# real (timestomping + backdoor systemd/cron). Playbook conservado como
-# referencia forense: saber qué buscar si un despliegue antiguo plantó
-# cápsulas. Verificar cápsulas heredadas:
-getfattr -d /var/log/*.log 2>/dev/null | grep user.hive
+# CLI:
+./target/release/beekeeper kill-switch --confirm
+
+# O desde el TUI: pulsa K dos veces (arma y confirma; la status bar se
+# pone en rojo). Los agentes salen al leer el evento kill_switch.
 ```
 
 ## Configuración (`hive.toml`)
 
+El fichero enviado parsea desde la ronda 11 (antes: `[eartbeat]` roto —
+los agentes corrían con defaults en silencio). `beekeeper config-check`
+sale 1 si el fichero no parsea:
+
 ```toml
-[colony]
-aggressive = true
-scan_subnets = ["192.168.1.0/24"]
-
-[agents]
-shaper_decision_interval_secs = 60
-
-[consensus]
-hoarder_threshold = 0.8
+[arena]
+max_agents = 16
 
 [heartbeat]
 interval_secs = 10
 timeout_secs = 30
 
-[exploits]
-safe_mode = true
+[consensus]
+threshold = 0.66        # umbral de aprobación de directivas
+hoarder_threshold = 0.80
 
 [timing]
-heartbeat_interval_secs = 10
+scan_interval_secs = 15
+decision_interval_secs = 30
 ```
-
-## MITRE ATT&CK Coverage (33 técnicas)
-
-| Táctica | Técnicas |
-|---------|----------|
-| TA0001 Initial Access | T1566, T1078, T1190, T1091 |
-| TA0002 Execution | T1059, T1204, T1106, T1559 |
-| TA0003 Persistence | T1547, T1098, T1053, T1136, T1505, T1542.001 |
-| TA0004 Privilege Escalation | T1548, T1068, T1055, T1134 |
-| TA0005 Defense Evasion | T1564, T1553, T1027, T1140, T1205 |
-| TA0006 Credential Access | T1555, T1003, T1606 |
-| TA0007 Discovery | T1082, T1083, T1046, T1016, T1518 |
-| TA0008 Lateral Movement | T1021, T1570, T1091 |
-| TA0009 Collection | T1005, T1074, T1119, T1560 |
-| TA0010 Exfiltration | T1041, T1567, T1052 |
-| TA0011 Command & Control | T1573, T1095, T1572, T1090 |
-| TA0040 Impact | T1565, T1499, T1486, T1485 |
-| TA0042 Resource Dev | T1587, T1588 |
-| TA0043 Recon | T1595, T1590 |
 
 ## Resolución de Problemas
 
@@ -170,7 +159,7 @@ heartbeat_interval_secs = 10
 |---------|-------|----------|
 | `HiveChamber::connect` falla | Arena no existe | Exportar `__HIVE_ARENA` idéntico en todos los procesos |
 | Agentes no se ven entre sí | IPC namespace | Usar `ipc: host` en Docker o `--ipc=host` |
-| Seer predice todo riesgo 0 | Sin telemetría | Worker necesita tiempo para recolectar datos |
+| El poller no recoge tareas | `HIVE_C2_URL` con `/beacon` | Usar la BASE (`http://127.0.0.1:8444`); el poller añade las rutas (acepta ambas formas desde ronda 11) |
 | Tournament no avanza | Pocos competidores | Queen necesita al menos 2 generaciones |
 | Windows build falla | Faltan librerías | `sudo apt-get install mingw-w64` |
 | WhisperNet no enruta | Sin peers | Los peers se registran automáticamente vía arena |
@@ -178,30 +167,30 @@ heartbeat_interval_secs = 10
 ## Comandos Rápidos
 
 ```bash
-beekeeper status --watch       # Dashboard terminal en vivo
-beekeeper inject -a target_ip -v 10.0.0.5 -c 0.95  # Inyectar creencia
-beekeeper validate             # Verificar evasión EDR
-beekeeper kill-switch --confirm # Apagar colonia
-beekeeper tournament           # Ver torneos
-beekeeper hivemind             # Ver directivas
-scripts/scenario.sh --quick    # Campaña 5 fases
+beekeeper status --watch        # dashboard terminal en vivo
+beekeeper inject -a target_ip -v 10.0.0.5 -c 0.95  # inyectar creencia
+beekeeper validate              # verificación honesta del build
+beekeeper config-check          # valida hive.toml (exit 1 = roto)
+beekeeper kill-switch --confirm # apagar colonia
+beekeeper tournament            # ver torneos
+beekeeper hive-mind             # flujo de consenso real
 ```
 
 ## Docker Compose
 
 ```bash
 # Stack completo
-docker compose up -d
+./hive.sh colony     # = docker compose up --build -d
 
 # Servicios:
-#   c2-server   :8443 — C2 endpoint
-#   queen       :—    — Reina + torneos + HiveMind
-#   worker      :—    — Escáner + Saboteur
-#   drone       :—    — Decisiones + Phoenix
-#   honeybee    :—    — Acciones simuladas (encrypt/exfil disabled)
-#   victim      :—    — Datos simulados
-#   monitor     :—    — EDR detection monitor
-#   dashboard   :8080 — Web UI
+#   c2-server   :8444 — C2 endpoint (Rust)
+#   queen       :—    — tally de consenso + torneos
+#   worker      :—    — perfil del sistema (solo lectura)
+#   drone       :—    — propuestas + regeneración
+#   honeybee    :—    — relay P2P + votos
+#   monitor     :—    — monitor de detecciones (tests/)
+#   dashboard   :8080 — Web UI (tests/dashboard.py)
+#   ollama      :—    — opcional (perfil "llm")
 
 # Ver resultados:
 docker compose logs monitor
@@ -209,4 +198,5 @@ open http://localhost:8080
 ```
 
 ---
-*Hive Colony v3.0 — 360 tests, 33 técnicas MITRE, clippy limpio, CI en GitHub Actions*
+*Hive Colony v3.0 — framework multi-agente para labs aislados (cero payloads
+de ataque desde la ronda 6), suite completa en CI, clippy limpio*

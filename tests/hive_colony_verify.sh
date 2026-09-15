@@ -155,7 +155,7 @@ info "Paso 3: Lanzando colonia (todos los agentes)..."
 export __HIVE_ARENA="$ARENA_NAME"
 export HIVE_LAB_MODE=1
 export RUST_LOG=info
-export HIVE_C2_URL="http://127.0.0.1:${C2_PORT}/beacon"
+export HIVE_C2_URL="http://127.0.0.1:${C2_PORT}"
 export HIVE_TELEMETRY_DIR="/tmp/hive_verify_telemetry"
 
 mkdir -p "$HIVE_TELEMETRY_DIR"

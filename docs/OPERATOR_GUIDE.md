@@ -106,8 +106,13 @@ curl http://localhost:8444/health
 | `5` | Log | log de operador: joins/leaves, transiciones de directivas, laps de telemetría |
 
 El TUI es solo observación y scripting local: no ejecuta directivas ni
-tareas. En modo standalone (sin colonia) muestra el estado vacío de forma
-honesta en cada pestaña.
+tareas. Excepción operadora (ronda 11): la tecla `K` arma y confirma el
+kill switch (mismo camino que `beekeeper kill-switch --confirm`; la status
+bar se pone roja mientras está armado y cualquier otra tecla desarma). El
+log de operador (pestaña `5`) persiste a `/tmp/hive_tui_<arena>.log`
+(`HIVE_TUI_LOG=<ruta>` para redirigir, `HIVE_TUI_LOG=off` para desactivar).
+En modo standalone (sin colonia) muestra el estado vacío de forma honesta
+en cada pestaña.
 
 ---
 
@@ -116,8 +121,8 @@ honesta en cada pestaña.
 ```
 scripts/
 │
-├── launch_colony.sh   ◀── Despliegue local Docker
-│                        Lanza C2 + agentes + dashboard
+├── launch_colony.sh   ◀── Colonia local bare-metal (sin Docker; ronda 11)
+│                        Lanza C2 + los 4 agentes (flags reales del C2)
 │
 ├── lab_setup.sh       ◀── Preparación del laboratorio SSH
 │                        Objetivos de práctica aislados
@@ -134,7 +139,7 @@ scripts/
 
 ```toml
 [c2]
-url = "https://tu-c2.com:8444/collect"
+url = "https://tu-c2.com:8444"  # BASE del C2 (sin /collect: eliminado en ronda 6)
 api_key = "supersecreto"
 
 [agents]
@@ -166,13 +171,14 @@ threshold = 0.66
 | Variable | Default | Propósito |
 |----------|---------|-----------|
 | `__HIVE_ARENA` | `/dev/shm/hive_arena` | Ruta del archivo de arena IPC |
-| `HIVE_C2_URL` | `https://c2:8444/collect` | Endpoint HTTP C2 |
+| `HIVE_C2_URL` | `http://c2:8444` | BASE del C2 para el TaskPoller y el beacon directo (los sufijos `/task`, `/beacon` los añade el código; acepta el histórico `…/beacon` normalizándolo — ronda 11) |
 | `HIVE_C2_API_KEY` | — | Clave si el C2 exige `x-api-key` (TaskPoller) |
 | `HIVE_POLL_SECS` | `10` | Intervalo del TaskPoller (mín. 2 s) |
 | `HIVE_LAB_AUTHORIZED` | — | `1` habilita ejecución fileless en lab autorizado |
 | `HIVE_LAB_MODE` | `0` | Modo laboratorio (1=simulado). Sin esta variable, todos los clientes TLS del enjambre verifican certificados estrictamente (ronda 5) |
 | `HIVE_MASTER_KEY` | — | Clave de colmena (32B derivadas) para trails stigmergy y cifrado de fragmentos phoenix. En producción real, genera una única por despliegue (p. ej. `openssl rand -base64 32`); si falta, se usa una clave por defecto documentada (solo compatibilidad) |
 | `HIVE_PERSISTENCE_DRY_RUN` | — | `1` = la remediación de persistencia (`honeycomb::uninstall_persistence`) no toca el host; solo registra lo que haría (ronda 5) |
+| `HIVE_TUI_LOG` | `/tmp/hive_tui_<arena>.log` | Fichero del log de operador del TUI (post-mortems). `<ruta>` redirige; `off` lo desactiva (ronda 11) |
 | `HIVE_TELEMETRY_DIR` | `/tmp/hive_telemetry` | Directorio de telemetría |
 | `HIVE_EXEC_TIMEOUT` | `30` | Timeout para comandos (s) |
 | `RUST_LOG` | `info` | Nivel de logging |

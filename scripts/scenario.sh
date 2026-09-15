@@ -63,12 +63,12 @@ phase_prepare() {
     ok "Todos los binarios presentes"
     mkdir -p "$OUT_DIR"
     export __HIVE_ARENA="$ARENA"
-    export HIVE_C2_URL="http://localhost:8443/beacon"
+    export HIVE_C2_URL="http://localhost:8444"
 
     if ! pgrep -f "c2_server.py" >/dev/null 2>&1; then
-        python3 tests/c2_server.py --port 8443 &
+        python3 tests/c2_server.py --port 8444 &
         sleep 2
-        ok "C2 de referencia iniciado en puerto 8443"
+        ok "C2 de referencia iniciado en puerto 8444"
     fi
 
     ok "Entorno preparado — Arena: $ARENA | Lab: $TARGET"

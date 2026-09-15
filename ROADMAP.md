@@ -88,6 +88,21 @@ Prioritized list of known gaps and planned work. Items marked ✅ are done.
   happens-before edge for readers. Protocol now: CAS 0→RESERVED(0x80), fill
   identity, publish with `fetch_or(ACTIVE, Release)`; DEAD is a sticky
   `fetch_or`; `role` is atomic. Layout unchanged.
+- [x] **Real end-to-end consensus** (ronda 11): agents vote on proposals
+  (`vote_decision_for` deny-list policy, one vote per proposal, bounded),
+  the Queen processes votes via `process_arena_message` with REAL
+  reputation weights (`ConsensusEngine::reputation_map()`) and broadcasts
+  approvals. Before this round nobody consumed `Payload::Vote` and the
+  tally only used the Queen's own reputation — no directive could ever be
+  approved at runtime.
+- [x] **Honest C2 transport + config** (ronda 11): cloud-masquerade beacon
+  path removed (real third-party hosts with spoofed UAs — never reached the
+  C2 anyway); direct `HIVE_C2_URL` delivery first with lab-sink failover;
+  `HIVE_C2_URL` contract unified (base URL, legacy `/beacon` suffix
+  normalized); shipped `hive.toml` finally parses (was broken since ronda 6
+  — `[eartbeat]` typo + required fields of removed weaver/worm agents) with
+  a regression test; `config-check` exits 1 on a broken file instead of
+  claiming "no config found".
 - [x] **Dual-use hygiene sweep** (ronda 9): dead `PrivEscResult` struct
   (leftover from an executing era) deleted; `privesc.rs` (read-only
   enumeration, linpeas-style) and `remote_shell.rs` (C2-core shell behind the
@@ -99,8 +114,10 @@ Prioritized list of known gaps and planned work. Items marked ✅ are done.
 - [ ] Windows CI job + cross-compile artifacts (`setup_cross.sh` already
   installs the toolchains).
 - [ ] Deduplicate: two arena implementations (`arena_mgr` vs
-  `platform_layer::ipc`), three C2-channel-selection systems, agent
-  boilerplate (`new`/`run`/`publish_msg` per binary).
+  `platform_layer::ipc`), agent boilerplate (`new`/`run`/`publish_msg` per
+  binary). (ronda 11: la política de voto de la colonia SÍ se unificó en
+  `hive_base::hivemind::vote_decision_for`; smoke_signals quedó como único
+  sink de lab tras eliminar el masquerade.)
 - [x] **Beekeeper TUI: wire the Log/Consensus tabs to real data sources**
   (ronda 10): the Consensus tab now maintains observer-side directive state
   from the live arena message stream (`Payload::Proposal` → pending entry,
@@ -123,8 +140,9 @@ Prioritized list of known gaps and planned work. Items marked ✅ are done.
 - [ ] Docker/lab stack follow-ups: the removed `docker/lab/` compose (broken
   YAML + worm service) and `Dockerfile.lab` are gone; remaining work is a
   Windows CI job and composing the lab docs into one walkthrough.
-- [ ] Progressive lint tightening: `#![deny(clippy::unwrap_used)]` for the
-  core modules (`comms`, `shared_arena`, `telemetry`, `ldc`). Baseline
+- [x] **Progressive lint tightening** (ronda 11): `deny(clippy::unwrap_used)`
+  (outside tests) applied to `comms`, `shared_arena`, `telemetry`, `ldc`;
+  the one offending `lock().unwrap()` now recovers from poisoning. Baseline
   `clippy -D warnings` + `fmt --check` are CI gates since ronda 9.
 - [ ] Fuzz the telemetry ring buffer with concurrent writers/readers
   (ronda 10 added `read_from` with lapped-reader clamping + unit tests; a

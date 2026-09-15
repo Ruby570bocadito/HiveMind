@@ -32,7 +32,7 @@ need_cargo() {
 
 build()      { need_cargo; banner "building workspace"; cargo build --workspace "$@"; }
 release()    { need_cargo; banner "building agents (release)"; cargo build --release -p worker -p drone -p honeybee -p queen "$@"; }
-test_all()   { need_cargo; banner "running tests"; cargo test -p hive_base -- --test-threads=2 "$@"; }
+test_all()   { need_cargo; banner "running tests (full workspace)"; cargo test --workspace "$@"; }
 
 start_c2() {
     need_cargo

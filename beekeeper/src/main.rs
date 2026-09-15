@@ -311,10 +311,41 @@ fn cmd_config_check(path: Option<&str>) {
     }
 
     // Standard search order: report which file actually won.
+    // Ronda 11: el fichero que existe pero NO parsea ya no se reporta como
+    // "no config file found" — se muestra el error de parseo y se sale con
+    // código 1 (hive.sh doctor dejaba de dar un ✓ falso).
+    let found = hive_base::config::CONFIG_SEARCH_PATHS
+        .iter()
+        .find(|p| std::path::Path::new(p).exists())
+        .copied();
+    match found {
+        Some(path) => {
+            match std::fs::read_to_string(path) {
+                Ok(content) => match hive_base::config::parse_config(&content) {
+                    Ok(cfg) => {
+                        println!("  ✓ {} parsed correctly", path);
+                        print_config_summary(&cfg, path);
+                    }
+                    Err(e) => {
+                        eprintln!("  ✗ {} FAILED to parse:\n\n{}\n", path, e);
+                        eprintln!("  (agents are running on compiled-in defaults)");
+                        std::process::exit(1);
+                    }
+                },
+                Err(e) => {
+                    eprintln!("  ✗ cannot read {}: {}", path, e);
+                    std::process::exit(1);
+                }
+            }
+            return;
+        }
+        None => {
+            println!("  • no config file found — compiled-in defaults in use");
+        }
+    }
     let (cfg, source) = hive_base::config::HiveConfig::load_with_source();
-    match &source {
-        Some(src) => println!("  ✓ config loaded from {}", src),
-        None => println!("  • no config file found — compiled-in defaults in use"),
+    if let Some(src) = &source {
+        println!("  ✓ config loaded from {}", src);
     }
     print_config_summary(&cfg, source.as_deref().unwrap_or("<defaults>"));
 }
@@ -346,11 +377,19 @@ async fn cmd_reputation() {
 }
 
 async fn cmd_hivemind() {
-    println!("  Directivas disponibles vía RoyalJelly:");
-    println!("  • SabotageIntegrity   → activa Saboteur");
-    println!("  • Tournament {{n,g}}    → torneo darwiniano");
-    println!("  • HiveMindActivation  → activa consenso");
-    println!("  • PhoenixProtocol     → regenera agentes");
+    // Ronda 11: descripción REAL del flujo de consenso — antes listaba
+    // "SabotageIntegrity → activa Saboteur" (el módulo saboteur fue
+    // ELIMINADO en la ronda 6) y directivas RoyalJelly muertas.
+    println!("  Consenso HiveMind (flujo real en la arena):");
+    println!("  1. Propuesta   — cualquier agente publica Payload::Proposal");
+    println!("  2. Voto        — worker/drone/honeybee votan con la política");
+    println!("     de la colonia (deny-list ronda 6: exfil/encrypt/wipe/destroy/)");
+    println!("     sabotage/ransom → Reject; resto → Support");
+    println!("  3. Tally       — la Queen pondera con reputaciones de agentes");
+    println!("     activos (umbral 0.66) y broadcasts la aprobación");
+    println!("     (StatusEvent hive_directive_approved + belief directive:<id>)");
+    println!("  Sistemas internos vivos: Tournament (darwiniano), WhisperNet");
+    println!("  (mesh P2P), Stigmergy (trails cifrados), Opsec (jitter/ventanas).");
 }
 
 async fn cmd_tournament() {

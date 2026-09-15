@@ -1,3 +1,7 @@
+// Ronda 11 (P2 del ROADMAP): lint progresivo - prohibido .unwrap() fuera de
+// tests en los modulos core del arena/protocolo. Los tests pueden usarlo.
+#![cfg_attr(not(test), deny(clippy::unwrap_used))]
+
 // Hive Telemetry Log (HTL)
 // Event-driven telemetry system for the Hive Colony.
 // Implements: immutable events with causal IDs, ring buffer in shared arena,

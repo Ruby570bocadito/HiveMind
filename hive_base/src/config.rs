@@ -46,10 +46,6 @@ pub struct ConsensusConfig {
 pub struct AgentsConfig {
     pub scout_scan_interval_secs: u64,
     pub shaper_decision_interval_secs: u64,
-    pub weaver_mutation_interval_secs: u64,
-    pub worm_max_hops: u32,
-    pub worm_max_infections_per_minute: u32,
-    pub worm_self_destruct_secs: u64,
     pub edr_processes: Vec<String>,
     pub backup_processes: Vec<String>,
 }
@@ -119,10 +115,6 @@ impl Default for HiveConfig {
             agents: AgentsConfig {
                 scout_scan_interval_secs: 15,
                 shaper_decision_interval_secs: 30,
-                weaver_mutation_interval_secs: 120,
-                worm_max_hops: 10,
-                worm_max_infections_per_minute: 2,
-                worm_self_destruct_secs: 3600,
                 edr_processes: vec![
                     "csfalcon".into(),
                     "csagent".into(),
@@ -164,6 +156,19 @@ impl Default for HiveConfig {
     }
 }
 
+/// Ruta de búsqueda de configuración, en orden de prioridad.
+///
+/// Ronda 11: pública para que `beekeeper config-check` sondee las mismas
+/// rutas y pueda distinguir "no hay fichero" de "hay fichero y NO parsea"
+/// (antes el segundo caso se reportaba como el primero y `hive.sh doctor`
+/// daba un ✓ falso).
+pub const CONFIG_SEARCH_PATHS: &[&str] = &[
+    "hive.toml",
+    "colmena.toml",
+    "/etc/swarm/hive.toml",
+    "/etc/swarm/colmena.toml",
+];
+
 impl HiveConfig {
     /// Load config from hive.toml (legacy name: colmena.toml), falling back to defaults.
     ///
@@ -182,20 +187,19 @@ impl HiveConfig {
     /// A config file that exists but fails to parse is reported loudly
     /// instead of being silently ignored.
     pub fn load_with_source() -> (Self, Option<String>) {
-        let paths = [
-            "hive.toml",
-            "colmena.toml",
-            "/etc/swarm/hive.toml",
-            "/etc/swarm/colmena.toml",
-            &format!(
-                "{}/.config/hive/hive.toml",
-                std::env::var("HOME").unwrap_or_else(|_| "/tmp".into())
-            ),
-            &format!(
-                "{}/.config/swarm/colmena.toml",
-                std::env::var("HOME").unwrap_or_else(|_| "/tmp".into())
-            ),
-        ];
+        let mut paths: Vec<String> = CONFIG_SEARCH_PATHS
+            .iter()
+            .map(|p| (*p).to_string())
+            .collect();
+        paths.push(format!(
+            "{}/.config/hive/hive.toml",
+            std::env::var("HOME").unwrap_or_else(|_| "/tmp".into())
+        ));
+        paths.push(format!(
+            "{}/.config/swarm/colmena.toml",
+            std::env::var("HOME").unwrap_or_else(|_| "/tmp".into())
+        ));
+        let paths: Vec<&str> = paths.iter().map(|s| s.as_str()).collect();
 
         for path in &paths {
             if Path::new(path).exists() {
@@ -279,6 +283,22 @@ mod tests {
         // must produce an error, not a silent fallback to defaults.
         let broken = "eartbeat]\ninterval_secs = 10\ntimeout_secs = 30\n";
         assert!(parse_config(broken).is_err());
+    }
+
+    #[test]
+    fn shipped_hive_toml_parses() {
+        // Ronda 11: el hive.toml enviado tenía `[eartbeat]` (sección rota) y
+        // exigía campos de agentes eliminados (weaver/worm) — NUNCA llegó a
+        // parsear y todos los agentes corrían con defaults silenciosamente.
+        // Este test impide que vuelva a romperse sin que la CI lo grite.
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../hive.toml");
+        if !path.exists() {
+            return; // crate empaquetado sin el repo completo
+        }
+        let content = std::fs::read_to_string(&path).expect("hive.toml legible");
+        let cfg = parse_config(&content)
+            .unwrap_or_else(|e| panic!("el hive.toml del repo debe parsear: {e}"));
+        assert_eq!(cfg.consensus.threshold, 0.66);
     }
 
     #[test]

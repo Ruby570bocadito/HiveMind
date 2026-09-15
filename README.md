@@ -14,7 +14,7 @@
   <img src="https://img.shields.io/badge/rust-stable%201.82%2B-000000?style=flat-square&logo=rust" alt="Rust"/>
   <img src="https://img.shields.io/badge/version-3.0.0-6C63FF?style=flat-square" alt="Version"/>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-6C63FF?style=flat-square" alt="MIT License"/></a>
-  <img src="https://img.shields.io/badge/tests-290%20passing-73d0a0?style=flat-square" alt="Tests"/>
+  <img src="https://img.shields.io/badge/tests-298%20passing-73d0a0?style=flat-square" alt="Tests"/>
   <img src="https://img.shields.io/badge/platform-linux%20x86__64%20%7C%20windows%20(partial)-0d1117?style=flat-square&logo=linux" alt="Platform"/>
 </p>
 
@@ -46,7 +46,7 @@
 - **LLM optional, not required.** The Queen can consult a local Ollama model
   for strategy, and the whole colony degrades gracefully to heuristic mode
   when no model is present.
-- **Tested like a library, not a script.** 290 tests across five suites
+- **Tested like a library, not a script.** 298 tests across five suites
   (241 unit incl. loom concurrency models · 9 integration · 34 lab/e2e ·
   6 c2-server), two criterion benches, and cargo-fuzz targets on the IPC and
   ring-buffer paths.
@@ -68,7 +68,7 @@ git clone https://github.com/Ruby570bocadito/HiveMind
 cd HiveMind
 
 ./hive.sh build          # build all 9 crates
-./hive.sh test           # run the hive_base test suite (270+ tests)
+./hive.sh test           # run the full workspace test suite (298 tests)
 
 ./hive.sh c2             # C2 server on http://localhost:8444
 ./hive.sh tui            # Beekeeper operator TUI (in another terminal)
@@ -86,7 +86,7 @@ works too:
 
 ```bash
 cargo build --workspace
-cargo test -p hive_base -- --test-threads=2
+cargo test --workspace
 cargo run -p c2-server -- --port 8444
 cargo run -p beekeeper
 ```
@@ -119,7 +119,7 @@ Every agent:
 
 | Area | Status |
 |------|--------|
-| Tests | **290 passing** — 241 unit (incl. loom models over the arena, observer-cursor telemetry reads, Lua console + embedded-ML roundtrip) + 43 integration (phase-A scenarios, arena regressions, lab/e2e) + 6 c2-server (auth, rate limiter) |
+| Tests | **298 passing** — 247 unit (incl. loom models over the arena, observer-cursor telemetry reads, embedded-ML roundtrip, C2-URL normalization, colony vote policy, shipped-config regression) + 43 integration (phase-A scenarios, arena regressions, lab/e2e) + 8 c2-server (auth, rate limiter, beacon retention, per-agent task claims) |
 | CI | GitHub Actions: `cargo fmt --check` + `cargo clippy -D warnings` (blocking), full workspace tests, loom job over `shared_arena.rs`, end-to-end ML pipeline (train → export → parity gate), release artifacts uploaded |
 | Fuzzing | `cargo-fuzz` targets: IPC contract validation, ring-buffer ops |
 | Benches | criterion: HTL throughput, IPC validation |

@@ -176,6 +176,23 @@ impl HiveMind {
         self.directives.iter().filter(|d| !d.approved).collect()
     }
 
+    /// Política de voto de la colonia (ronda 11).
+    ///
+    /// Las propuestas operativas (prop_to_*, scan_target, …) reciben
+    /// `Support`; las que piden capacidades retiradas en la ronda 6
+    /// (exfil/encrypt/wipe/destroy/sabotage/ransom) reciben `Reject`, en
+    /// línea con la deny-list del TaskPoller. Compartida por worker, drone y
+    /// honeybee para que la colonia vote igual en todos los roles.
+    pub fn vote_decision_for(action: &str) -> crate::ldc::Decision {
+        const DENIED: [&str; 6] = ["exfil", "encrypt", "wipe", "destroy", "sabotage", "ransom"];
+        let a = action.to_ascii_lowercase();
+        if DENIED.iter().any(|d| a.contains(d)) {
+            crate::ldc::Decision::Reject
+        } else {
+            crate::ldc::Decision::Support
+        }
+    }
+
     pub fn propose_from_operator(
         &mut self,
         operator_id: Uuid,
@@ -392,6 +409,35 @@ mod tests {
         let r1 = hive.process_arena_message(&vote_a, &rep);
         assert!(r1.is_some());
         assert!(hive.directives[0].approved);
+    }
+
+    #[test]
+    fn vote_decision_for_follows_round6_deny_list() {
+        use crate::ldc::Decision;
+        // Operativas → Support.
+        for action in ["prop_to_network_segment", "scan_target", "monitor_edr"] {
+            assert_eq!(
+                HiveMind::vote_decision_for(action),
+                Decision::Support,
+                "{action} debe apoyarse"
+            );
+        }
+        // Capacidades retiradas en la ronda 6 → Reject (mayúsculas incluidas).
+        for action in [
+            "exfil_now",
+            "Exfiltrate",
+            "encrypt_files",
+            "wipe_disk",
+            "DESTROY",
+            "sabotage_integrity",
+            "ransom_note",
+        ] {
+            assert_eq!(
+                HiveMind::vote_decision_for(action),
+                Decision::Reject,
+                "{action} debe rechazarse"
+            );
+        }
     }
 
     #[test]

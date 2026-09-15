@@ -2,6 +2,7 @@ use hive_base::{AgentIdentity, ConsensusEngine, HiveChamber, Message, Payload, R
 use std::time::Duration;
 use tokio::time;
 use tracing::{info, warn};
+use uuid::Uuid;
 
 const SCOUT_MODEL_ENC: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/scout_model.enc"));
 
@@ -137,6 +138,8 @@ struct ScoutAgent {
     onnx_model: Vec<u8>,
     scan_interval: Duration,
     heartbeat_interval: Duration,
+    /// Propuestas ya votadas (ronda 11: un voto por propuesta, acotado).
+    voted: Vec<Uuid>,
 }
 
 impl ScoutAgent {
@@ -168,6 +171,7 @@ impl ScoutAgent {
             onnx_model,
             scan_interval: Duration::from_secs(cfg.timing.scan_interval_secs),
             heartbeat_interval: Duration::from_secs(cfg.timing.heartbeat_interval_secs),
+            voted: Vec::new(),
         }
     }
 
@@ -253,6 +257,35 @@ impl ScoutAgent {
                     info!("Received scan request");
                     let beliefs = self.collect_system_profile().await;
                     self.publish_beliefs(&beliefs).await;
+                }
+                Payload::Proposal {
+                    action,
+                    proposal_id,
+                    ..
+                } => {
+                    // Ronda 11: el worker PARTICIPA en el consenso de la
+                    // colonia — hasta ahora solo honeybee votaba y la reina
+                    // no procesaba votos, así que nada se aprobaba jamás.
+                    if self.voted.contains(proposal_id) {
+                        continue; // un voto por propuesta
+                    }
+                    if self.voted.len() >= 128 {
+                        self.voted.clear(); // acotado: memoria plana
+                    }
+                    self.voted.push(*proposal_id);
+                    let decision = hive_base::hivemind::HiveMind::vote_decision_for(action);
+                    info!(
+                        "Voting {:?} on proposal '{}' from {}",
+                        decision, action, msg.agent_role
+                    );
+                    let vote = Message::vote(
+                        self.identity.id(),
+                        Role::Worker,
+                        *proposal_id,
+                        decision,
+                        1.0,
+                    );
+                    self.comms.publish(vote).await;
                 }
                 Payload::Belief {
                     asset,

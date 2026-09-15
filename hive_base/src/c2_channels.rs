@@ -512,7 +512,10 @@ impl FailoverDirector {
     /// Add a channel configuration.
     pub fn add_channel(&mut self, config: C2ChannelConfig) {
         let name = config.name.clone();
-        // If it's an HTTP channel, also add to smoke_director
+        // If it's an HTTP channel, also add a labelled sink to the
+        // smoke_director. Ronda 11: el sink SOLO captura a fichero en lab
+        // mode (HIVE_LAB_MODE) — el envío real al C2 es directo vía
+        // HIVE_C2_URL; ver comms::send_beacon_c2 / send_heartbeat.
         if config.kind == ChannelKind::Http {
             self.smoke_director.add_channel(SmokeChannel::random());
         }

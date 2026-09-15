@@ -7,6 +7,12 @@ pub struct Db {
     conn: Connection,
 }
 
+/// Retención máxima de beacons (ronda 11): la tabla crecía sin límite en
+/// labs de larga duración (un beacon cada pocos segundos por agente →
+/// millones de filas y una BD de gigas). Al superar el tope se recorta a
+/// los más recientes.
+const MAX_BEACONS: i64 = 10_000;
+
 impl Db {
     pub fn open(path: &Path) -> Result<Self> {
         let conn = Connection::open(path)?;
@@ -73,6 +79,17 @@ impl Db {
         ) {
             tracing::error!("record_beacon failed: {e}");
         }
+
+        // Retención (ronda 11): corte por id — O(1) con el rowid, se puede
+        // ejecutar en cada insert sin degradar el beaconing. (La variante
+        // NOT IN con ORDER BY DESC era O(n²) por inserción: 10k beacons
+        // tardaban >60 s solo en prunes.)
+        if let Err(e) = self.conn.execute(
+            "DELETE FROM beacons WHERE id <= (SELECT COALESCE(MAX(id), 0) FROM beacons) - ?1",
+            params![MAX_BEACONS],
+        ) {
+            tracing::error!("beacon retention failed: {e}");
+        }
     }
 
     pub fn push_task(&self, agent_id: &str, task_id: &str, command: &str, payload: &Value) {
@@ -111,9 +128,12 @@ impl Db {
         let tasks: Vec<super::Task> = rows.filter_map(|r| r.ok()).collect();
 
         for task in &tasks {
+            // Ronda 11: el UPDATE antes solo filtraba por task_id — un
+            // task_id repetido entre agentes (el operador decide los ids)
+            // marcaba como claimed una tarea de OTRO agente sin entregarla.
             let _ = self.conn.execute(
-                "UPDATE tasks SET claimed = 1 WHERE task_id = ?1",
-                params![task.id],
+                "UPDATE tasks SET claimed = 1 WHERE task_id = ?1 AND agent_id = ?2",
+                params![task.id, agent_id],
             );
         }
 
@@ -203,5 +223,85 @@ impl Db {
         let dt: chrono::DateTime<chrono::Utc> =
             chrono::DateTime::from_timestamp(ts, 0).unwrap_or_default();
         dt.format("%Y-%m-%d %H:%M:%S UTC").to_string()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    impl Db {
+        fn with_conn(conn: Connection) -> Self {
+            let db = Self { conn };
+            db.migrate().expect("migrate");
+            db
+        }
+    }
+
+    #[test]
+    fn beacon_retention_caps_table_size() {
+        // Ronda 11: la tabla de beacons crecía sin límite. Con el tope a
+        // MAX_BEACONS, insertar más de ese número conserva solo los más
+        // recientes. Para no depender del valor absoluto, comprobamos la
+        // invariante: tras N > tope inserciones, count == tope y quedan los
+        // últimos (los antiguos desaparecen).
+        let db = Db::with_conn(Connection::open_in_memory().unwrap());
+        for i in 0..(MAX_BEACONS + 50) {
+            db.record_beacon(
+                &format!("agent-{i}"),
+                "worker",
+                "h",
+                "u",
+                "os",
+                "v",
+                &serde_json::json!({}),
+            );
+        }
+        let count: i64 = db
+            .conn
+            .query_row("SELECT COUNT(*) FROM beacons", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(count, MAX_BEACONS, "la retención recorta la tabla");
+        // Insertamos MAX_BEACONS + 50 → se borran las 50 más antiguas: el
+        // beacon más antiguo conservado es agent-50.
+        let oldest: String = db
+            .conn
+            .query_row(
+                "SELECT agent_id FROM beacons ORDER BY id ASC LIMIT 1",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(oldest, "agent-50");
+    }
+
+    #[test]
+    fn pending_tasks_claim_is_scoped_to_agent() {
+        // Ronda 11: dos agentes con el MISMO task_id — el claim de uno no
+        // debe robar la tarea del otro.
+        let db = Db::with_conn(Connection::open_in_memory().unwrap());
+        db.push_task(
+            "agent-a",
+            "shared-task-id",
+            "shell_exec",
+            &serde_json::json!({"cmd": "echo a"}),
+        );
+        db.push_task(
+            "agent-b",
+            "shared-task-id",
+            "shell_exec",
+            &serde_json::json!({"cmd": "echo b"}),
+        );
+
+        let a_tasks = db.pending_tasks("agent-a");
+        assert_eq!(a_tasks.len(), 1, "agent-a recibe su tarea");
+
+        // agent-b NO está afectado por el claim de agent-a.
+        let b_tasks = db.pending_tasks("agent-b");
+        assert_eq!(
+            b_tasks.len(),
+            1,
+            "la tarea de agent-b sigue pendiente (claim scoped por agent_id)"
+        );
     }
 }

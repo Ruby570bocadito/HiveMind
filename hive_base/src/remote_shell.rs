@@ -76,17 +76,52 @@ pub fn execute_command(cmd: &str) -> CommandResult {
     }
 }
 
+/// Mata el árbol completo del hijo (grupo de procesos en Unix; el proceso
+/// directo en el resto). Ver documentación de `execute_command_with_timeout`.
+fn kill_process_tree(child: &mut std::process::Child) {
+    #[cfg(unix)]
+    {
+        // El hijo es líder de su propio grupo (process_group(0)): la señal
+        // negativa alcanza a sh y a todos sus nietos.
+        unsafe {
+            libc::kill(-(child.id() as i32), libc::SIGKILL);
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = child.kill();
+    }
+}
+
 /// Execute a command with a timeout. Kills the process if it exceeds the limit.
+///
+/// Ronda 11 — fix de deadlock de pipe: antes se hacia `try_wait` en bucle y
+/// solo se leian stdout/stderr DESPUES de que el hijo saliese. Con salida
+/// mayor que el buffer del pipe del SO (~64 KB) el hijo se bloqueaba
+/// escribiendo (nadie drenaba) y nunca salia -> falso TIMEOUT a los
+/// `timeout_secs` con TODA la salida perdida. Ahora dos hilos drenan los
+/// pipes en paralelo mientras se espera al hijo con timeout real.
 pub fn execute_command_with_timeout(cmd: &str, timeout_secs: u64) -> CommandResult {
+    use std::io::Read;
+
     let start = Instant::now();
     let timeout = Duration::from_secs(timeout_secs);
 
-    let mut child = match Command::new("sh")
+    let mut cmd_sh = Command::new("sh");
+    cmd_sh
         .args(["-c", cmd])
         .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
-        .spawn()
+        .stderr(std::process::Stdio::piped());
+    // Ronda 11: grupo de procesos propio — el kill de timeout debe alcanzar
+    // TODO el árbol (sh y nietos). Sin esto, `sh -c "sleep 30"` moría pero
+    // `sleep` seguía sujetando los pipes y el join del drenaje bloqueaba
+    // hasta que el nieto terminase por su cuenta.
+    #[cfg(unix)]
     {
+        use std::os::unix::process::CommandExt;
+        cmd_sh.process_group(0);
+    }
+    let mut child = match cmd_sh.spawn() {
         Ok(c) => c,
         Err(e) => {
             return CommandResult {
@@ -99,81 +134,73 @@ pub fn execute_command_with_timeout(cmd: &str, timeout_secs: u64) -> CommandResu
         }
     };
 
+    // Drenaje concurrente: cada hilo lee su pipe hasta EOF y devuelve el
+    // contenido por join() - el hijo nunca se bloquea por un pipe lleno.
+    let mut stdout_pipe = child.stdout.take();
+    let mut stderr_pipe = child.stderr.take();
+
+    let out_reader = std::thread::spawn(move || {
+        let mut buf = String::new();
+        if let Some(pipe) = stdout_pipe.as_mut() {
+            let _ = pipe.read_to_string(&mut buf);
+        }
+        buf
+    });
+    let err_reader = std::thread::spawn(move || {
+        let mut buf = String::new();
+        if let Some(pipe) = stderr_pipe.as_mut() {
+            let _ = pipe.read_to_string(&mut buf);
+        }
+        buf
+    });
+
+    // Espera acotada al hijo; si excede, kill + wait y devolvemos lo drenado
+    // hasta el momento (tras el kill los pipes llegan a EOF solos).
+    let deadline = start + timeout;
     let status = loop {
         match child.try_wait() {
-            Ok(Some(status)) => break status,
+            Ok(Some(status)) => break Some(status),
             Ok(None) => {
-                if start.elapsed() > timeout {
-                    let _ = child.kill();
+                if Instant::now() >= deadline {
+                    kill_process_tree(&mut child);
                     let _ = child.wait();
-                    let elapsed = start.elapsed().as_millis() as u64;
-                    return CommandResult {
-                        stdout: String::new(),
-                        stderr: format!("TIMEOUT after {}s", timeout_secs),
-                        exit_code: -1,
-                        duration_ms: elapsed,
-                        truncated: false,
-                    };
+                    break None;
                 }
-                std::thread::sleep(Duration::from_millis(50));
+                std::thread::sleep(Duration::from_millis(25));
             }
             Err(_) => {
-                let _ = child.kill();
+                kill_process_tree(&mut child);
                 let _ = child.wait();
-                return CommandResult {
-                    stdout: String::new(),
-                    stderr: "Process error".into(),
-                    exit_code: -1,
-                    duration_ms: start.elapsed().as_millis() as u64,
-                    truncated: false,
-                };
+                break None;
             }
         }
     };
 
-    let duration_ms = start.elapsed().as_millis() as u64;
-    let mut stdout = String::new();
-    let mut stderr = String::new();
-    let mut truncated = false;
+    let timed_out = status.is_none();
+    // Recoge lo drenado: join() espera a EOF y devuelve el String completo.
+    let mut stdout = out_reader.join().unwrap_or_default();
+    let mut stderr = err_reader.join().unwrap_or_default();
 
-    if let Some(out_reader) = child.stdout.take() {
-        use std::io::Read;
-        let mut buf = String::new();
-        if std::io::BufReader::new(out_reader)
-            .read_to_string(&mut buf)
-            .is_ok()
-        {
-            if buf.len() > MAX_OUTPUT_LEN {
-                stdout = buf.chars().take(MAX_OUTPUT_LEN).collect();
-                stdout.push_str("\n--- TRUNCATED ---");
-                truncated = true;
-            } else {
-                stdout = buf;
-            }
-        }
+    let mut truncated = false;
+    if stdout.len() > MAX_OUTPUT_LEN {
+        stdout = stdout.chars().take(MAX_OUTPUT_LEN).collect();
+        stdout.push_str("\n--- TRUNCATED ---");
+        truncated = true;
     }
-    if let Some(err_reader) = child.stderr.take() {
-        use std::io::Read;
-        let mut buf = String::new();
-        if std::io::BufReader::new(err_reader)
-            .read_to_string(&mut buf)
-            .is_ok()
-        {
-            if buf.len() > MAX_OUTPUT_LEN {
-                stderr = buf.chars().take(MAX_OUTPUT_LEN).collect();
-                stderr.push_str("\n--- TRUNCATED ---");
-                truncated = true;
-            } else {
-                stderr = buf;
-            }
-        }
+    if stderr.len() > MAX_OUTPUT_LEN {
+        stderr = stderr.chars().take(MAX_OUTPUT_LEN).collect();
+        stderr.push_str("\n--- TRUNCATED ---");
+        truncated = true;
+    }
+    if timed_out {
+        stderr.push_str(&format!("\nTIMEOUT after {}s", timeout_secs));
     }
 
     CommandResult {
         stdout,
         stderr,
-        exit_code: status.code().unwrap_or(-1),
-        duration_ms,
+        exit_code: status.and_then(|s| s.code()).unwrap_or(-1),
+        duration_ms: start.elapsed().as_millis() as u64,
         truncated,
     }
 }
@@ -496,6 +523,29 @@ mod tests {
         let r = execute_command_with_timeout("sleep 10", 1);
         assert!(r.stderr.contains("TIMEOUT"));
         assert_eq!(r.exit_code, -1);
+    }
+
+    #[test]
+    fn test_execute_timeout_preserves_large_output() {
+        // Ronda 11: con salida mayor que el buffer del pipe (~64 KB), el
+        // hijo se bloqueaba escribiendo y el poll de try_wait daba un falso
+        // TIMEOUT con salida vacia. Ahora el output de 2 MB llega truncado
+        // a MAX_OUTPUT_LEN y con exit 0 - sin TIMEOUT.
+        let r = execute_command_with_timeout("head -c 2000000 /dev/zero | tr '\\0' 'a'", 30);
+        assert_eq!(r.exit_code, 0, "exit 0, no fake timeout: {:?}", r.stderr);
+        assert!(!r.stderr.contains("TIMEOUT"));
+        assert!(r.stdout.len() >= MAX_OUTPUT_LEN);
+        assert!(r.truncated);
+    }
+
+    #[test]
+    fn test_execute_timeout_still_kills_hanging_process() {
+        // Un proceso colgado (sin output) sigue muriendo por timeout.
+        let start = std::time::Instant::now();
+        let r = execute_command_with_timeout("sleep 30", 1);
+        assert!(r.stderr.contains("TIMEOUT"));
+        assert_eq!(r.exit_code, -1);
+        assert!(start.elapsed() < std::time::Duration::from_secs(10));
     }
 
     #[test]

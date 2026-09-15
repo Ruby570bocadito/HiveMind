@@ -331,7 +331,7 @@ max_concurrent_infections = 5
 
 ```toml
 [c2]
-url = "https://tu-c2.com:8444/collect"
+url = "https://tu-c2.com:8444"  # BASE del C2 (sin /collect: eliminado en ronda 6)
 api_key = "supersecreto"
 
 [consensus]
@@ -487,6 +487,11 @@ la ronda 6. Matriz de capacidades vigente: `docs/CAPABILITIES.md`.
 > re-anclaje tras re-init); (3) pestañas Consensus y Log con datos reales
 > (estado de directivas observado desde Proposal/Vote/StatusEvent/Belief;
 > log de operador con joins/leaves, transiciones de directivas y laps);
+> (5) ronda 11: consenso real de punta a punta — worker/drone/honeybee votan
+>     propuestas (política deny-list compartida), la Queen procesa votos con
+>     reputaciones reales y broadcasts aprobaciones; transporte honesto (el
+>     masquerade cloud de smoke_signals eliminado; C2 directo vía HIVE_C2_URL);
+>     hive.toml parsea de verdad (test de regresión); royal_jelly eliminado.
 > (4) `beekeeper status` ya no anuncia módulos eliminados (Saboteur/Seer) y
 > los colores ANSI funcionan de verdad. Despliegue reparado: Dockerfile
 > (construía menos binarios de los que COPY; swarm fuera; `--loot-dir`

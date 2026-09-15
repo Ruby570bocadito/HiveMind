@@ -23,7 +23,7 @@ arena:
   hostPath: /dev/shm
 
 c2:
-  url: "http://hive-c2:8444/beacon"
+  url: "http://hive-c2:8444"  # BASE (poller añade /task y /beacon)
   dnsDomain: "tunnel.example.com"
   deadDropToken: ""
 

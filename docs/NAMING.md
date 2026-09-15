@@ -27,12 +27,12 @@ El código usa la metáfora biológica de "colmena" (Hive) por ser más rica en 
 | CLI de Despliegue | `buzz/` | Despliegue rápido |
 | C2 Bridge | `c2_bridge.rs` | Comunicación externa opcional |
 | Panal (Safe Target Check) | `panal.rs` | Verifica que un host no esté en lista segura antes de atacar |
-| Jalea Real (Payload Mut) | `royal_jelly.rs` | Mutación avanzada de payloads |
-| Cera (Seal/Unseal) | `wax.rs` | Cifrado/descifrado de datos |
-| Néctar (Exfil) | `nectar.rs` | Exfiltración de datos |
+| Jalea Real (Payload Mut) | ~~`royal_jelly.rs`~~ | ELIMINADO (ronda 11): código muerto con directivas de la era ofensiva |
+| Cera (Seal/Unseal) | ~~`wax.rs`~~ | ELIMINADO (rondas previas) |
+| Néctar (Exfil) | ~~`nectar.rs`~~ | ELIMINADO (ronda 6) |
 | Danza del Abejorro | `waggle_dance.rs` | Descubrimiento de rutas de red |
 | Feromona (Stigmergy) | `stigmergy.rs` | Comunicación indirecta vía entorno |
-| Larva (Regeneración) | `larva.rs` | Regeneración de agentes caídos |
+| Larva (Regeneración) | ~~`larva.rs`~~ | ELIMINADO (la regeneración vive en `drone` + `phoenix`) |
 | Guardián | `guardian.rs` | Protección anti-análisis |
 
 ## Archivos de configuración

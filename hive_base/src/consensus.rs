@@ -176,6 +176,18 @@ impl ConsensusEngine {
             .unwrap_or(self.default_reputation)
     }
 
+    /// Snapshot del mapa completo de reputaciones conocidas.
+    ///
+    /// Ronda 11: la reina lo usa para ponderar los votos de HiveMind con las
+    /// reputaciones REALES de los votantes (antes tally solo con la suya
+    /// propia → ningún directivo podía aprobarse jamás). Los agentes
+    /// desconocidos no aparecen: `HiveMind::tally_votes` los ignora, igual
+    /// que `get_reputation` devolvería el default — ponderación explícita,
+    /// no implícita.
+    pub fn reputation_map(&self) -> HashMap<Uuid, f32> {
+        self.reputation.clone()
+    }
+
     /// Process an incoming LdC message for consensus tracking.
     pub fn process_message(&mut self, msg: &Message) {
         self.apply_decay();
@@ -295,5 +307,19 @@ mod tests {
 
         let (reached, _, _) = engine.check_consensus(&proposal_id).unwrap();
         assert!(!reached, "50/50 should not reach 0.80 threshold");
+    }
+
+    #[test]
+    fn reputation_map_snapshots_known_agents_only() {
+        let mut engine = ConsensusEngine::new(0.66);
+        let a = Uuid::new_v4();
+        let b = Uuid::new_v4();
+        engine.adjust_reputation(a, true, 0.5, 0.0);
+        engine.adjust_reputation(b, false, 0.0, 0.5);
+
+        let map = engine.reputation_map();
+        assert_eq!(map.len(), 2, "solo agentes con reputación ajustada");
+        assert!(map.get(&a).copied().unwrap_or(0.0) > 1.0);
+        assert!(map.get(&b).copied().unwrap_or(5.0) < 1.0);
     }
 }

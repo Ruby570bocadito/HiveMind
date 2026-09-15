@@ -130,3 +130,49 @@ de propagación/exfiltración) y `Dockerfile.lab` eliminados;
 `deploy/charts/hive`: parseable de nuevo (values.yaml tenía un error YAML),
 sin agente swarm, sin volumen loot, securityContext des-escalado (non-root,
 sin privilegios, RBAC solo ServiceAccount) y nombre de arena shm válido.
+
+## Ronda 11 — consenso real, transporte honesto y config viva (2026-09-15)
+
+**Consenso HiveMind funcional de punta a punta (antes decorativo):** ningún
+binario procesaba `Payload::Vote` y el tally de la reina ponderaba solo con
+su propia reputación — ninguna directiva podía aprobarse jamás en runtime.
+Ahora worker/drone/honeybee VOTAN cada propuesta una vez (política
+compartida `HiveMind::vote_decision_for`: deny-list de la ronda 6 → Reject,
+resto → Support), y la Queen procesa los votos con
+`ConsensusEngine::reputation_map()` (reputaciones reales de agentes activos)
+y broadcast de la aprobación (`hive_directive_approved` + belief
+`directive:<id>`). El TUI (pestaña Consensus, ronda 10) ya visualizaba ese
+flujo — ahora hay algo real que ver.
+
+**Higiene dual-use del transporte (resto de la era ofensiva):**
+`smoke_signals` enviaba beacons POST a proveedores cloud REALES (Windows
+Update, Office 365, Google Drive, Apple Push, CloudFront…) con User-Agents
+suplantados y payloads disfrazados (`build_smoke_beacon`: SOAP/WS masquerade)
+— y además JAMÁS llegaban al C2: en lab mode caían a `/tmp/smoke_beacons/`,
+y en producción eran tráfico de basura a terceros. Eliminado el masquerade
+(hosts/rutas/UAs, `build_smoke_beacon`, `best_channel_for_org`); el sink
+local de lab se conserva y la entrega al C2 es DIRECTA vía `HIVE_C2_URL`
+(primaria) con los canales alternativos como respaldo.
+
+**Bug de contrato `HIVE_C2_URL`:** docs/trataban la variable como BASE
+(`GET {base}/task/{id}`) pero compose/helm/scripts la configuraban con
+sufijo `/beacon` → el TaskPoller consultaba `/beacon/task/…` (404) y jamás
+recogió tareas en ningún despliegue documentado. Ahora `normalize_c2_base`
+acepta ambas formas y todos los despliegues convergen a la base desnuda.
+
+**Config viva:** el `hive.toml` enviado tenía la sección `[eartbeat]` rota y
+exigía campos de agentes eliminados (weaver/worm) — NUNCA parseó y toda la
+colonia corría con defaults silenciosamente; `config-check` además lo
+reportaba como "no config file found" con exit 0 (y `hive.sh doctor` daba un
+✓ falso). Arreglado: parsea de verdad, `config-check` distingue
+"inexistente" de "roto" (exit 1) y hay test de regresión del fichero enviado.
+Campos muertos `weaver_mutation_interval_secs`/`worm_*` fuera del struct.
+
+**Otros:** `royal_jelly.rs` eliminado (código muerto con directivas
+ExfiltrateNow/MaximizeSpread/AvoidEDR/SabotageIntegrity y un TTL que comparaba
+bits de UUID con segundos); retención de beacons en el C2 (tope 10k, corte
+O(1) por id) y claim de tareas acotado por `agent_id`; fix de deadlock de
+pipe en `execute_command_with_timeout` (>64 KB → falso TIMEOUT con pérdida de
+salida); lint progresivo `deny(clippy::unwrap_used)` en
+comms/shared_arena/telemetry/ldc; `launch_colony.sh` reescrito (era
+inejecutable desde la ronda 6) y `PLAYBOOK.md` reescrito de cero.

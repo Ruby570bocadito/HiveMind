@@ -50,9 +50,9 @@ echo "  Honeybee will be configured with all 4 channel env vars"
 echo "  (this tests initialization, channel ordering, and graceful degradation)"
 
 export RUST_LOG="info,hive_base::c2_channels=debug,hive_base::comms=debug"
-export HIVE_C2_URL="${C2_URL}/beacon"
+export HIVE_C2_URL="${C2_URL}"
 export HIVE_C2_DNS_DOMAIN="failover-test.example.com"
-export HIVE_C2_ICMP_TARGET="127.0.0.1"
+export 
 unset HIVE_C2_DEAD_DROP_TOKEN
 
 echo "  Env: C2_URL=$HIVE_C2_URL DNS=$HIVE_C2_DNS_DOMAIN ICMP=$HIVE_C2_ICMP_TARGET"

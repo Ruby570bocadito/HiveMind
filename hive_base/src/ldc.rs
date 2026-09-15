@@ -1,3 +1,7 @@
+// Ronda 11 (P2 del ROADMAP): lint progresivo - prohibido .unwrap() fuera de
+// tests en los modulos core del arena/protocolo. Los tests pueden usarlo.
+#![cfg_attr(not(test), deny(clippy::unwrap_used))]
+
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -32,7 +36,7 @@ pub enum Value {
     Float(f64),
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub enum Decision {
     Support,
     Reject,

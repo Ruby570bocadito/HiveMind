@@ -19,6 +19,8 @@ struct DroneAgent {
     regeneration_cooldown: Duration,
     heartbeat_interval: Duration,
     decision_interval: Duration,
+    /// Propuestas ya votadas (ronda 11: un voto por propuesta, acotado).
+    voted: Vec<Uuid>,
 }
 
 impl DroneAgent {
@@ -57,6 +59,7 @@ impl DroneAgent {
             regeneration_cooldown: Duration::from_secs(60),
             heartbeat_interval: Duration::from_secs(cfg.heartbeat.interval_secs),
             decision_interval: Duration::from_secs(cfg.agents.shaper_decision_interval_secs),
+            voted: Vec::new(),
         }
     }
 
@@ -83,6 +86,26 @@ impl DroneAgent {
             if msg.is_kill_switch() {
                 warn!("Kill switch received - agent self-destructing now");
                 std::process::exit(0);
+            }
+            if let Payload::Proposal {
+                action,
+                proposal_id,
+                ..
+            } = &msg.payload
+            {
+                // Ronda 11: el drone PROPONE y también VOTA — el drone era
+                // el principal proponente pero jamás votaba propuestas ajenas.
+                if !self.voted.contains(proposal_id) {
+                    if self.voted.len() >= 128 {
+                        self.voted.clear();
+                    }
+                    self.voted.push(*proposal_id);
+                    let decision = hive_base::hivemind::HiveMind::vote_decision_for(action);
+                    info!("Voting {:?} on proposal '{}'", decision, action);
+                    let vote =
+                        Message::vote(self.identity.id(), Role::Drone, *proposal_id, decision, 1.0);
+                    self.publish(vote).await;
+                }
             }
             if let Payload::Belief { asset, value, .. } = &msg.payload {
                 b.insert(asset.clone(), value.clone());

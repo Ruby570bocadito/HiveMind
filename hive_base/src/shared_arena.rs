@@ -1,3 +1,6 @@
+// Ronda 11 (P2 del ROADMAP): lint progresivo - prohibido .unwrap() fuera de
+// tests en los modulos core del arena/protocolo. Los tests pueden usarlo.
+#![cfg_attr(not(test), deny(clippy::unwrap_used))]
 // Shared memory arena for inter-agent communication.
 // Replaces the TCP bus (127.0.0.1:4242) with an anonymous file-backed
 // memory-mapped ring buffer. No sockets, no ports, no listen() footprint.
@@ -39,7 +42,6 @@
 // Loom: this file is compiled as-is into the `loom-model` crate via
 // #[path] with `--cfg loom` (atomic shims below); MAX_AGENTS/MAX_MESSAGES
 // shrink under loom to keep the state space enumerable.
-
 #![allow(clippy::not_unsafe_ptr_arg_deref)]
 
 use std::mem;

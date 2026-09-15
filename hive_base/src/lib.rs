@@ -28,7 +28,7 @@ pub mod phoenix;
 pub mod platform_layer;
 pub mod privesc;
 pub mod remote_shell;
-pub mod royal_jelly;
+
 pub mod shared_arena;
 pub mod smoke_signals;
 pub mod stigmergy;

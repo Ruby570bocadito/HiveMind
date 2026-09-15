@@ -193,6 +193,51 @@ impl OvermindAgent {
                         proposal_id, msg.agent_role
                     );
                 }
+                Payload::Vote { .. } => {
+                    // Ronda 11: la reina PROCESA los votos — antes ningún
+                    // binario los consumía y el tally solo usaba la
+                    // reputación propia, así que ninguna directiva podía
+                    // aprobarse jamás en runtime. El tally pondera con las
+                    // reputaciones reales de los agentes activos (default
+                    // 1.0 del engine para los aún sin ajustar).
+                    let mut rep = HashMap::new();
+                    for (id, _, _) in self.comms.get_active_agents(30).await {
+                        rep.insert(id, self.consensus.get_reputation(&id));
+                    }
+                    match self.hivemind.process_arena_message(&msg, &rep) {
+                        Some((did, action, "approved")) => {
+                            info!(
+                                "HiveMind: directive {} '{}' APPROVED — broadcasting",
+                                did, action
+                            );
+                            // Broadcast de la aprobación: StatusEvent
+                            // (hive_directive_approved) + belief directive:<id>
+                            // — observables por el TUI y por toda la colonia.
+                            let executed = self.hivemind.execute_approved();
+                            for eid in executed {
+                                if let Some(d) = self
+                                    .hivemind
+                                    .directives
+                                    .iter()
+                                    .find(|d| d.directive_id == eid)
+                                {
+                                    let st =
+                                        self.hivemind.to_directive_message(d, self.identity.id());
+                                    self.publish_msg(st).await;
+                                    let belief = self.hivemind.to_belief(d, self.identity.id());
+                                    self.publish_msg(belief).await;
+                                }
+                            }
+                        }
+                        Some((did, action, kind)) => {
+                            info!(
+                                "HiveMind: directive {} '{}' ({}) — voto de {}",
+                                did, action, kind, msg.agent_role
+                            );
+                        }
+                        None => {}
+                    }
+                }
                 Payload::Request { service, payload } if service == "exec" => {
                     if let Ok(cmd_data) = serde_json::from_slice::<serde_json::Value>(payload) {
                         let cmd = cmd_data["cmd"].as_str().unwrap_or("id").to_string();
@@ -330,11 +375,23 @@ impl OvermindAgent {
     async fn run(&mut self) {
         info!("Hive Queen starting | ID: {}", self.identity.id());
         info!("Ollama: {} | Model: {}", self.ollama_url, self.model);
+        // Ronda 11: HiveMind activo DESDE EL ARRANQUE — antes se activaba en
+        // el primer tick de 120 s y las propuestas/votos previos se
+        // ignoraban (los agentes pueden proponer en los primeros segundos).
+        self.hivemind.enabled = true;
+        info!("HiveMind: activated");
+        let msg = Message::belief(
+            self.identity.id(),
+            Role::Queen,
+            "hivemind_active".into(),
+            hive_base::Value::Bool(true),
+            1.0,
+        );
+        self.publish_msg(msg).await;
         self.send_heartbeat().await;
 
         let mut heartbeat_timer = time::interval(self.heartbeat_interval);
         let mut tournament_timer = time::interval(Duration::from_secs(600));
-        let mut hivemind_timer = time::interval(Duration::from_secs(120));
         let mut whisper_timer = time::interval(Duration::from_secs(60));
 
         let mut phoenix_timer = time::interval(Duration::from_secs(300));
@@ -344,18 +401,6 @@ impl OvermindAgent {
             tokio::select! {
                 _ = heartbeat_timer.tick() => { self.send_heartbeat().await; }
                 _ = tournament_timer.tick() => { self.run_tournament().await; }
-                _ = hivemind_timer.tick() => {
-                    if !self.hivemind.enabled {
-                        self.hivemind.enabled = true;
-                        info!("HiveMind: activated");
-                        let msg = Message::belief(
-                            self.identity.id(), Role::Queen,
-                            "hivemind_active".into(),
-                            hive_base::Value::Bool(true), 1.0,
-                        );
-                        self.publish_msg(msg).await;
-                    }
-                }
                 _ = whisper_timer.tick() => {
                     self.whispernet.rebuild_routing_table();
                     info!("WhisperNet: {} peers, {} msgs routed",
