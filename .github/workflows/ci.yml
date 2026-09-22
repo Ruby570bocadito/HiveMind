@@ -14,6 +14,12 @@ on:
   pull_request:
     branches: [master, main]
 
+# Ronda 13: `CARGO_TERM_COLOR` estaba indentado DENTRO de `on:` — GitHub lo
+# leía como un activity type desconocido y el workflow moría al instante sin
+# lanzar ningún job (todos los runs desde la ronda 9 son "failure" con 0
+# jobs). El YAML parsea, por eso la trampa sobrevivió a auditorías de
+# sintaxis: la estructura es válida, la UBICACIÓN no. Pertenece a `env:`.
+env:
   CARGO_TERM_COLOR: always
 
 jobs:
