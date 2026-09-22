@@ -12,7 +12,7 @@
 <p align="center">
   <a href="https://github.com/Ruby570bocadito/HiveMind/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/Ruby570bocadito/HiveMind/ci.yml?branch=master&style=flat-square&label=CI" alt="CI"/></a>
   <img src="https://img.shields.io/badge/rust-stable%201.82%2B-000000?style=flat-square&logo=rust" alt="Rust"/>
-  <img src="https://img.shields.io/badge/version-3.0.0-f5b942?style=flat-square&logo=data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3lCb3g9IjAgMCAxMDAgMTAwIj48cGF0aCBkPSJNNTAgNSA4OCAyN3Y0Nkw1MCA5NSAxMiA3M1YyN3oiIGZpbGw9Im5vbmUiIHN0cm9rZT0iI2Y1Yjk0MiIgc3Ryb2tlLXdpZHRoPSI3Ii8+PC9zdmc+" alt="Version"/>
+  <img src="https://img.shields.io/badge/version-3.0.0-f5b942?style=flat-square&logo=data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAxMDAgMTAwIj48cGF0aCBkPSJNNTAgNSA4OCAyN3Y0Nkw1MCA5NSAxMiA3M1YyN3oiIGZpbGw9Im5vbmUiIHN0cm9rZT0iI2Y1Yjk0MiIgc3Ryb2tlLXdpZHRoPSI3Ii8+PC9zdmc+" alt="Version"/>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-f5b942?style=flat-square" alt="MIT License"/></a>
   <img src="https://img.shields.io/badge/tests-282%20passing-73d0a0?style=flat-square" alt="Tests"/>
   <img src="https://img.shields.io/badge/platform-linux%20x86__64%20%7C%20windows%20(partial)-0d1117?style=flat-square&logo=linux" alt="Platform"/>
