@@ -2,7 +2,7 @@
 
 **Política tras la ronda 6:** los módulos ofensivos y simulados fueron
 **ELIMINADOS** del repositorio, no emulados. Histórico: hard-disabled en
-ronda 1, emulación en rondas 4–5 (ver `docs/agentes/`), eliminación total en
+ronda 1, emulación en rondas 4–5, eliminación total en
 ronda 6 por decisión del propietario ("hazlo real o elimínalo" — hacerlos
 reales no era una opción; se eliminaron).
 

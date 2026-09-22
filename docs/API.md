@@ -27,7 +27,14 @@ Liveness + counters.
 
 ### GET /
 
-Operator dashboard (HTML).
+Operator web console (HTML): a self-contained single-page dashboard —
+inline CSS/JS/SVG, system fonts, zero external requests. It polls
+`/health`, `/admin/metrics`, `/admin/agents`, `/admin/sessions` and
+`/logs` from the browser, renders KPI cards, a beacon-rate chart, the
+agent table, the task pipeline and the live activity feed, can queue
+tasks (`POST /task/:agent_id`) and opens operator shells
+(`GET /shell/:id` over WebSocket). If the server runs with `--api-key`, the
+key is entered once in the header field and stored in `localStorage`.
 
 ### GET /logs
 
@@ -94,13 +101,19 @@ List of shell sessions (id, agent, timestamps).
 
 Summary of agents seen in beacons.
 
-## Dashboard (`tests/dashboard.py`, port 8080)
+## Web console (ronda 13)
 
-Read-only process/health view served with Python's stdlib `http.server`
-(it is **not** a Flask app):
+The operator console lives **inside the Rust C2** — served by `GET /` on
+the same port (8444 by default), not as a separate service. The old
+standalone Python dashboard (`tests/dashboard.py`, port 8080) was removed:
+the C2 web console replaces it with live API-backed data instead of
+`pgrep` polling, and adds task queuing and WebSocket shells.
 
-- `GET /` — HTML dashboard
-- `GET /api/state` — JSON snapshot of observed processes
+Properties pinned by tests (`c2/src/main.rs`):
+
+- single page, **zero external references** (no CDN scripts/styles/fonts),
+- wired to exactly the endpoints the server implements,
+- served from `include_str!("dashboard.html")` — no filesystem dependency.
 
 ## Server flags (hardening)
 

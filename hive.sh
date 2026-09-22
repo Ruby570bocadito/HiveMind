@@ -23,6 +23,36 @@ banner() {
     printf '\033[1;35m%s\033[0m\n' "🐝 Hive Colony v3.0 — $1"
 }
 
+# Compose preflight (ronda 13): with rootless podman the compose plugin
+# cannot reach unix:///run/user/$UID/podman/podman.sock until the socket
+# unit is started — the raw error ("Cannot connect to the Docker daemon")
+# gave no hint. Try to start it ourselves; if that is not possible, print
+# the exact commands the operator needs.
+ensure_compose_daemon() {
+    if docker info >/dev/null 2>&1; then
+        return 0
+    fi
+    if command -v podman >/dev/null 2>&1; then
+        # Rootless podman: bring the socket up (systemd user unit).
+        if command -v systemctl >/dev/null 2>&1 \
+            && systemctl --user start podman.socket >/dev/null 2>&1; then
+            if docker info >/dev/null 2>&1; then
+                echo "  podman socket started — docker CLI emulation ready"
+                return 0
+            fi
+        fi
+        echo "error: the podman socket is not reachable." >&2
+        echo "  start it with:   systemctl --user start podman.socket" >&2
+        echo "  (and enable at boot: systemctl --user enable --now podman.socket)" >&2
+        echo "  then re-run:     ./hive.sh $1" >&2
+        exit 1
+    fi
+    echo "error: the docker daemon is not reachable." >&2
+    echo "  start it with:   sudo systemctl start docker" >&2
+    echo "  then re-run:     ./hive.sh $1" >&2
+    exit 1
+}
+
 need_cargo() {
     if ! command -v cargo >/dev/null 2>&1; then
         echo "error: cargo not found. Install Rust: https://rustup.rs" >&2
@@ -37,7 +67,8 @@ test_all()   { need_cargo; banner "running tests (full workspace)"; cargo test -
 start_c2() {
     need_cargo
     banner "starting C2 server on http://${C2_HOST}:${C2_PORT}"
-    cargo run --release -p c2-server -- --port "${C2_PORT}"
+    echo "  web console on the same port → http://${C2_HOST}:${C2_PORT}/"
+    cargo run --release -p c2-server -- --port "${C2_PORT}" "$@"
 }
 
 start_tui() {
@@ -48,12 +79,16 @@ start_tui() {
 
 start_colony() {
     banner "starting full stack (docker compose)"
+    ensure_compose_daemon colony
     docker compose up --build -d
     docker compose ps
+    echo
+    echo "  C2 web console → http://localhost:${C2_PORT}"
 }
 
 start_lab() {
     banner "starting SSH lab (docker compose -f docker-compose.lab.yml)"
+    ensure_compose_daemon lab
     docker compose -f docker-compose.lab.yml up --build -d
     docker compose -f docker-compose.lab.yml ps
 }
@@ -88,6 +123,19 @@ doctor() {
         fi
     else
         miss "docker not found — only local cargo workflows will work"
+    fi
+
+    # Ronda 13: local runs mmap the arena in /dev/shm (~21 MB per arena).
+    # Small container defaults (64 MB) plus leftover arenas from previous
+    # runs exhaust the tmpfs and arena writers die with SIGBUS — a silent,
+    # log-less crash that looks like a random agent freeze.
+    if [ -d /dev/shm ]; then
+        shm_free=$(df -BM --output=avail /dev/shm 2>/dev/null | tail -1 | tr -dc '0-9')
+        if [ -n "${shm_free:-}" ] && [ "${shm_free}" -lt 48 ]; then
+            miss "/dev/shm has only ${shm_free}M free — the arena needs ~21M per run; clean leftovers: rm -f /dev/shm/hive_*"
+        else
+            pass "/dev/shm: ${shm_free:-?}M free (arena needs ~21M)"
+        fi
     fi
 
     if [ -f ./hive.toml ]; then

@@ -22,7 +22,7 @@
 ├─────────────────────────────────────────────────────┤
 │              C2 SERVER (Rust, :8444)                 │
 │  /beacon  /task/:id  /shell/:id (WS)  /health  /logs │
-│  DASHBOARD WEB (:8080, tests/dashboard.py)           │
+│  + web console del operador (GET /, autocontenida)   │
 └─────────────────────────────────────────────────────┘
 ```
 
@@ -183,18 +183,17 @@ beekeeper hive-mind             # flujo de consenso real
 ./hive.sh colony     # = docker compose up --build -d
 
 # Servicios:
-#   c2-server   :8444 — C2 endpoint (Rust)
+#   c2-server   :8444 — C2 endpoint (Rust) + web console (GET /)
 #   queen       :—    — tally de consenso + torneos
 #   worker      :—    — perfil del sistema (solo lectura)
 #   drone       :—    — propuestas + regeneración
 #   honeybee    :—    — relay P2P + votos
 #   monitor     :—    — monitor de detecciones (tests/)
-#   dashboard   :8080 — Web UI (tests/dashboard.py)
 #   ollama      :—    — opcional (perfil "llm")
 
 # Ver resultados:
 docker compose logs monitor
-open http://localhost:8080
+open http://localhost:8444   # web console del C2 (misma url que la API)
 ```
 
 ---

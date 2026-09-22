@@ -68,15 +68,9 @@ services:
       - hive_arena:/dev/shm
     command: python3 /hive/tests/monitor_detections.py --watch --interval 10
 
-  dashboard:
-    build: .
-    container_name: hive-dashboard
-    depends_on: [c2-server]
-    ports: ["8080:8080"]
-    volumes:
-      - /tmp:/tmp
-      - /var/log:/var/log:ro
-    command: python3 /hive/tests/dashboard.py --port 8080 --host 0.0.0.0
+  # Ronda 13: the separate dashboard service (tests/dashboard.py, :8080) is
+  # gone — the Rust C2 serves the operator web console itself on GET /
+  # (http://localhost:8444). One port, one process, live API data.
 
   ollama:
     image: ollama/ollama:latest

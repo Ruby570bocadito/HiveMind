@@ -114,6 +114,17 @@ log de operador (pestaña `5`) persiste a `/tmp/hive_tui_<arena>.log`
 En modo standalone (sin colonia) muestra el estado vacío de forma honesta
 en cada pestaña.
 
+**Consola Lua (ronda 13):** dentro de la pestaña `4` todos los atajos
+normales (`q`, `Esc`, `Tab`, `1`–`5`) se escriben como código — salir de
+la consola es con `Esc` (vuelta a Topology) y `Ctrl+C` sale del TUI desde
+cualquier pestaña (el modo raw convierte el Ctrl+C del terminal en una
+tecla más, así que es el salvavidas universal). Los `print()` del script
+se muestran en el propio panel de la consola (ya no corrompen la
+pantalla), `sleep()` está limitado a 2 s por llamada y un script
+desbocado (`while true do end`) se aborta a los 5 s con un error de
+interrupción. `colony.agents` refleja el número de agentes vivos en cada
+frame.
+
 ---
 
 ## 3. Scripts

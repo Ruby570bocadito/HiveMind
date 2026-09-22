@@ -1,5 +1,5 @@
 use crate::scripting::LuaEngine;
-use crossterm::event::{Event, KeyCode, KeyEventKind};
+use crossterm::event::{Event, KeyCode, KeyEventKind, KeyModifiers};
 use crossterm::terminal::{
     disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
 };
@@ -28,6 +28,34 @@ const MAX_DIRECTIVES: usize = 64;
 /// Short display form of a UUID (matches the topology table rendering).
 fn short_uuid(id: &uuid::Uuid) -> String {
     format!("{:08x}", id.as_u128().to_le() as u32)
+}
+
+/// Ronda 13: `telemetry::Event::timestamp` is nanoseconds since the epoch
+/// (`as_nanos`). Rendering it as seconds overflowed `from_timestamp` and
+/// the HTL Events tab showed "??" for every line since ronda 10.
+fn htl_ts_str(nanos: u64) -> String {
+    let secs = (nanos / 1_000_000_000) as i64;
+    let sub = (nanos % 1_000_000_000) as u32;
+    chrono::DateTime::from_timestamp(secs, sub)
+        .map(|t| t.format("%H:%M:%S").to_string())
+        .unwrap_or_else(|| "??".into())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::htl_ts_str;
+
+    #[test]
+    fn htl_timestamps_render_as_wall_clock() {
+        // 2026-09-22 19:04:05 UTC in nanoseconds since epoch.
+        let nanos: u64 = 1_790_103_845_000_000_000;
+        assert_eq!(htl_ts_str(nanos), "19:04:05");
+    }
+
+    #[test]
+    fn htl_timestamp_zero_is_epoch_not_garbage() {
+        assert_eq!(htl_ts_str(0), "00:00:00");
+    }
 }
 
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -459,11 +487,27 @@ pub async fn run_tui(arena_name: &str) {
         if crossterm::event::poll(Duration::from_millis(100)).unwrap() {
             match crossterm::event::read().unwrap() {
                 Event::Key(key) if key.kind == KeyEventKind::Press => match key.code {
+                    // Ronda 13: Ctrl+C sale del TUI desde CUALQUIER pestaña.
+                    // El modo raw convierte el Ctrl+C del terminal en un
+                    // evento de tecla más (no hay SIGINT), así que sin este
+                    // atajo una consola Lua colgada no tenía salida.
+                    KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                        should_quit = true
+                    }
                     // Ronda 11: los atajos globales solo aplican FUERA de la
                     // pestaña Lua — antes, escribir 'q' o '1'..'5' en la
                     // consola Lua cambiaba de pestaña o salía del TUI.
                     KeyCode::Char('q') | KeyCode::Esc if current_tab != Tab::Lua => {
                         should_quit = true
+                    }
+                    // Ronda 13: Esc sale de la pestaña Lua (vuelta a
+                    // Topology). Antes NO existía forma de salir de la
+                    // consola: q/Esc/Tab/1-5 se tragaban como texto.
+                    KeyCode::Esc if current_tab == Tab::Lua => {
+                        kill_armed = false;
+                        current_tab = Tab::Topology;
+                        let mut d = data.lock().await;
+                        d.lua_input.clear();
                     }
                     KeyCode::Char('k') | KeyCode::Char('K') if current_tab != Tab::Lua => {
                         if kill_armed {
@@ -533,8 +577,15 @@ pub async fn run_tui(arena_name: &str) {
                         let input = { d.lock().await.lua_input.clone() };
                         if !input.is_empty() {
                             let result = lua.eval(&input);
+                            // Ronda 13: los print() del script van al panel
+                            // de la consola (antes salían por stdout directo
+                            // y corrompían la pantalla del TUI).
+                            let prints = lua.take_prints();
                             let mut d = d.lock().await;
                             d.lua_output.push_back(format!("> {}", input));
+                            for line in prints {
+                                d.lua_output.push_back(line);
+                            }
                             d.lua_output.push_back(result);
                             // Bounded output: VecDeque::with_capacity only
                             // preallocates — without this the console
@@ -549,7 +600,10 @@ pub async fn run_tui(arena_name: &str) {
                         let mut d = data.lock().await;
                         d.lua_input.pop();
                     }
-                    KeyCode::Char(c) if current_tab == Tab::Lua => {
+                    KeyCode::Char(c)
+                        if current_tab == Tab::Lua
+                            && !key.modifiers.contains(KeyModifiers::CONTROL) =>
+                    {
                         let mut d = data.lock().await;
                         d.lua_input.push(c);
                     }
@@ -574,7 +628,7 @@ fn render_tui(
     area: Rect,
     data: &Arc<Mutex<AppData>>,
     current_tab: Tab,
-    _lua: &mut LuaEngine,
+    lua: &mut LuaEngine,
     kill_armed: bool,
 ) {
     let chunks = Layout::default()
@@ -607,6 +661,12 @@ fn render_tui(
             .title(" Beekeeper v3.0 "),
     );
     f.render_widget(tabs, chunks[0]);
+
+    // Ronda 13: `colony.agents` refleja el número real de agentes vivos
+    // en cada frame (antes el valor quedaba clavado en 0 para siempre).
+    if let Ok(d) = data.try_lock() {
+        lua.update_colony(d.active_agents.len());
+    }
 
     match current_tab {
         Tab::Topology => render_topology(f, chunks[1], data),
@@ -722,9 +782,7 @@ fn render_events(f: &mut Frame, area: Rect, data: &Arc<Mutex<AppData>>) {
         .rev()
         .take(50)
         .map(|e| {
-            let ts = chrono::DateTime::from_timestamp(e.timestamp as i64, 0)
-                .map(|t| t.format("%H:%M:%S").to_string())
-                .unwrap_or_else(|| "??".into());
+            let ts = htl_ts_str(e.timestamp);
             let et = format!("{:?}", e.event_type);
             let event_str = format!("{} [{}]", ts, et.chars().take(20).collect::<String>());
             ListItem::new(Line::from(Span::raw(event_str)))
@@ -854,7 +912,11 @@ fn render_lua(f: &mut Frame, area: Rect, data: &Arc<Mutex<AppData>>) {
     let input_text = format!("> {}", d.lua_input);
     let input_para = Paragraph::new(input_text.as_str())
         .style(Style::default().fg(Color::Cyan))
-        .block(Block::default().borders(Borders::TOP));
+        .block(
+            Block::default()
+                .borders(Borders::TOP)
+                .title(" Enter: run · Esc: back · Ctrl+C: quit "),
+        );
     f.render_widget(input_para, input_area);
 }
 
@@ -884,7 +946,7 @@ fn render_status_bar(
     f: &mut Frame,
     area: Rect,
     data: &Arc<Mutex<AppData>>,
-    _tab: Tab,
+    tab: Tab,
     kill_armed: bool,
 ) {
     // Skip this frame if the data lock is contended — rendering must
@@ -898,14 +960,22 @@ fn render_status_bar(
     } else {
         " | [k] Kill"
     };
+    // Ronda 13: dentro de la consola Lua los atajos normales (q, 1-5, Tab)
+    // se escriben como código — el hint cambia a las teclas que sí aplican.
+    let nav_hint = if tab == Tab::Lua {
+        " | [Esc] Back [Ctrl+C] Quit"
+    } else {
+        " | [1-5] Tab [q] Quit"
+    };
     let status = format!(
-        " Arena: {} | Agents: {} | Events: {} | Peers: {} | Connected: {}{} | [1-5] Tab [q] Quit",
+        " Arena: {} | Agents: {} | Events: {} | Peers: {} | Connected: {}{}{}",
         d.arena_name,
         d.active_agents.len(),
         d.events.len(),
         d.peer_count,
         if d.connected { "✓" } else { "✗" },
         kill_hint,
+        nav_hint,
     );
     let gauge = Gauge::default()
         .block(Block::default().borders(Borders::ALL).title(" Status "))

